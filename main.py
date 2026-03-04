@@ -23,7 +23,7 @@ REQUIRED_COLS = ['Source', 'ID', 'Date', 'Account', 'Asset', 'Type', 'Amount', '
 if 'transactions' not in st.session_state or not all(c in st.session_state.transactions.columns for c in REQUIRED_COLS):
     st.session_state.transactions = pd.DataFrame(columns=REQUIRED_COLS)
 
-# Sanity check: conversion systématique en datetime pour éviter les AttributeError
+# Sanity check: conversion systématique en datetime
 if not st.session_state.transactions.empty:
     st.session_state.transactions['Date'] = pd.to_datetime(st.session_state.transactions['Date'], utc=True, errors='coerce')
 
@@ -47,10 +47,11 @@ def get_eur_usd_rate(date_obj):
 
 @st.cache_data(ttl=3600)
 def get_price_usd(asset, date_obj):
-    # Sécurité contre les NoneType ou valeurs vides
+    # Sécurité absolue contre les NoneType ou valeurs non-str
     if asset is None or not isinstance(asset, str) or not asset.strip():
         return 0.0
 
+    asset = asset.upper().strip()
     cg_map = {
         "ETH": "ethereum", "BNB": "binancecoin", "POL": "polygon-ecosystem-token",
         "USDT": "tether", "USDC": "usd-coin", "DAI": "dai",
@@ -58,7 +59,7 @@ def get_price_usd(asset, date_obj):
         "8LND": "8lnd", "BTC": "bitcoin", "WBTC": "wrapped-bitcoin",
         "ARB": "arbitrum", "OP": "optimism", "MATIC": "matic-network"
     }
-    asset_id = cg_map.get(asset.upper(), asset.lower())
+    asset_id = cg_map.get(asset, asset.lower())
     d_str = date_obj.strftime("%d-%m-%Y")
 
     try:
@@ -75,8 +76,8 @@ def get_price_usd(asset, date_obj):
             return res["coins"][next(iter(res["coins"]))]["price"]
     except: pass
 
-    if asset.upper() in ["USDT", "USDC", "DAI"]: return 1.0
-    if asset.upper() in ["EURA", "AGEUR", "STEUR"]: return 1.08
+    if asset in ["USDT", "USDC", "DAI"]: return 1.0
+    if asset in ["EURA", "AGEUR", "STEUR"]: return 1.08
     return 0.0
 
 def get_price_eur(asset, date_obj):
@@ -84,7 +85,7 @@ def get_price_eur(asset, date_obj):
     if usd == 0: return 0.0
     return usd * get_eur_usd_rate(date_obj)
 
-# --- MOTEUR D'EXPLORATION ROBUSTE (V2.3) ---
+# --- MOTEUR D'EXPLORATION ROBUSTE (V2.4) ---
 
 def fetch_data(address, api_key, network):
     txs = []
@@ -111,7 +112,6 @@ def fetch_data(address, api_key, network):
                     counts["Native"] += 1
 
         elif "free_api" in cfg and "blockscout" in cfg["free_api"]:
-            # 4 Axes de détection pour garantir le multi-assets
             endpoints = [
                 ("transactions", "Native"),
                 ("token-transfers", "Tokens"),
@@ -124,25 +124,18 @@ def fetch_data(address, api_key, network):
                     try:
                         status_text.text(f"⏳ Voie Libre ({label}) : Page {page+1}...")
                         res = requests.get(url, timeout=15)
-                        if res.status_code != 200:
-                            # Fallback pour certains Blockscout qui utilisent /tokens au lieu de /token-balances
-                            if endpoint == "token-balances" and res.status_code == 404:
-                                url = f"{cfg['free_api']}/addresses/{address}/tokens"
-                                res = requests.get(url, timeout=15)
-                                if res.status_code != 200: break
-                            else: break
+                        if res.status_code == 404 and endpoint == "token-balances":
+                            url = f"{cfg['free_api']}/addresses/{address}/tokens"
+                            res = requests.get(url, timeout=15)
+
+                        if res.status_code != 200: break
 
                         try:
                             data = res.json()
                         except: break
 
-                        if isinstance(data, list):
-                            items = data
-                        elif isinstance(data, dict):
-                            items = data.get("items", data.get("result", []))
-                        else:
-                            items = []
-
+                        # Gérer liste vs dict
+                        items = data if isinstance(data, list) else data.get("items", data.get("result", []))
                         if not items or not isinstance(items, list): break
 
                         for t in items:
@@ -150,120 +143,75 @@ def fetch_data(address, api_key, network):
                                 if not isinstance(t, dict): continue
                                 tx_id = t.get('hash') or t.get('tx_hash')
 
-                                # Cas spécial de l'endpoint balances (balances actuelles)
                                 if label == "Balances":
                                     tok = t.get('token') or {}
-                                    asset = tok.get('symbol') or tok.get('name') or 'TOKEN'
+                                    asset_name = tok.get('symbol') or tok.get('name') or 'TOKEN'
                                     dec = int(tok.get('decimals') or 18)
-                                    val_str = t.get('value', '0')
-                                    amount = float(val_str) / 10**dec
+                                    amount = float(t.get('value') or '0') / 10**dec
                                     if amount <= 0: continue
-                                    tx_id = f"DISCOVERY-{asset}-{address[:8]}"
+                                    tx_id = f"DISCOVERY-{asset_name}-{address[:8]}"
+                                    dt = datetime.now()
                                     direction = 1
                                 else:
                                     if not tx_id: continue
                                     if label == "Tokens":
                                         tok = t.get('token') or {}
-                                        asset = tok.get('symbol') or tok.get('name') or 'TOKEN'
+                                        asset_name = tok.get('symbol') or tok.get('name') or 'TOKEN'
                                         dec = int(tok.get('decimals') or 18)
-                                        val_str = t.get('value', '0')
-                                        amount = float(val_str) / 10**dec if val_str else 0.0
+                                        amount = float(t.get('value') or '0') / 10**dec
                                     else:
-                                        asset = cfg['native']
-                                        val_str = t.get('value', '0')
-                                        amount = float(val_str) / 10**18 if val_str else 0.0
+                                        asset_name = cfg['native']
+                                        amount = float(t.get('value') or '0') / 10**18
 
-                                dt_str = t.get('timestamp') or t.get('timeStamp')
-                                if dt_str and str(dt_str).isdigit():
-                                    dt = datetime.fromtimestamp(int(dt_str))
-                                elif dt_str:
-                                    dt = datetime.fromisoformat(str(dt_str).replace('Z', '+00:00'))
-                                else:
-                                    dt = datetime.now()
+                                    dt_str = t.get('timestamp') or t.get('timeStamp')
+                                    dt = datetime.fromisoformat(str(dt_str).replace('Z', '+00:00')) if dt_str and not str(dt_str).isdigit() else datetime.fromtimestamp(int(dt_str)) if dt_str else datetime.now()
 
-                                fee_obj = t.get('fee') or {}
-                                fee_val = fee_obj.get('value', '0') if isinstance(fee_obj, dict) else '0'
-                                fee = float(fee_val) / 10**18
-
-                                f_raw = t.get('from')
-                                t_raw = t.get('to')
-                                f_addr = (f_raw.get('hash') if isinstance(f_raw, dict) else f_raw or 'Unknown').lower()
-                                t_addr = (t_raw.get('hash') if isinstance(t_raw, dict) else t_raw or 'Unknown').lower()
-                                cp = f_addr if t_addr == addr_low else t_addr
-
-                                # Détermination du sens pour le calcul de balance (si pas Discovery)
-                                if endpoint != "tokens" and label != "Balances":
+                                    f_raw = t.get('from')
+                                    t_raw = t.get('to')
+                                    f_addr = (f_raw.get('hash') if isinstance(f_raw, dict) else f_raw or 'Unknown').lower()
+                                    t_addr = (t_raw.get('hash') if isinstance(t_raw, dict) else t_raw or 'Unknown').lower()
                                     direction = 1 if t_addr == addr_low else -1
+                                    cp = f_addr if direction == 1 else t_addr
+
+                                fee_val = (t.get('fee') or {}).get('value', '0') if isinstance(t.get('fee'), dict) else '0'
+                                fee = float(fee_val) / 10**18
 
                                 txs.append({
                                     'Source': f'Libre ({label})', 'ID': tx_id, 'Date': dt,
-                                    'Account': address, 'Asset': str(asset).upper(), 'Type': 'Mvt',
-                                    'Amount': amount * direction, 'Fee': fee, 'Counterparty': cp, 'Network': network
+                                    'Account': address, 'Asset': str(asset_name).upper(), 'Type': 'Mvt',
+                                    'Amount': amount * direction, 'Fee': fee, 'Counterparty': cp if label != "Balances" else "Wallet", 'Network': network
                                 })
                                 counts[label] += 1
-                            except Exception as e: continue
+                            except: continue
 
-                        next_params = data.get("next_page_params") if isinstance(data, dict) else None
-                        if next_params:
-                            q = "&".join([f"{k}={v}" for k, v in next_params.items()])
+                        next_p = data.get("next_page_params") if isinstance(data, dict) else None
+                        if next_p:
+                            q = "&".join([f"{k}={v}" for k, v in next_p.items()])
                             url = f"{cfg['free_api']}/addresses/{address}/{endpoint}?{q}"
                         else: break
-                    except Exception as e:
-                        report.warning(f"Err endpoint {label}: {e}")
-                        break
-
-            # Filet de sécurité spécial: Récupérer les balances si transfers=0
-            if counts["Tokens"] == 0:
-                try:
-                    status_text.text("⏳ Recherche de balances (Filet de sécurité)...")
-                    url_bal = f"{cfg['free_api']}/addresses/{address}/tokens"
-                    res_raw = requests.get(url_bal, timeout=10)
-                    try:
-                        res_bal = res_raw.json()
-                    except: res_bal = []
-
-                    if isinstance(res_bal, list): items_bal = res_bal
-                    elif isinstance(res_bal, dict): items_bal = res_bal.get("items", res_bal.get("result", []))
-                    else: items_bal = []
-
-                    for b in items_bal:
-                        if not isinstance(b, dict): continue
-                        tok = b.get('token', {})
-                        asset = tok.get('symbol') or tok.get('name') or 'TOKEN'
-                        dec = int(tok.get('decimals') or 18)
-                        amt = float(b.get('value') or '0') / 10**dec
-                        if amt > 0:
-                            txs.append({
-                                'Source': 'Libre (Balance)', 'ID': f"BAL-{asset}-{address[:6]}", 'Date': datetime.now(),
-                                'Account': address, 'Asset': str(asset).upper(), 'Type': 'Balance', 'Amount': amt,
-                                'Fee': 0.0, 'Counterparty': 'Current Wallet', 'Network': network
-                            })
-                            counts["Tokens"] += 1
-                except: pass
+                    except: break
     except Exception as e: report.warning(f"Note Libre: {e}")
 
     # 2. VOIE API
     if api_key:
         try:
             for action, label in [("txlist", "Native"), ("tokentx", "Tokens"), ("txlistinternal", "Internal")]:
-                status_text.text(f"⏳ Voie API ({label}) en cours...")
+                status_text.text(f"⏳ Voie API ({label})...")
                 url = f"https://{cfg['host']}/api?module=account&action={action}&address={address}&startblock=0&endblock=99999999&offset=10000&sort=desc&apikey={api_key}"
                 res = requests.get(url, timeout=15).json()
                 if str(res.get("status")) == "1":
                     for t in res.get("result", []):
                         try:
-                            asset = t.get("tokenSymbol") or cfg["native"] if action == "tokentx" else cfg["native"]
+                            asset_name = t.get("tokenSymbol") or cfg["native"] if action == "tokentx" else cfg["native"]
                             dec = int(t.get("tokenDecimal") or 18) if action == "tokentx" else 18
-                            amt = int(t.get("value", 0)) / 10**dec
+                            amt = float(t.get("value") or 0) / 10**dec
                             fee = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 10**18
                             f_addr, t_addr = t.get('from', '').lower(), t.get('to', '').lower()
-                            cp = f_addr if t_addr == addr_low else t_addr
                             direction = 1 if t_addr == addr_low else -1
-
                             txs.append({
                                 'Source': f'API ({label})', 'ID': t['hash'], 'Date': datetime.fromtimestamp(int(t['timeStamp'])),
-                                'Account': address, 'Asset': str(asset).upper(), 'Type': 'Mvt', 'Amount': amt * direction, 'Fee': fee,
-                                'Counterparty': cp, 'Network': network
+                                'Account': address, 'Asset': str(asset_name).upper(), 'Type': 'Mvt', 'Amount': amt * direction, 'Fee': fee,
+                                'Counterparty': f_addr if direction == 1 else t_addr, 'Network': network
                             })
                             counts[label] += 1
                         except: continue
@@ -275,10 +223,9 @@ def fetch_data(address, api_key, network):
     df = pd.DataFrame(txs)
     if not df.empty:
         df = df.sort_values('Source', ascending=False).drop_duplicates(subset=['ID', 'Asset', 'Network'], keep='first')
-
         with st.spinner("Valorisation EUR..."):
             df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
-            df = df.dropna(subset=['Date'])
+            df = df.dropna(subset=['Date', 'Asset'])
             unique_combos = df[['Asset', 'Date']].copy()
             unique_combos['Date_Key'] = unique_combos['Date'].dt.date
             unique_combos = unique_combos[['Asset', 'Date_Key']].drop_duplicates()
@@ -287,7 +234,6 @@ def fetch_data(address, api_key, network):
             if total_p > 0:
                 pbar = st.progress(0)
                 for i, (_, row) in enumerate(unique_combos.iterrows()):
-                    # Sécurité: s'assurer que Asset est bien une string avant l'appel
                     a_name = str(row['Asset']) if row['Asset'] else "TOKEN"
                     prices_map[(row['Asset'], row['Date_Key'])] = get_price_eur(a_name, row['Date_Key'])
                     if total_p > 5: time.sleep(1.05)
@@ -433,4 +379,4 @@ elif menu == "Spam & Settings":
         st.session_state.transactions = pd.DataFrame(columns=REQUIRED_COLS)
         st.session_state.accounts_metadata = {}; st.rerun()
 
-st.sidebar.divider(); st.sidebar.caption("Jules AI Harvest Pro v2.3")
+st.sidebar.divider(); st.sidebar.caption("Jules AI Harvest Pro v2.4")
