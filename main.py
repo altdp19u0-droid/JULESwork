@@ -22,6 +22,11 @@ REQUIRED_COLS = ['Source', 'ID', 'Date', 'Account', 'Asset', 'Type', 'Amount', '
 
 if 'transactions' not in st.session_state or not all(c in st.session_state.transactions.columns for c in REQUIRED_COLS):
     st.session_state.transactions = pd.DataFrame(columns=REQUIRED_COLS)
+
+# Sanity check: conversion systématique en datetime pour éviter les AttributeError
+if not st.session_state.transactions.empty:
+    st.session_state.transactions['Date'] = pd.to_datetime(st.session_state.transactions['Date'], utc=True, errors='coerce')
+
 if 'accounts_metadata' not in st.session_state:
     st.session_state.accounts_metadata = {}
 if 'fiat_accounts' not in st.session_state:
@@ -125,7 +130,13 @@ def fetch_data(address, api_key, network):
                             else: break
 
                         data = res.json()
-                        items = data.get("items", data.get("result", []))
+                        if isinstance(data, list):
+                            items = data
+                        elif isinstance(data, dict):
+                            items = data.get("items", data.get("result", []))
+                        else:
+                            items = []
+
                         if not items or not isinstance(items, list): break
 
                         for t in items:
@@ -255,6 +266,10 @@ def fetch_data(address, api_key, network):
         df = df.sort_values('Source', ascending=False).drop_duplicates(subset=['ID', 'Asset', 'Network'], keep='first')
 
         with st.spinner("Valorisation EUR..."):
+            # Fiabilisation du typage Datetime avant opérations .dt
+            df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
+            df = df.dropna(subset=['Date'])
+
             unique_combos = df[['Asset', 'Date']].copy()
             unique_combos['Date_Key'] = unique_combos['Date'].dt.date
             unique_combos = unique_combos[['Asset', 'Date_Key']].drop_duplicates()
@@ -310,12 +325,15 @@ if menu == "Harvest":
 
             if m_submit:
                 m_id = f"MANUAL-{int(time.time())}"
+                # On force UTC pour la cohérence avec les données récoltées
+                dt_manual = datetime.combine(m_date, datetime.min.time()).replace(tzinfo=None)
                 new_row = pd.DataFrame([{
-                    'Source': '✍️ Manuel', 'ID': m_id, 'Date': datetime.combine(m_date, datetime.min.time()),
+                    'Source': '✍️ Manuel', 'ID': m_id, 'Date': dt_manual,
                     'Account': 'Manual Wallet', 'Asset': m_asset.upper(), 'Type': 'Mvt',
                     'Amount': m_amt, 'Fee': 0.0, 'Fiat_Value_EUR': 0.0,
                     'Counterparty': 'User Input', 'Network': m_net, 'Is_Spam': False, 'Category': m_cat
                 }])
+                new_row['Date'] = pd.to_datetime(new_row['Date'], utc=True)
                 # Calcul de la valeur Fiat si possible
                 new_row['Fiat_Value_EUR'] = new_row.apply(lambda r: r['Amount'] * get_price_eur(r['Asset'], r['Date']), axis=1)
                 st.session_state.transactions = pd.concat([st.session_state.transactions, new_row], ignore_index=True)
@@ -350,8 +368,10 @@ elif menu == "Consultation":
 
         if not inventory.empty:
             now = datetime.now()
+            # Nettoyage types avant calculs
+            inventory['Amount'] = inventory['Amount'].astype(float)
             # On trie par valeur descendante
-            inventory['p_eur'] = inventory['Asset'].apply(lambda a: get_price_eur(a, now))
+            inventory['p_eur'] = inventory['Asset'].apply(lambda a: float(get_price_eur(a, now)))
             inventory['val_eur'] = inventory['Amount'] * inventory['p_eur']
             inventory = inventory.sort_values('val_eur', ascending=False)
 
