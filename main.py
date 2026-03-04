@@ -7,7 +7,7 @@ import time
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto Tracker Harvest Pro", layout="wide")
 
-# Configuration des Réseaux (Architecture demandée)
+# Configuration des Réseaux
 NETWORKS_CFG = {
     "Ethereum": {"host": "api.etherscan.io", "native": "ETH", "free_api": "https://api.ethplorer.io"},
     "Polygon": {"host": "api.polygonscan.com", "native": "POL"},
@@ -33,7 +33,6 @@ if 'spam_addresses' not in st.session_state:
 
 @st.cache_data(ttl=86400)
 def get_eur_usd_rate(date_obj):
-    """ Taux EUR/USD via Frankfurter (BCE) """
     date_str = date_obj.strftime("%Y-%m-%d")
     try:
         url = f"https://api.frankfurter.app/{date_str}?from=USD&to=EUR"
@@ -43,7 +42,7 @@ def get_eur_usd_rate(date_obj):
 
 @st.cache_data(ttl=3600)
 def get_price_usd(asset, date_obj):
-    """ Prix USD via CoinGecko ou DeFiLlama """
+    # Mapping étendu pour les assets demandés
     cg_map = {
         "ETH": "ethereum", "BNB": "binancecoin", "POL": "polygon-ecosystem-token",
         "USDT": "tether", "USDC": "usd-coin", "DAI": "dai",
@@ -54,14 +53,12 @@ def get_price_usd(asset, date_obj):
     asset_id = cg_map.get(asset.upper(), asset.lower())
     d_str = date_obj.strftime("%d-%m-%Y")
 
-    # Try CoinGecko
     try:
         url = f"https://api.coingecko.com/api/v3/coins/{asset_id}/history?date={d_str}&localization=false"
         res = requests.get(url, timeout=5).json()
         if "market_data" in res: return res["market_data"]["current_price"]["usd"]
     except: pass
 
-    # Try DeFiLlama
     try:
         ts = int(time.mktime(date_obj.timetuple()))
         url = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{asset_id}"
@@ -70,10 +67,8 @@ def get_price_usd(asset, date_obj):
             return res["coins"][next(iter(res["coins"]))]["price"]
     except: pass
 
-    # Stablecoins fallback
     if asset.upper() in ["USDT", "USDC", "DAI"]: return 1.0
-    if asset.upper() in ["EURA", "AGEUR", "STEUR"]: return 1.08 # Approx conversion if USD
-
+    if asset.upper() in ["EURA", "AGEUR", "STEUR"]: return 1.08
     return 0.0
 
 def get_price_eur(asset, date_obj):
@@ -81,7 +76,7 @@ def get_price_eur(asset, date_obj):
     if usd == 0: return 0.0
     return usd * get_eur_usd_rate(date_obj)
 
-# --- MOTEUR D'EXPLORATION ROBUSTE ---
+# --- MOTEUR D'EXPLORATION ROBUSTE (V2.2) ---
 
 def fetch_data(address, api_key, network):
     txs = []
@@ -95,76 +90,115 @@ def fetch_data(address, api_key, network):
     # 1. VOIE LIBRE (Blockscout v2 / Ethplorer)
     try:
         if network == "Ethereum" and "free_api" in cfg:
-            status_text.text("⏳ Exploration Ethplorer (Ethereum)...")
+            status_text.text("⏳ Exploration Ethplorer...")
             url = f"{cfg['free_api']}/getAddressTransactions/{address}?apiKey=freekey&limit=1000"
             data = requests.get(url, timeout=10).json()
             if isinstance(data, list):
                 for t in data:
                     txs.append({
-                        'Source': 'Ethplorer (Libre)', 'ID': t['hash'],
-                        'Date': datetime.fromtimestamp(int(t['timestamp'])),
-                        'Account': address, 'Asset': 'ETH', 'Type': 'Mvt',
-                        'Amount': float(t.get('value', 0)), 'Fee': 0.0,
-                        'Counterparty': t.get('from', 'Unknown'), 'Network': network
+                        'Source': 'Ethplorer', 'ID': t['hash'], 'Date': datetime.fromtimestamp(int(t['timestamp'])),
+                        'Account': address, 'Asset': 'ETH', 'Type': 'Mvt', 'Amount': float(t.get('value', 0)),
+                        'Fee': 0.0, 'Counterparty': t.get('from', 'Unknown'), 'Network': network
                     })
                     counts["Native"] += 1
 
         elif "free_api" in cfg and "blockscout" in cfg["free_api"]:
-            for endpoint, label in [("transactions", "Native"), ("token-transfers", "Tokens"), ("internal-transactions", "Internal")]:
+            # On explore les transactions ET les transferts de tokens
+            endpoints = [
+                ("transactions", "Native"),
+                ("token-transfers", "Tokens"),
+                ("internal-transactions", "Internal")
+            ]
+            for endpoint, label in endpoints:
                 url = f"{cfg['free_api']}/addresses/{address}/{endpoint}"
-                for page in range(40): # Cap à 2000 txs par type
+                for page in range(40):
                     try:
                         status_text.text(f"⏳ Voie Libre ({label}) : Page {page+1}...")
                         res = requests.get(url, timeout=10)
                         if res.status_code != 200: break
                         data = res.json()
-                        items = data.get("items", [])
-                        if not items: break
+                        items = data.get("items", data.get("result", []))
+                        if not items or not isinstance(items, list): break
 
                         for t in items:
                             try:
-                                # Correction Hash (Blockscout utilise souvent tx_hash pour les tokens)
                                 tx_id = t.get('hash') or t.get('tx_hash')
                                 if not tx_id: continue
 
-                                # Parsing Asset & Amount
-                                if endpoint == "token-transfers":
-                                    tok = t.get('token', {})
+                                if label == "Tokens":
+                                    tok = t.get('token') or {}
                                     asset = tok.get('symbol', 'TOKEN')
-                                    dec = int(tok.get('decimals', 18))
-                                    amount = int(t.get('value', 0)) / 10**dec
+                                    dec = int(tok.get('decimals', 18)) if tok.get('decimals') else 18
+                                    val_str = t.get('value', '0')
+                                    amount = float(val_str) / 10**dec if val_str else 0.0
                                 else:
                                     asset = cfg['native']
-                                    amount = int(t.get('value', 0)) / 10**18
+                                    val_str = t.get('value', '0')
+                                    amount = float(val_str) / 10**18 if val_str else 0.0
 
-                                # Timestamp
-                                dt_str = t.get('timestamp', '')
-                                dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00')) if dt_str else datetime.now()
+                                dt_str = t.get('timestamp') or t.get('timeStamp')
+                                if dt_str and str(dt_str).isdigit():
+                                    dt = datetime.fromtimestamp(int(dt_str))
+                                elif dt_str:
+                                    dt = datetime.fromisoformat(str(dt_str).replace('Z', '+00:00'))
+                                else:
+                                    dt = datetime.now()
 
-                                # Fees
-                                fee = int(t.get('fee', {}).get('value', 0)) / 10**18 if t.get('fee') else 0.0
+                                fee_obj = t.get('fee') or {}
+                                fee_val = fee_obj.get('value', '0') if isinstance(fee_obj, dict) else '0'
+                                fee = float(fee_val) / 10**18
 
-                                # Counterparty logic (Qui est à l'autre bout ?)
-                                f_addr = t.get('from', {}).get('hash', 'Unknown').lower()
-                                t_addr = t.get('to', {}).get('hash', 'Unknown').lower()
+                                f_raw = t.get('from')
+                                t_raw = t.get('to')
+                                f_addr = (f_raw.get('hash') if isinstance(f_raw, dict) else f_raw or 'Unknown').lower()
+                                t_addr = (t_raw.get('hash') if isinstance(t_raw, dict) else t_raw or 'Unknown').lower()
                                 cp = f_addr if t_addr == addr_low else t_addr
+
+                                # Détermination du sens pour le calcul de balance
+                                direction = 1 if t_addr == addr_low else -1
 
                                 txs.append({
                                     'Source': f'Libre ({label})', 'ID': tx_id, 'Date': dt,
                                     'Account': address, 'Asset': asset, 'Type': 'Mvt',
-                                    'Amount': amount, 'Fee': fee, 'Counterparty': cp, 'Network': network
+                                    'Amount': amount * direction, 'Fee': fee, 'Counterparty': cp, 'Network': network
                                 })
                                 counts[label] += 1
-                            except: continue
+                            except Exception as e:
+                                # report.write(f"Err parsing item: {e}")
+                                continue
 
-                        if data.get("next_page_params"):
-                            q = "&".join([f"{k}={v}" for k, v in data["next_page_params"].items()])
+                        next_params = data.get("next_page_params")
+                        if next_params:
+                            q = "&".join([f"{k}={v}" for k, v in next_params.items()])
                             url = f"{cfg['free_api']}/addresses/{address}/{endpoint}?{q}"
                         else: break
-                    except: break
+                    except Exception as e:
+                        report.warning(f"Err endpoint {label}: {e}")
+                        break
+
+            # Filet de sécurité : Récupérer les balances actuelles si transfers=0
+            if counts["Tokens"] == 0:
+                try:
+                    status_text.text("⏳ Recherche de balances (Filet de sécurité)...")
+                    url_bal = f"{cfg['free_api']}/addresses/{address}/tokens"
+                    res_bal = requests.get(url_bal, timeout=10).json()
+                    items_bal = res_bal.get("items", [])
+                    for b in items_bal:
+                        tok = b.get('token', {})
+                        asset = tok.get('symbol', 'TOKEN')
+                        dec = int(tok.get('decimals', 18)) if tok.get('decimals') else 18
+                        amt = float(b.get('value', '0')) / 10**dec
+                        if amt > 0:
+                            txs.append({
+                                'Source': 'Libre (Balance)', 'ID': f"BAL-{asset}-{address}", 'Date': datetime.now(),
+                                'Account': address, 'Asset': asset, 'Type': 'Balance', 'Amount': amt,
+                                'Fee': 0.0, 'Counterparty': 'Current Wallet', 'Network': network
+                            })
+                            counts["Tokens"] += 1
+                except: pass
     except Exception as e: report.warning(f"Note Libre: {e}")
 
-    # 2. VOIE API (Etherscan/BscScan etc)
+    # 2. VOIE API
     if api_key:
         try:
             for action, label in [("txlist", "Native"), ("tokentx", "Tokens"), ("txlistinternal", "Internal")]:
@@ -178,16 +212,14 @@ def fetch_data(address, api_key, network):
                             dec = int(t.get("tokenDecimal", 18)) if action == "tokentx" else 18
                             amt = int(t.get("value", 0)) / 10**dec
                             fee = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 10**18
-
-                            f_addr = t.get('from', '').lower()
-                            t_addr = t.get('to', '').lower()
+                            f_addr, t_addr = t.get('from', '').lower(), t.get('to', '').lower()
                             cp = f_addr if t_addr == addr_low else t_addr
+                            direction = 1 if t_addr == addr_low else -1
 
                             txs.append({
-                                'Source': f'API ({label})', 'ID': t['hash'],
-                                'Date': datetime.fromtimestamp(int(t['timeStamp'])),
-                                'Account': address, 'Asset': asset, 'Type': 'Mvt',
-                                'Amount': amt, 'Fee': fee, 'Counterparty': cp, 'Network': network
+                                'Source': f'API ({label})', 'ID': t['hash'], 'Date': datetime.fromtimestamp(int(t['timeStamp'])),
+                                'Account': address, 'Asset': asset, 'Type': 'Mvt', 'Amount': amt * direction, 'Fee': fee,
+                                'Counterparty': cp, 'Network': network
                             })
                             counts[label] += 1
                         except: continue
@@ -198,11 +230,8 @@ def fetch_data(address, api_key, network):
 
     df = pd.DataFrame(txs)
     if not df.empty:
-        # Nettoyage
         df = df.drop_duplicates(subset=['ID', 'Asset', 'Amount'])
-
-        # Valorisation EUR
-        with st.spinner("Calcul des valeurs historiques EUR..."):
+        with st.spinner("Valorisation EUR..."):
             unique_combos = df[['Asset', 'Date']].copy()
             unique_combos['Date_Key'] = unique_combos['Date'].dt.date
             unique_combos = unique_combos[['Asset', 'Date_Key']].drop_duplicates()
@@ -212,20 +241,17 @@ def fetch_data(address, api_key, network):
                 pbar = st.progress(0)
                 for i, (_, row) in enumerate(unique_combos.iterrows()):
                     prices_map[(row['Asset'], row['Date_Key'])] = get_price_eur(row['Asset'], row['Date_Key'])
-                    if total_p > 5: time.sleep(1.05) # Rate limit respect
+                    if total_p > 5: time.sleep(1.05)
                     pbar.progress((i+1)/total_p)
                 pbar.empty()
             df['Fiat_Value_EUR'] = df.apply(lambda r: r['Amount'] * prices_map.get((r['Asset'], r['Date'].date()), 0.0), axis=1)
 
-        # Classification & Spam
         df['Is_Spam'] = df['Counterparty'].apply(lambda x: str(x).lower() in st.session_state.spam_addresses)
         def detect_cat(row):
             cp, ass = str(row['Counterparty']).lower(), str(row['Asset']).lower()
             if any(x in cp for x in ['swap', 'pool', 'staking', 'lending', 'uniswap', 'aave', 'pancake', '1inch', '8lnd']): return 'DeFi'
-            if any(x in ass for x in ['lp', 'steth', 'steur', 'lnd']): return 'Yield/Lp'
             return 'Transfert'
         df['Category'] = df.apply(detect_cat, axis=1)
-
     return df
 
 # --- UI PRINCIPALE ---
@@ -234,7 +260,7 @@ menu = st.sidebar.selectbox("Navigation", ["Harvest", "Consultation", "Frais & F
 
 if menu == "Harvest":
     st.header("🚜 Récolte Massive de Données")
-    with st.form("harvest_form", clear_on_submit=False):
+    with st.form("harvest_form"):
         col1, col2 = st.columns(2)
         addr = col1.text_input("Adresse Blockchain (0x...)")
         net = col2.selectbox("Réseau", list(NETWORKS_CFG.keys()))
@@ -244,15 +270,12 @@ if menu == "Harvest":
     if submit and addr:
         new_df = fetch_data(addr, key, net)
         if not new_df.empty:
-            # Fusion intelligente : on privilégie les nouvelles données tout en évitant les doublons stricts
             st.session_state.transactions = pd.concat([st.session_state.transactions, new_df])
             st.session_state.transactions = st.session_state.transactions.drop_duplicates(subset=['ID', 'Asset', 'Amount'], keep='first')
             st.session_state.transactions = st.session_state.transactions.sort_values('Date', ascending=False)
-
             st.session_state.accounts_metadata[f"{addr[:10]}... ({net})"] = {"Count": len(new_df)}
             st.success(f"Récolte réussie : {len(new_df)} lignes ajoutées.")
-        else:
-            st.warning("Aucune donnée trouvée.")
+        else: st.warning("Aucune donnée trouvée.")
 
     if st.session_state.accounts_metadata:
         st.subheader("Comptes actifs")
@@ -260,114 +283,107 @@ if menu == "Harvest":
             c1, c2 = st.columns([4, 1])
             c1.info(f"{acc} : {meta['Count']} transactions")
             if c2.button("Supprimer", key=f"del_{acc}"):
-                del st.session_state.accounts_metadata[acc]
-                st.rerun()
+                del st.session_state.accounts_metadata[acc]; st.rerun()
 
 elif menu == "Consultation":
     st.header("🔍 Consultation des actifs")
     if not st.session_state.transactions.empty:
-        df_view = st.session_state.transactions.copy()
-
-        # Résumé des Actifs
+        # Résumé des Actifs (Balance cumulée)
         st.subheader("📦 Inventaire des Actifs")
-        clean_df = df_view[df_view['Is_Spam'] == False]
-        # On estime grossièrement la balance
-        inventory = clean_df.groupby('Asset').agg({'Amount': 'sum', 'Fiat_Value_EUR': 'sum'}).reset_index()
-        inventory = inventory[inventory['Amount'] > 0]
+        clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
+        inventory = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
+        inventory = inventory[inventory['Amount'].abs() > 1e-9]
 
-        inv_cols = st.columns(min(len(inventory), 4) if not inventory.empty else 1)
-        for idx, row in inventory.iterrows():
-            with inv_cols[idx % 4]:
-                st.metric(row['Asset'], f"{row['Amount']:.4f}", f"{row['Fiat_Value_EUR']:,.2f} €")
+        if not inventory.empty:
+            now = datetime.now()
+            # On trie par valeur descendante
+            inventory['p_eur'] = inventory['Asset'].apply(lambda a: get_price_eur(a, now))
+            inventory['val_eur'] = inventory['Amount'] * inventory['p_eur']
+            inventory = inventory.sort_values('val_eur', ascending=False)
+
+            inv_cols = st.columns(min(len(inventory), 4))
+            for idx, (i, row) in enumerate(inventory.iterrows()):
+                with inv_cols[idx % 4]:
+                    st.metric(row['Asset'], f"{row['Amount']:.4f}", f"{row['val_eur']:,.2f} €")
 
         st.divider()
-
-        # Filtres rapides
-        f_col1, f_col2, f_col3 = st.columns(3)
+        df_display = st.session_state.transactions.copy()
+        f_col1, f_col2 = st.columns(2)
         show_spam = f_col1.checkbox("Afficher le Spam", value=False)
-        selected_asset = f_col2.multiselect("Filtrer par Asset", options=sorted(df_view['Asset'].unique()))
+        selected_asset = f_col2.multiselect("Filtrer par Asset", options=sorted(df_display['Asset'].unique()))
 
-        if not show_spam:
-            df_view = df_view[df_view['Is_Spam'] == False]
-        if selected_asset:
-            df_view = df_view[df_view['Asset'].isin(selected_asset)]
+        if not show_spam: df_display = df_display[df_display['Is_Spam'] == False]
+        if selected_asset: df_display = df_display[df_display['Asset'].isin(selected_asset)]
 
-        st.data_editor(
-            df_view.sort_values('Date', ascending=False),
+        # Capture des modifications (Persistance)
+        edited_df = st.data_editor(
+            df_display.sort_values('Date', ascending=False),
             use_container_width=True,
-            column_config={
-                "Fiat_Value_EUR": st.column_config.NumberColumn("Valeur EUR", format="%.2f €"),
-                "Amount": st.column_config.NumberColumn("Quantité", format="%.6f"),
-                "Fee": st.column_config.NumberColumn("Frais", format="%.8f"),
-                "Is_Spam": st.column_config.CheckboxColumn("Spam")
-            }
+            key="tx_editor"
         )
-    else:
-        st.info("Lancez d'abord une récolte dans le menu 'Harvest'.")
+
+        if st.button("Enregistrer les modifications"):
+            # On met à jour la session state globale par rapport aux IDs modifiés
+            # Pour chaque ligne du edited_df, on cherche l'ID correspondant dans transactions
+            # Note: ID + Asset + Amount est notre triplet d'unicité
+            for _, row in edited_df.iterrows():
+                mask = (st.session_state.transactions['ID'] == row['ID']) & \
+                       (st.session_state.transactions['Asset'] == row['Asset']) & \
+                       (st.session_state.transactions['Amount'] == row['Amount'])
+                st.session_state.transactions.loc[mask, 'Is_Spam'] = row['Is_Spam']
+                st.session_state.transactions.loc[mask, 'Category'] = row['Category']
+            st.success("Modifications enregistrées !")
+            st.rerun()
+
+    else: st.info("Lancez d'abord une récolte.")
 
 elif menu == "Frais & Fiscalité":
     st.header("⚖️ Bilan Fiscal & Frais")
-
-    st.subheader("🏦 Gestion des comptes Fiat (Banque)")
-    st.session_state.fiat_accounts = st.data_editor(
-        st.session_state.fiat_accounts,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "Type": st.column_config.SelectboxColumn("Type", options=["Dépôt", "Retrait", "Vente Crypto"]),
-            "Amount_EUR": st.column_config.NumberColumn("Montant EUR", format="%.2f €")
-        }
-    )
+    st.subheader("🏦 Comptes Fiat & Apports")
+    st.session_state.fiat_accounts = st.data_editor(st.session_state.fiat_accounts, num_rows="dynamic", use_container_width=True)
 
     st.divider()
-    df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
+    clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
 
-    if not df.empty:
-        total_fees = df['Fee'].sum()
-        total_val = df['Fiat_Value_EUR'].sum()
+    if not clean_df.empty:
+        # Calcul de la valeur réelle actuelle du portefeuille (VGP pour 150 VH bis)
+        inventory = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
+        inventory = inventory[inventory['Amount'].abs() > 1e-9]
+        now = datetime.now()
+        vgp = 0.0
+        for _, row in inventory.iterrows():
+            vgp += row['Amount'] * get_price_eur(row['Asset'], now)
 
-        st.metric("Total Frais (Native)", f"{total_fees:.4f}")
-        st.metric("Valeur Totale Portefeuille (Estimée EUR)", f"{total_val:,.2f} €")
+        st.metric("Total Frais (Native)", f"{clean_df['Fee'].sum():.4f}")
+        st.metric("Valeur Globale du Portefeuille (Actuelle)", f"{vgp:,.2f} €")
 
-        st.divider()
-        st.subheader("Simulateur Article 150 VH bis")
-        prix_acq = st.number_input("Prix d'acquisition total (EUR)", value=0.0)
-        prix_vent = st.number_input("Montant de la cession (EUR)", value=0.0)
+        st.subheader("⚖️ Simulateur Article 150 VH bis")
+        col_f1, col_f2 = st.columns(2)
+        # Prix d'acquisition net = somme des dépôts - somme des retraits fiat
+        depots = st.session_state.fiat_accounts[st.session_state.fiat_accounts['Type']=='Dépôt']['Amount_EUR'].sum()
+        retraits = st.session_state.fiat_accounts[st.session_state.fiat_accounts['Type']=='Retrait']['Amount_EUR'].sum()
+        prix_acq_auto = depots - retraits
 
-        if prix_vent > 0 and total_val > 0:
-            # PV = Prix de vente - (Prix d'acquisition * (Prix de vente / Valeur totale portefeuille))
-            pv = prix_vent - (prix_acq * (prix_vent / total_val))
-            st.write(f"**Plus-value imposable :** {pv:,.2f} €")
-            st.write(f"**Impôt estimé (Flat Tax 30%) :** {pv * 0.3:,.2f} €")
-    else:
-        st.info("Données insuffisantes pour le bilan.")
+        prix_acq = col_f1.number_input("Prix d'acquisition total calculé/manuel (EUR)", value=float(max(0, prix_acq_auto)))
+        prix_vent = col_f2.number_input("Montant de la cession (Prix de vente EUR)", value=0.0)
+
+        if prix_vent > 0 and vgp > 0:
+            # Formule PV = Prix de cession - [Prix d'acquisition * (Prix de cession / Valeur globale du portefeuille)]
+            pv = prix_vent - (prix_acq * (prix_vent / vgp))
+            st.success(f"**Plus-value imposable :** {pv:,.2f} €")
+            st.info(f"**Impôt estimé (Flat Tax 30%) :** {pv * 0.3:,.2f} €")
+    else: st.info("Aucune donnée blockchain valide pour le calcul fiscal.")
 
 elif menu == "Export":
-    st.header("📥 Export des données")
+    st.header("📥 Export")
     if not st.session_state.transactions.empty:
-        csv = st.session_state.transactions.to_csv(index=False).encode('utf-8')
-        st.download_button("Télécharger l'historique complet (CSV)", csv, "crypto_harvest_export.csv", "text/csv")
-
-        st.subheader("Aperçu JSON (pour développeurs)")
-        st.json(st.session_state.transactions.head(10).to_dict(orient='records'))
-    else:
-        st.info("Rien à exporter.")
+        st.download_button("Télécharger CSV", st.session_state.transactions.to_csv(index=False).encode('utf-8'), "export.csv")
+    else: st.info("Rien à exporter.")
 
 elif menu == "Spam & Settings":
-    st.header("⚙️ Paramètres & Spam")
-    spam_input = st.text_area("Ajouter des adresses de Spam (une par ligne)")
-    if st.button("Mettre à jour la liste noire"):
-        new_spams = [s.strip().lower() for s in spam_input.split("\n") if s.strip()]
-        st.session_state.spam_addresses.update(new_spams)
-        # Marquer les transactions existantes
-        if not st.session_state.transactions.empty:
-            st.session_state.transactions['Is_Spam'] = st.session_state.transactions['Counterparty'].apply(lambda x: str(x).lower() in st.session_state.spam_addresses)
-        st.success("Liste de spam mise à jour.")
-
-    if st.button("Vider toute la base de données"):
+    st.header("⚙️ Settings")
+    if st.button("Vider la base"):
         st.session_state.transactions = pd.DataFrame(columns=REQUIRED_COLS)
-        st.session_state.accounts_metadata = {}
-        st.rerun()
+        st.session_state.accounts_metadata = {}; st.rerun()
 
-st.sidebar.divider()
-st.sidebar.caption("Jules AI Harvest Pro v2.1")
+st.sidebar.divider(); st.sidebar.caption("Jules AI Harvest Pro v2.2")
