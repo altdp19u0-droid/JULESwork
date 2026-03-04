@@ -105,26 +105,35 @@ def fetch_data(address, api_key, network):
         ]
 
         for endpoint, label in endpoints:
-            url = f"{cfg['free_api']}/addresses/{address}/{endpoint}"
-            for page in range(50): # Profondeur accrue
+            base_url = f"{cfg['free_api']}/addresses/{address}/{endpoint}"
+            url = base_url
+            for page in range(500): # Profondeur maximale (Jusqu'à 25000 txs par type)
                 try:
                     status_text.text(f"⏳ Extraction {label} : Page {page+1}...")
-                    res = requests.get(url, timeout=15)
+                    res = requests.get(url, timeout=25)
 
-                    # Fallback endpoint balances
                     if res.status_code == 404 and endpoint == "token-balances":
-                        res = requests.get(f"{cfg['free_api']}/addresses/{address}/tokens", timeout=15)
+                        res = requests.get(f"{cfg['free_api']}/addresses/{address}/tokens", timeout=25)
 
-                    if res.status_code != 200: break
+                    if res.status_code != 200:
+                        if res.status_code == 429:
+                            status_text.warning("Rate limit API... attente 5s")
+                            time.sleep(5)
+                            continue
+                        break
+
                     data = res.json()
-                    items = data if isinstance(data, list) else data.get("items", data.get("result", []))
-                    if not items or not isinstance(items, list): break
+                    # Détection flexible de la liste d'items (Blockscout v1/v2/Custom)
+                    items = data.get("items") if isinstance(data, dict) else data if isinstance(data, list) else None
+                    if items is None and isinstance(data, dict):
+                        items = data.get("result")
+
+                    if not isinstance(items, list) or not items: break
 
                     for t in items:
                         try:
                             if not isinstance(t, dict): continue
 
-                            # Identité Asset
                             if label == "Discovery":
                                 tok = t.get('token') or {}
                                 asset = tok.get('symbol') or tok.get('name') or 'TOKEN'
@@ -132,18 +141,19 @@ def fetch_data(address, api_key, network):
                                 val_raw = t.get('value') or '0'
                                 amount = float(val_raw) / 10**dec
                                 if amount <= 0: continue
-                                tx_id = f"DISC-{asset}-{address[:8]}"
+                                tx_id = f"DISC-{asset}-{address.lower()}"
                                 dt = datetime.now()
                                 direction = 1
-                                cp = "Discovery"
+                                cp = "Discovery Balance"
                             else:
                                 tx_id = t.get('hash') or t.get('tx_hash')
                                 if not tx_id: continue
 
-                                if label == "Tokens":
+                                # Détection Token ultra-robuste
+                                if label == "Tokens" or "token" in t or "tokenSymbol" in t:
                                     tok = t.get('token') or {}
-                                    asset = tok.get('symbol') or tok.get('name') or tok.get('address') or 'TOKEN'
-                                    dec = int(tok.get('decimals') or 18)
+                                    asset = tok.get('symbol') or t.get('tokenSymbol') or tok.get('name') or 'TOKEN'
+                                    dec = int(tok.get('decimals') or t.get('tokenDecimal') or 18)
                                     val_raw = t.get('value') or '0'
                                     amount = float(val_raw) / 10**dec
                                 else:
@@ -151,7 +161,12 @@ def fetch_data(address, api_key, network):
                                     amount = float(t.get('value') or '0') / 10**18
 
                                 dt_str = t.get('timestamp') or t.get('timeStamp')
-                                dt = datetime.fromisoformat(str(dt_str).replace('Z', '+00:00')) if dt_str and not str(dt_str).isdigit() else datetime.fromtimestamp(int(dt_str)) if dt_str else datetime.now()
+                                if dt_str and not str(dt_str).isdigit():
+                                    dt = datetime.fromisoformat(str(dt_str).replace('Z', '+00:00'))
+                                elif dt_str:
+                                    dt = datetime.fromtimestamp(int(dt_str))
+                                else:
+                                    dt = datetime.now()
 
                                 f_addr = (t.get('from') if isinstance(t.get('from'), str) else t.get('from', {}).get('hash', 'Unknown')).lower()
                                 t_addr = (t.get('to') if isinstance(t.get('to'), str) else t.get('to', {}).get('hash', 'Unknown')).lower()
@@ -172,27 +187,41 @@ def fetch_data(address, api_key, network):
                     next_p = data.get("next_page_params") if isinstance(data, dict) else None
                     if next_p:
                         q = "&".join([f"{k}={v}" for k, v in next_p.items()])
-                        url = f"{cfg['free_api']}/addresses/{address}/{endpoint}?{q}"
+                        url = f"{base_url}?{q}"
                     else: break
                 except: break
 
-    # -- PHASE 2 : VOIE API (Etherscan/BscScan etc) --
+    # -- PHASE 2 : VOIE API (Etherscan/BscScan etc avec Pagination) --
     if api_key:
-        api_endpoints = [("txlist", "Native"), ("tokentx", "Tokens"), ("txlistinternal", "Internal")]
+        api_endpoints = [
+            ("txlist", "Native"), ("tokentx", "Tokens"),
+            ("txlistinternal", "Internal"), ("erc721tx", "NFTs")
+        ]
         for action, label in api_endpoints:
             try:
-                status_text.text(f"⏳ Interrogation API {label}...")
-                url = f"https://{cfg['host']}/api?module=account&action={action}&address={address}&startblock=0&endblock=99999999&offset=10000&sort=desc&apikey={api_key}"
-                res = requests.get(url, timeout=15).json()
-                if str(res.get("status")) == "1":
-                    for t in res.get("result", []):
+                status_text.text(f"⏳ Interrogation API {label} (Deep)...")
+                start_block = 0
+                for loop in range(10): # Récupération jusqu'à 100,000 transactions par type
+                    url = f"https://{cfg['host']}/api?module=account&action={action}&address={address}&startblock={start_block}&endblock=99999999&offset=10000&sort=asc&apikey={api_key}"
+                    res = requests.get(url, timeout=20).json()
+
+                    results = res.get("result", [])
+                    if str(res.get("status")) != "1" or not isinstance(results, list) or not results:
+                        break
+
+                    for t in results:
                         try:
-                            asset = t.get("tokenSymbol") or cfg["native"] if action == "tokentx" else cfg["native"]
-                            dec = int(t.get("tokenDecimal") or 18) if action == "tokentx" else 18
+                            asset = t.get("tokenSymbol") or cfg["native"]
+                            dec = int(t.get("tokenDecimal") or 18)
                             amt = float(t.get("value") or 0) / 10**dec
-                            fee = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 10**18
+
+                            gas_price = int(t.get('gasPrice') or 0)
+                            gas_used = int(t.get('gasUsed') or 0)
+                            fee = (gas_used * gas_price) / 10**18
+
                             f_addr, t_addr = t.get('from', '').lower(), t.get('to', '').lower()
                             direction = 1 if t_addr == addr_low else -1
+
                             txs.append({
                                 'Source': f'API ({label})', 'ID': t['hash'], 'Date': datetime.fromtimestamp(int(t['timeStamp'])),
                                 'Account': address, 'Asset': str(asset).upper(), 'Type': 'Mvt', 'Amount': amt * direction, 'Fee': fee,
@@ -200,6 +229,13 @@ def fetch_data(address, api_key, network):
                             })
                             counts[label] += 1
                         except: continue
+
+                    # Pagination par bloc
+                    last_block = int(results[-1].get('blockNumber', 0))
+                    if last_block <= start_block: break
+                    start_block = last_block + 1
+                    if len(results) < 10000: break
+                    time.sleep(0.2) # Courtoisie API
             except: pass
 
     # -- PHASE 3 : TRAITEMENT & VALORISATION --
@@ -294,13 +330,16 @@ if menu == "Harvest":
 
 elif menu == "Consultation":
     st.header("🔍 Consultation & Inventaire")
+    show_spam = st.sidebar.checkbox("Afficher les transactions Spam", value=False)
+
     if not st.session_state.transactions.empty:
+        # Filtrage strict pour l'inventaire
         clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
         inv = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
         inv = inv[inv['Amount'].abs() > 1e-9]
 
         if not inv.empty:
-            st.subheader("📦 Position Actuelle")
+            st.subheader("📦 Position Actuelle (Hors Spam)")
             now = datetime.now()
             inv['p_eur'] = inv['Asset'].apply(lambda a: float(get_price_eur(str(a), now)))
             inv['val_eur'] = inv['Amount'] * inv['p_eur']
@@ -311,12 +350,20 @@ elif menu == "Consultation":
 
         st.divider()
         df_display = st.session_state.transactions.copy()
-        f_asset = st.multiselect("Filtrer Asset", options=sorted(df_display['Asset'].unique()))
+        # Masquage immédiat si l'option est décochée (Comportement automatique)
+        if not show_spam:
+            df_display = df_display[df_display['Is_Spam'] == False]
+
+        # On libère aussi la liste des assets filtrables de tout spam
+        available_assets = sorted(df_display['Asset'].unique())
+        f_asset = st.multiselect("Filtrer Asset", options=available_assets)
         if f_asset: df_display = df_display[df_display['Asset'].isin(f_asset)]
 
+        st.subheader("📝 Historique des Mouvements")
         edited = st.data_editor(df_display.sort_values('Date', ascending=False), use_container_width=True, key="tx_ed")
         if st.button("💾 Sauvegarder modifications"):
             for _, row in edited.iterrows():
+                # Mise à jour de la ligne spécifique
                 mask = (st.session_state.transactions['ID'] == row['ID']) & (st.session_state.transactions['Asset'] == row['Asset'])
                 st.session_state.transactions.loc[mask, 'Is_Spam'] = row['Is_Spam']
                 st.session_state.transactions.loc[mask, 'Category'] = row['Category']
@@ -329,6 +376,8 @@ elif menu == "Consultation":
                 else:
                     if cp in st.session_state.spam_addresses:
                         st.session_state.spam_addresses.remove(cp)
+                        # On réactive les transactions si on retire le flag spam global
+                        st.session_state.transactions.loc[st.session_state.transactions['Counterparty'].str.lower() == cp, 'Is_Spam'] = False
             st.success("Enregistré ! (Propagation appliquée)"); st.rerun()
 
 elif menu == "Frais & Fiscalité":
