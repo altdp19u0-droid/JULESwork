@@ -103,19 +103,27 @@ def fetch_data(address, api_key, network):
                     counts["Native"] += 1
 
         elif "free_api" in cfg and "blockscout" in cfg["free_api"]:
-            # On explore les transactions ET les transferts de tokens
+            # 4 Axes de détection pour garantir le multi-assets
             endpoints = [
                 ("transactions", "Native"),
                 ("token-transfers", "Tokens"),
-                ("internal-transactions", "Internal")
+                ("internal-transactions", "Internal"),
+                ("token-balances", "Balances")
             ]
             for endpoint, label in endpoints:
                 url = f"{cfg['free_api']}/addresses/{address}/{endpoint}"
                 for page in range(40):
                     try:
                         status_text.text(f"⏳ Voie Libre ({label}) : Page {page+1}...")
-                        res = requests.get(url, timeout=10)
-                        if res.status_code != 200: break
+                        res = requests.get(url, timeout=15)
+                        if res.status_code != 200:
+                            # Fallback pour certains Blockscout qui utilisent /tokens au lieu de /token-balances
+                            if endpoint == "token-balances" and res.status_code == 404:
+                                url = f"{cfg['free_api']}/addresses/{address}/tokens"
+                                res = requests.get(url, timeout=15)
+                                if res.status_code != 200: break
+                            else: break
+
                         data = res.json()
                         items = data.get("items", data.get("result", []))
                         if not items or not isinstance(items, list): break
@@ -123,18 +131,29 @@ def fetch_data(address, api_key, network):
                         for t in items:
                             try:
                                 tx_id = t.get('hash') or t.get('tx_hash')
-                                if not tx_id: continue
 
-                                if label == "Tokens":
+                                # Cas spécial de l'endpoint balances (balances actuelles)
+                                if label == "Balances":
                                     tok = t.get('token') or {}
-                                    asset = tok.get('symbol', 'TOKEN')
+                                    asset = tok.get('symbol') or tok.get('name') or 'TOKEN'
                                     dec = int(tok.get('decimals', 18)) if tok.get('decimals') else 18
                                     val_str = t.get('value', '0')
-                                    amount = float(val_str) / 10**dec if val_str else 0.0
+                                    amount = float(val_str) / 10**dec
+                                    if amount <= 0: continue
+                                    tx_id = f"DISCOVERY-{asset}-{address[:8]}"
+                                    direction = 1
                                 else:
-                                    asset = cfg['native']
-                                    val_str = t.get('value', '0')
-                                    amount = float(val_str) / 10**18 if val_str else 0.0
+                                    if not tx_id: continue
+                                    if label == "Tokens":
+                                        tok = t.get('token') or {}
+                                        asset = tok.get('symbol') or tok.get('name') or 'TOKEN'
+                                        dec = int(tok.get('decimals', 18)) if tok.get('decimals') else 18
+                                        val_str = t.get('value', '0')
+                                        amount = float(val_str) / 10**dec if val_str else 0.0
+                                    else:
+                                        asset = cfg['native']
+                                        val_str = t.get('value', '0')
+                                        amount = float(val_str) / 10**18 if val_str else 0.0
 
                                 dt_str = t.get('timestamp') or t.get('timeStamp')
                                 if dt_str and str(dt_str).isdigit():
@@ -154,12 +173,13 @@ def fetch_data(address, api_key, network):
                                 t_addr = (t_raw.get('hash') if isinstance(t_raw, dict) else t_raw or 'Unknown').lower()
                                 cp = f_addr if t_addr == addr_low else t_addr
 
-                                # Détermination du sens pour le calcul de balance
-                                direction = 1 if t_addr == addr_low else -1
+                                # Détermination du sens pour le calcul de balance (si pas Discovery)
+                                if endpoint != "tokens":
+                                    direction = 1 if t_addr == addr_low else -1
 
                                 txs.append({
                                     'Source': f'Libre ({label})', 'ID': tx_id, 'Date': dt,
-                                    'Account': address, 'Asset': asset, 'Type': 'Mvt',
+                                    'Account': address, 'Asset': asset.upper(), 'Type': 'Mvt',
                                     'Amount': amount * direction, 'Fee': fee, 'Counterparty': cp, 'Network': network
                                 })
                                 counts[label] += 1
@@ -230,7 +250,10 @@ def fetch_data(address, api_key, network):
 
     df = pd.DataFrame(txs)
     if not df.empty:
-        df = df.drop_duplicates(subset=['ID', 'Asset', 'Amount'])
+        # Dédoublonnage robuste : ID + Asset + Network
+        # On garde 'Libre' en priorité si doublon avec 'API' pour la cohérence des données gratuites
+        df = df.sort_values('Source', ascending=False).drop_duplicates(subset=['ID', 'Asset', 'Network'], keep='first')
+
         with st.spinner("Valorisation EUR..."):
             unique_combos = df[['Asset', 'Date']].copy()
             unique_combos['Date_Key'] = unique_combos['Date'].dt.date
@@ -260,12 +283,43 @@ menu = st.sidebar.selectbox("Navigation", ["Harvest", "Consultation", "Frais & F
 
 if menu == "Harvest":
     st.header("🚜 Récolte Massive de Données")
-    with st.form("harvest_form"):
-        col1, col2 = st.columns(2)
-        addr = col1.text_input("Adresse Blockchain (0x...)")
-        net = col2.selectbox("Réseau", list(NETWORKS_CFG.keys()))
-        key = st.text_input(f"Clé API pour {net} (Optionnel)", type="password")
-        submit = st.form_submit_button("Lancer la récolte (Libre + API)")
+
+    t1, t2 = st.tabs(["Exploration Automatique", "Saisie Manuelle"])
+
+    with t1:
+        with st.form("harvest_form"):
+            col1, col2 = st.columns(2)
+            addr = col1.text_input("Adresse Blockchain (0x...)")
+            net = col2.selectbox("Réseau", list(NETWORKS_CFG.keys()))
+            key = st.text_input(f"Clé API pour {net} (Optionnel)", type="password")
+            submit = st.form_submit_button("Lancer la récolte (Libre + API)")
+
+    with t2:
+        st.subheader("📝 Ajouter une transaction isolée")
+        with st.form("manual_entry"):
+            mc1, mc2, mc3 = st.columns(3)
+            m_date = mc1.date_input("Date", datetime.now())
+            m_asset = mc2.text_input("Asset (ex: USDC, 8LND)", "USDC")
+            m_amt = mc3.number_input("Montant (Positif=In, Négatif=Out)", value=0.0, format="%.6f")
+
+            mc4, mc5 = st.columns(2)
+            m_net = mc4.selectbox("Réseau", list(NETWORKS_CFG.keys()), key="m_net")
+            m_cat = mc5.selectbox("Catégorie", ["Transfert", "Swap", "Staking", "Achat Fiat"], index=0)
+
+            m_submit = st.form_submit_button("Ajouter à l'historique")
+
+            if m_submit:
+                m_id = f"MANUAL-{int(time.time())}"
+                new_row = pd.DataFrame([{
+                    'Source': '✍️ Manuel', 'ID': m_id, 'Date': datetime.combine(m_date, datetime.min.time()),
+                    'Account': 'Manual Wallet', 'Asset': m_asset.upper(), 'Type': 'Mvt',
+                    'Amount': m_amt, 'Fee': 0.0, 'Fiat_Value_EUR': 0.0,
+                    'Counterparty': 'User Input', 'Network': m_net, 'Is_Spam': False, 'Category': m_cat
+                }])
+                # Calcul de la valeur Fiat si possible
+                new_row['Fiat_Value_EUR'] = new_row.apply(lambda r: r['Amount'] * get_price_eur(r['Asset'], r['Date']), axis=1)
+                st.session_state.transactions = pd.concat([st.session_state.transactions, new_row], ignore_index=True)
+                st.success(f"Transaction {m_asset} ajoutée !")
 
     if submit and addr:
         new_df = fetch_data(addr, key, net)
@@ -316,20 +370,26 @@ elif menu == "Consultation":
         if selected_asset: df_display = df_display[df_display['Asset'].isin(selected_asset)]
 
         # Capture des modifications (Persistance)
+        # On définit les colonnes éditables pour plus de clarté
         edited_df = st.data_editor(
             df_display.sort_values('Date', ascending=False),
             use_container_width=True,
-            key="tx_editor"
+            key="tx_editor",
+            column_config={
+                "Is_Spam": st.column_config.CheckboxColumn("Spam", help="Cocher pour ignorer dans les calculs"),
+                "Category": st.column_config.SelectboxColumn("Catégorie", options=["Transfert", "Swap", "DeFi", "Lending", "Spam", "Achat Fiat"]),
+                "Asset": st.column_config.TextColumn("Asset", disabled=True),
+                "Amount": st.column_config.NumberColumn("Montant", disabled=True, format="%.6f"),
+            }
         )
 
-        if st.button("Enregistrer les modifications"):
+        if st.button("💾 Enregistrer les modifications", use_container_width=True):
             # On met à jour la session state globale par rapport aux IDs modifiés
-            # Pour chaque ligne du edited_df, on cherche l'ID correspondant dans transactions
-            # Note: ID + Asset + Amount est notre triplet d'unicité
+            # Triplet d'unicité : ID + Asset + Network (pour éviter les collisions multi-chain ou multi-token)
             for _, row in edited_df.iterrows():
                 mask = (st.session_state.transactions['ID'] == row['ID']) & \
                        (st.session_state.transactions['Asset'] == row['Asset']) & \
-                       (st.session_state.transactions['Amount'] == row['Amount'])
+                       (st.session_state.transactions['Network'] == row['Network'])
                 st.session_state.transactions.loc[mask, 'Is_Spam'] = row['Is_Spam']
                 st.session_state.transactions.loc[mask, 'Category'] = row['Category']
             st.success("Modifications enregistrées !")
