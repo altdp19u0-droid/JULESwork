@@ -55,32 +55,47 @@ def fetch_data(address, api_key, network):
                 for t in data:
                     txs.append({'Source': 'Libre (Ethplorer)', 'ID': t['hash'], 'Date': datetime.fromtimestamp(int(t['timestamp'])), 'Account': address, 'Asset': 'ETH', 'Type': 'Mvt', 'Amount': float(t.get('value', 0)), 'Fee': 0.0, 'Counterparty': t['from'], 'Network': network})
         elif "blockscout" in cfg['free_api']:
+            # Blockscout API v2 - Native + Tokens ERC20 + Internal
             for sub in ["transactions", "token-transfers", "internal-transactions"]:
                 url = f"{cfg['free_api']}/addresses/{address}/{sub}"
-                for page in range(10):
-                    data = requests.get(url, timeout=10).json()
-                    if "items" in data:
-                        items = data["items"]
-                        if not items: break
-                        counts["free"] += len(items)
-                        for t in items:
-                            tok = t.get('token', {}) if sub == "token-transfers" else {}
-                            asset = tok.get('symbol', cfg['native'])
-                            dec = int(tok.get('decimals', 18))
-                            dt = datetime.fromisoformat(t['timestamp'].replace('Z', '+00:00'))
-                            txs.append({
-                                'Source': f'Libre (Blockscout-{sub})', 'ID': t['hash'], 'Date': dt,
-                                'Account': address, 'Asset': asset, 'Type': 'Mvt',
-                                'Amount': int(t.get('value', 0))/10**dec,
-                                'Fee': int(t.get('fee', {}).get('value', 0))/10**18,
-                                'Counterparty': t.get('from', {}).get('hash', 'Unknown'),
-                                'Network': network
-                            })
-                        if data.get("next_page_params"):
-                            q = "&".join([f"{k}={v}" for k, v in data["next_page_params"].items()])
-                            url = f"{cfg['free_api']}/addresses/{address}/{sub}?{q}"
+                # Augmentation à 40 pages pour viser ~1000+ transactions (Blockscout v2 renvoie souvent 25-50 items/page)
+                for page in range(40):
+                    try:
+                        data = requests.get(url, timeout=10).json()
+                        if "items" in data:
+                            items = data["items"]
+                            if not items: break
+                            counts["free"] += len(items)
+                            for t in items:
+                                # Détection fine de l'asset
+                                tok = t.get('token', {}) if sub == "token-transfers" else {}
+                                asset = tok.get('symbol', cfg['native'])
+                                dec = int(tok.get('decimals', 18))
+
+                                # Date
+                                dt_str = t.get('timestamp')
+                                dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00')) if dt_str else datetime.now()
+
+                                # Montant et Frais
+                                val = int(t.get('value', 0)) / 10**dec
+                                fee_val = int(t.get('fee', {}).get('value', 0)) / 10**18
+
+                                txs.append({
+                                    'Source': f'Libre ({sub})', 'ID': t['hash'], 'Date': dt,
+                                    'Account': address, 'Asset': asset, 'Type': 'Mvt',
+                                    'Amount': val, 'Fee': fee_val,
+                                    'Counterparty': t.get('from', {}).get('hash', 'Unknown'),
+                                    'Network': network
+                                })
+
+                            # Pagination Blockscout v2
+                            if data.get("next_page_params"):
+                                p = data["next_page_params"]
+                                q = "&".join([f"{k}={v}" for k, v in p.items()])
+                                url = f"{cfg['free_api']}/addresses/{address}/{sub}?{q}"
+                            else: break
                         else: break
-                    else: break
+                    except: break
     except Exception as e:
         # Remplacement de st.debug inexistant par un avertissement discret
         st.write(f"ℹ️ Info Libre {network}: {e}")
