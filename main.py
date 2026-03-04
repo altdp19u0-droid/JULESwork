@@ -47,7 +47,10 @@ def get_eur_usd_rate(date_obj):
 
 @st.cache_data(ttl=3600)
 def get_price_usd(asset, date_obj):
-    # Mapping étendu pour les assets demandés
+    # Sécurité contre les NoneType ou valeurs vides
+    if asset is None or not isinstance(asset, str) or not asset.strip():
+        return 0.0
+
     cg_map = {
         "ETH": "ethereum", "BNB": "binancecoin", "POL": "polygon-ecosystem-token",
         "USDT": "tether", "USDC": "usd-coin", "DAI": "dai",
@@ -81,7 +84,7 @@ def get_price_eur(asset, date_obj):
     if usd == 0: return 0.0
     return usd * get_eur_usd_rate(date_obj)
 
-# --- MOTEUR D'EXPLORATION ROBUSTE (V2.2) ---
+# --- MOTEUR D'EXPLORATION ROBUSTE (V2.3) ---
 
 def fetch_data(address, api_key, network):
     txs = []
@@ -129,7 +132,10 @@ def fetch_data(address, api_key, network):
                                 if res.status_code != 200: break
                             else: break
 
-                        data = res.json()
+                        try:
+                            data = res.json()
+                        except: break
+
                         if isinstance(data, list):
                             items = data
                         elif isinstance(data, dict):
@@ -141,13 +147,14 @@ def fetch_data(address, api_key, network):
 
                         for t in items:
                             try:
+                                if not isinstance(t, dict): continue
                                 tx_id = t.get('hash') or t.get('tx_hash')
 
                                 # Cas spécial de l'endpoint balances (balances actuelles)
                                 if label == "Balances":
                                     tok = t.get('token') or {}
                                     asset = tok.get('symbol') or tok.get('name') or 'TOKEN'
-                                    dec = int(tok.get('decimals', 18)) if tok.get('decimals') else 18
+                                    dec = int(tok.get('decimals') or 18)
                                     val_str = t.get('value', '0')
                                     amount = float(val_str) / 10**dec
                                     if amount <= 0: continue
@@ -158,7 +165,7 @@ def fetch_data(address, api_key, network):
                                     if label == "Tokens":
                                         tok = t.get('token') or {}
                                         asset = tok.get('symbol') or tok.get('name') or 'TOKEN'
-                                        dec = int(tok.get('decimals', 18)) if tok.get('decimals') else 18
+                                        dec = int(tok.get('decimals') or 18)
                                         val_str = t.get('value', '0')
                                         amount = float(val_str) / 10**dec if val_str else 0.0
                                     else:
@@ -185,20 +192,18 @@ def fetch_data(address, api_key, network):
                                 cp = f_addr if t_addr == addr_low else t_addr
 
                                 # Détermination du sens pour le calcul de balance (si pas Discovery)
-                                if endpoint != "tokens":
+                                if endpoint != "tokens" and label != "Balances":
                                     direction = 1 if t_addr == addr_low else -1
 
                                 txs.append({
                                     'Source': f'Libre ({label})', 'ID': tx_id, 'Date': dt,
-                                    'Account': address, 'Asset': asset.upper(), 'Type': 'Mvt',
+                                    'Account': address, 'Asset': str(asset).upper(), 'Type': 'Mvt',
                                     'Amount': amount * direction, 'Fee': fee, 'Counterparty': cp, 'Network': network
                                 })
                                 counts[label] += 1
-                            except Exception as e:
-                                # report.write(f"Err parsing item: {e}")
-                                continue
+                            except Exception as e: continue
 
-                        next_params = data.get("next_page_params")
+                        next_params = data.get("next_page_params") if isinstance(data, dict) else None
                         if next_params:
                             q = "&".join([f"{k}={v}" for k, v in next_params.items()])
                             url = f"{cfg['free_api']}/addresses/{address}/{endpoint}?{q}"
@@ -207,22 +212,30 @@ def fetch_data(address, api_key, network):
                         report.warning(f"Err endpoint {label}: {e}")
                         break
 
-            # Filet de sécurité : Récupérer les balances actuelles si transfers=0
+            # Filet de sécurité spécial: Récupérer les balances si transfers=0
             if counts["Tokens"] == 0:
                 try:
                     status_text.text("⏳ Recherche de balances (Filet de sécurité)...")
                     url_bal = f"{cfg['free_api']}/addresses/{address}/tokens"
-                    res_bal = requests.get(url_bal, timeout=10).json()
-                    items_bal = res_bal.get("items", [])
+                    res_raw = requests.get(url_bal, timeout=10)
+                    try:
+                        res_bal = res_raw.json()
+                    except: res_bal = []
+
+                    if isinstance(res_bal, list): items_bal = res_bal
+                    elif isinstance(res_bal, dict): items_bal = res_bal.get("items", res_bal.get("result", []))
+                    else: items_bal = []
+
                     for b in items_bal:
+                        if not isinstance(b, dict): continue
                         tok = b.get('token', {})
-                        asset = tok.get('symbol', 'TOKEN')
-                        dec = int(tok.get('decimals', 18)) if tok.get('decimals') else 18
-                        amt = float(b.get('value', '0')) / 10**dec
+                        asset = tok.get('symbol') or tok.get('name') or 'TOKEN'
+                        dec = int(tok.get('decimals') or 18)
+                        amt = float(b.get('value') or '0') / 10**dec
                         if amt > 0:
                             txs.append({
-                                'Source': 'Libre (Balance)', 'ID': f"BAL-{asset}-{address}", 'Date': datetime.now(),
-                                'Account': address, 'Asset': asset, 'Type': 'Balance', 'Amount': amt,
+                                'Source': 'Libre (Balance)', 'ID': f"BAL-{asset}-{address[:6]}", 'Date': datetime.now(),
+                                'Account': address, 'Asset': str(asset).upper(), 'Type': 'Balance', 'Amount': amt,
                                 'Fee': 0.0, 'Counterparty': 'Current Wallet', 'Network': network
                             })
                             counts["Tokens"] += 1
@@ -239,8 +252,8 @@ def fetch_data(address, api_key, network):
                 if str(res.get("status")) == "1":
                     for t in res.get("result", []):
                         try:
-                            asset = t.get("tokenSymbol", cfg["native"]) if action == "tokentx" else cfg["native"]
-                            dec = int(t.get("tokenDecimal", 18)) if action == "tokentx" else 18
+                            asset = t.get("tokenSymbol") or cfg["native"] if action == "tokentx" else cfg["native"]
+                            dec = int(t.get("tokenDecimal") or 18) if action == "tokentx" else 18
                             amt = int(t.get("value", 0)) / 10**dec
                             fee = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 10**18
                             f_addr, t_addr = t.get('from', '').lower(), t.get('to', '').lower()
@@ -249,7 +262,7 @@ def fetch_data(address, api_key, network):
 
                             txs.append({
                                 'Source': f'API ({label})', 'ID': t['hash'], 'Date': datetime.fromtimestamp(int(t['timeStamp'])),
-                                'Account': address, 'Asset': asset, 'Type': 'Mvt', 'Amount': amt * direction, 'Fee': fee,
+                                'Account': address, 'Asset': str(asset).upper(), 'Type': 'Mvt', 'Amount': amt * direction, 'Fee': fee,
                                 'Counterparty': cp, 'Network': network
                             })
                             counts[label] += 1
@@ -261,15 +274,11 @@ def fetch_data(address, api_key, network):
 
     df = pd.DataFrame(txs)
     if not df.empty:
-        # Dédoublonnage robuste : ID + Asset + Network
-        # On garde 'Libre' en priorité si doublon avec 'API' pour la cohérence des données gratuites
         df = df.sort_values('Source', ascending=False).drop_duplicates(subset=['ID', 'Asset', 'Network'], keep='first')
 
         with st.spinner("Valorisation EUR..."):
-            # Fiabilisation du typage Datetime avant opérations .dt
             df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
             df = df.dropna(subset=['Date'])
-
             unique_combos = df[['Asset', 'Date']].copy()
             unique_combos['Date_Key'] = unique_combos['Date'].dt.date
             unique_combos = unique_combos[['Asset', 'Date_Key']].drop_duplicates()
@@ -278,11 +287,13 @@ def fetch_data(address, api_key, network):
             if total_p > 0:
                 pbar = st.progress(0)
                 for i, (_, row) in enumerate(unique_combos.iterrows()):
-                    prices_map[(row['Asset'], row['Date_Key'])] = get_price_eur(row['Asset'], row['Date_Key'])
+                    # Sécurité: s'assurer que Asset est bien une string avant l'appel
+                    a_name = str(row['Asset']) if row['Asset'] else "TOKEN"
+                    prices_map[(row['Asset'], row['Date_Key'])] = get_price_eur(a_name, row['Date_Key'])
                     if total_p > 5: time.sleep(1.05)
                     pbar.progress((i+1)/total_p)
                 pbar.empty()
-            df['Fiat_Value_EUR'] = df.apply(lambda r: r['Amount'] * prices_map.get((r['Asset'], r['Date'].date()), 0.0), axis=1)
+            df['Fiat_Value_EUR'] = df.apply(lambda r: float(r['Amount']) * prices_map.get((r['Asset'], r['Date'].date()), 0.0), axis=1)
 
         df['Is_Spam'] = df['Counterparty'].apply(lambda x: str(x).lower() in st.session_state.spam_addresses)
         def detect_cat(row):
@@ -298,7 +309,6 @@ menu = st.sidebar.selectbox("Navigation", ["Harvest", "Consultation", "Frais & F
 
 if menu == "Harvest":
     st.header("🚜 Récolte Massive de Données")
-
     t1, t2 = st.tabs(["Exploration Automatique", "Saisie Manuelle"])
 
     with t1:
@@ -316,26 +326,22 @@ if menu == "Harvest":
             m_date = mc1.date_input("Date", datetime.now())
             m_asset = mc2.text_input("Asset (ex: USDC, 8LND)", "USDC")
             m_amt = mc3.number_input("Montant (Positif=In, Négatif=Out)", value=0.0, format="%.6f")
-
             mc4, mc5 = st.columns(2)
             m_net = mc4.selectbox("Réseau", list(NETWORKS_CFG.keys()), key="m_net")
             m_cat = mc5.selectbox("Catégorie", ["Transfert", "Swap", "Staking", "Achat Fiat"], index=0)
-
             m_submit = st.form_submit_button("Ajouter à l'historique")
 
             if m_submit:
                 m_id = f"MANUAL-{int(time.time())}"
-                # On force UTC pour la cohérence avec les données récoltées
                 dt_manual = datetime.combine(m_date, datetime.min.time()).replace(tzinfo=None)
                 new_row = pd.DataFrame([{
                     'Source': '✍️ Manuel', 'ID': m_id, 'Date': dt_manual,
-                    'Account': 'Manual Wallet', 'Asset': m_asset.upper(), 'Type': 'Mvt',
+                    'Account': 'Manual Wallet', 'Asset': str(m_asset).upper(), 'Type': 'Mvt',
                     'Amount': m_amt, 'Fee': 0.0, 'Fiat_Value_EUR': 0.0,
                     'Counterparty': 'User Input', 'Network': m_net, 'Is_Spam': False, 'Category': m_cat
                 }])
                 new_row['Date'] = pd.to_datetime(new_row['Date'], utc=True)
-                # Calcul de la valeur Fiat si possible
-                new_row['Fiat_Value_EUR'] = new_row.apply(lambda r: r['Amount'] * get_price_eur(r['Asset'], r['Date']), axis=1)
+                new_row['Fiat_Value_EUR'] = new_row.apply(lambda r: float(r['Amount']) * get_price_eur(r['Asset'], r['Date']), axis=1)
                 st.session_state.transactions = pd.concat([st.session_state.transactions, new_row], ignore_index=True)
                 st.success(f"Transaction {m_asset} ajoutée !")
 
@@ -343,7 +349,7 @@ if menu == "Harvest":
         new_df = fetch_data(addr, key, net)
         if not new_df.empty:
             st.session_state.transactions = pd.concat([st.session_state.transactions, new_df])
-            st.session_state.transactions = st.session_state.transactions.drop_duplicates(subset=['ID', 'Asset', 'Amount'], keep='first')
+            st.session_state.transactions = st.session_state.transactions.drop_duplicates(subset=['ID', 'Asset', 'Network'], keep='first')
             st.session_state.transactions = st.session_state.transactions.sort_values('Date', ascending=False)
             st.session_state.accounts_metadata[f"{addr[:10]}... ({net})"] = {"Count": len(new_df)}
             st.success(f"Récolte réussie : {len(new_df)} lignes ajoutées.")
@@ -360,99 +366,60 @@ if menu == "Harvest":
 elif menu == "Consultation":
     st.header("🔍 Consultation des actifs")
     if not st.session_state.transactions.empty:
-        # Résumé des Actifs (Balance cumulée)
         st.subheader("📦 Inventaire des Actifs")
         clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
         inventory = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
         inventory = inventory[inventory['Amount'].abs() > 1e-9]
-
         if not inventory.empty:
             now = datetime.now()
-            # Nettoyage types avant calculs
             inventory['Amount'] = inventory['Amount'].astype(float)
-            # On trie par valeur descendante
-            inventory['p_eur'] = inventory['Asset'].apply(lambda a: float(get_price_eur(a, now)))
+            inventory['p_eur'] = inventory['Asset'].apply(lambda a: float(get_price_eur(str(a), now)))
             inventory['val_eur'] = inventory['Amount'] * inventory['p_eur']
             inventory = inventory.sort_values('val_eur', ascending=False)
-
             inv_cols = st.columns(min(len(inventory), 4))
             for idx, (i, row) in enumerate(inventory.iterrows()):
-                with inv_cols[idx % 4]:
-                    st.metric(row['Asset'], f"{row['Amount']:.4f}", f"{row['val_eur']:,.2f} €")
+                with inv_cols[idx % 4]: st.metric(row['Asset'], f"{row['Amount']:.4f}", f"{row['val_eur']:,.2f} €")
 
         st.divider()
         df_display = st.session_state.transactions.copy()
         f_col1, f_col2 = st.columns(2)
         show_spam = f_col1.checkbox("Afficher le Spam", value=False)
         selected_asset = f_col2.multiselect("Filtrer par Asset", options=sorted(df_display['Asset'].unique()))
-
         if not show_spam: df_display = df_display[df_display['Is_Spam'] == False]
         if selected_asset: df_display = df_display[df_display['Asset'].isin(selected_asset)]
-
-        # Capture des modifications (Persistance)
-        # On définit les colonnes éditables pour plus de clarté
-        edited_df = st.data_editor(
-            df_display.sort_values('Date', ascending=False),
-            use_container_width=True,
-            key="tx_editor",
-            column_config={
-                "Is_Spam": st.column_config.CheckboxColumn("Spam", help="Cocher pour ignorer dans les calculs"),
-                "Category": st.column_config.SelectboxColumn("Catégorie", options=["Transfert", "Swap", "DeFi", "Lending", "Spam", "Achat Fiat"]),
-                "Asset": st.column_config.TextColumn("Asset", disabled=True),
-                "Amount": st.column_config.NumberColumn("Montant", disabled=True, format="%.6f"),
-            }
-        )
-
+        edited_df = st.data_editor(df_display.sort_values('Date', ascending=False), use_container_width=True, key="tx_editor", column_config={"Is_Spam": st.column_config.CheckboxColumn("Spam"), "Category": st.column_config.SelectboxColumn("Catégorie", options=["Transfert", "Swap", "DeFi", "Lending", "Spam", "Achat Fiat"]), "Asset": st.column_config.TextColumn("Asset", disabled=True), "Amount": st.column_config.NumberColumn("Montant", disabled=True, format="%.6f")})
         if st.button("💾 Enregistrer les modifications", use_container_width=True):
-            # On met à jour la session state globale par rapport aux IDs modifiés
-            # Triplet d'unicité : ID + Asset + Network (pour éviter les collisions multi-chain ou multi-token)
             for _, row in edited_df.iterrows():
-                mask = (st.session_state.transactions['ID'] == row['ID']) & \
-                       (st.session_state.transactions['Asset'] == row['Asset']) & \
-                       (st.session_state.transactions['Network'] == row['Network'])
+                mask = (st.session_state.transactions['ID'] == row['ID']) & (st.session_state.transactions['Asset'] == row['Asset']) & (st.session_state.transactions['Network'] == row['Network'])
                 st.session_state.transactions.loc[mask, 'Is_Spam'] = row['Is_Spam']
                 st.session_state.transactions.loc[mask, 'Category'] = row['Category']
-            st.success("Modifications enregistrées !")
-            st.rerun()
-
+            st.success("Modifications enregistrées !"); st.rerun()
     else: st.info("Lancez d'abord une récolte.")
 
 elif menu == "Frais & Fiscalité":
     st.header("⚖️ Bilan Fiscal & Frais")
     st.subheader("🏦 Comptes Fiat & Apports")
     st.session_state.fiat_accounts = st.data_editor(st.session_state.fiat_accounts, num_rows="dynamic", use_container_width=True)
-
     st.divider()
     clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
-
     if not clean_df.empty:
-        # Calcul de la valeur réelle actuelle du portefeuille (VGP pour 150 VH bis)
         inventory = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
         inventory = inventory[inventory['Amount'].abs() > 1e-9]
-        now = datetime.now()
-        vgp = 0.0
-        for _, row in inventory.iterrows():
-            vgp += row['Amount'] * get_price_eur(row['Asset'], now)
-
+        now = datetime.now(); vgp = 0.0
+        for _, row in inventory.iterrows(): vgp += float(row['Amount']) * get_price_eur(str(row['Asset']), now)
         st.metric("Total Frais (Native)", f"{clean_df['Fee'].sum():.4f}")
         st.metric("Valeur Globale du Portefeuille (Actuelle)", f"{vgp:,.2f} €")
-
         st.subheader("⚖️ Simulateur Article 150 VH bis")
         col_f1, col_f2 = st.columns(2)
-        # Prix d'acquisition net = somme des dépôts - somme des retraits fiat
         depots = st.session_state.fiat_accounts[st.session_state.fiat_accounts['Type']=='Dépôt']['Amount_EUR'].sum()
         retraits = st.session_state.fiat_accounts[st.session_state.fiat_accounts['Type']=='Retrait']['Amount_EUR'].sum()
-        prix_acq_auto = depots - retraits
-
-        prix_acq = col_f1.number_input("Prix d'acquisition total calculé/manuel (EUR)", value=float(max(0, prix_acq_auto)))
+        prix_acq = col_f1.number_input("Prix d'acquisition total (EUR)", value=float(max(0, depots-retraits)))
         prix_vent = col_f2.number_input("Montant de la cession (Prix de vente EUR)", value=0.0)
-
         if prix_vent > 0 and vgp > 0:
-            # Formule PV = Prix de cession - [Prix d'acquisition * (Prix de cession / Valeur globale du portefeuille)]
             pv = prix_vent - (prix_acq * (prix_vent / vgp))
             st.success(f"**Plus-value imposable :** {pv:,.2f} €")
             st.info(f"**Impôt estimé (Flat Tax 30%) :** {pv * 0.3:,.2f} €")
-    else: st.info("Aucune donnée blockchain valide pour le calcul fiscal.")
+    else: st.info("Aucune donnée blockchain valide.")
 
 elif menu == "Export":
     st.header("📥 Export")
@@ -466,4 +433,4 @@ elif menu == "Spam & Settings":
         st.session_state.transactions = pd.DataFrame(columns=REQUIRED_COLS)
         st.session_state.accounts_metadata = {}; st.rerun()
 
-st.sidebar.divider(); st.sidebar.caption("Jules AI Harvest Pro v2.2")
+st.sidebar.divider(); st.sidebar.caption("Jules AI Harvest Pro v2.3")
