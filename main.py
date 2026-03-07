@@ -443,7 +443,8 @@ if menu == "Harvest":
     if st.session_state.accounts_metadata:
         for acc, meta in list(st.session_state.accounts_metadata.items()):
             c1, c2 = st.columns([4, 1])
-            c1.info(f"{acc} : {meta['Count']} transactions")
+            count = meta.get('Count') or meta.get('Transactions') or 0
+            c1.info(f"{acc} : {count} transactions")
             if c2.button("Supprimer", key=f"del_{acc}"):
                 del st.session_state.accounts_metadata[acc]; st.rerun()
 
