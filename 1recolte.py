@@ -4,7 +4,7 @@ import json
 import os
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from fpdf import FPDF
 import io
 
@@ -117,7 +117,7 @@ def fetch_harvest(address, network, api_key):
                     val = float(t.get('value', 0)) / 10**int(tok.get('decimals', 18))
                     if val > 0:
                         txs.append({
-                            "source": "Scan Réseau (Balance)", "id": f"BAL-{asset}-{address[:8]}", "date": datetime.now(),
+                            "source": "Scan Réseau (Balance)", "id": f"BAL-{asset}-{address[:8]}", "date": datetime.now(timezone.utc),
                             "account": address, "counterparty": "Balance Discovery", "asset": asset,
                             "type": "Discovery", "amount": val, "network": network, "from/to": "IN", "fee": 0
                         })
@@ -146,7 +146,7 @@ def fetch_harvest(address, network, api_key):
                         fee = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 10**18 if 'gasPrice' in t else 0
 
                         txs.append({
-                            "source": f"API ({label})", "id": t['hash'], "date": datetime.fromtimestamp(int(t['timeStamp'])),
+                            "source": f"API ({label})", "id": t['hash'], "date": datetime.fromtimestamp(int(t['timeStamp']), tz=timezone.utc),
                             "account": address, "counterparty": f_addr if direction == "IN" else t_addr,
                             "asset": asset, "type": label, "amount": amt, "network": network, "from/to": direction,
                             "fee": fee
