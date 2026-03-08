@@ -29,7 +29,8 @@ def get_price_data(asset, date_obj):
     # Mapping basique pour CoinGecko
     cg_map = {
         "ETH": "ethereum", "BNB": "binancecoin", "POL": "polygon-ecosystem-token",
-        "USDT": "tether", "USDC": "usd-coin", "DAI": "dai", "8LND": "8lnd",
+        "USDT": "tether", "USDC": "usd-coin", "DAI": "dai",
+        "8LND": "8lends", "8LNDS": "8lends",
         "ARB": "arbitrum", "OP": "optimism", "MATIC": "matic-network"
     }
     asset_id = cg_map.get(asset, asset.lower())
@@ -44,8 +45,12 @@ def get_price_data(asset, date_obj):
     except: pass
 
     if usd_price == 0:
-        if asset in ["USDT", "USDC", "DAI"]: usd_price = 1.0
+        # Fallbacks stables
+        if asset in ["USDT", "USDC", "DAI", "USDC.E"]: usd_price = 1.0
         elif asset in ["EURA", "AGEUR"]: usd_price = 1.08
+        elif asset == "WETH":
+            # Tentative de récupération prix ETH si WETH échoue
+            usd_price, _ = get_price_data("ETH", date_obj)
 
     eur_rate = get_eur_usd_rate(date_obj)
     return usd_price, usd_price * eur_rate
@@ -135,15 +140,24 @@ def load_annual_db(year):
 # --- MOTEUR DE RÉCOLTE ---
 def extract_amount(t, decimals=18):
     """Extraction robuste du montant depuis divers formats d'API (Blockscout/Etherscan)"""
-    # On cherche 'value', 'amount' ou 'total'
-    val_raw = t.get('value') or t.get('amount') or t.get('total') or 0
+    # Ordre de priorité pour trouver la valeur brute
+    keys = ['value', 'amount', 'total', 'result']
+    val_raw = 0
+    for k in keys:
+        v = t.get(k)
+        if v is not None:
+            val_raw = v
+            break
 
-    # Blockscout V2 peut renvoyer un objet pour 'total' ou 'fee'
+    # Gestion des objets imbriqués (Blockscout V2)
     if isinstance(val_raw, dict):
-        val_raw = val_raw.get('value', 0)
+        val_raw = val_raw.get('value') or val_raw.get('amount') or 0
 
     try:
-        return float(val_raw) / 10**int(decimals)
+        # Nettoyage si c'est une chaîne
+        if isinstance(val_raw, str):
+            val_raw = val_raw.replace(',', '')
+        return float(val_raw) / 10**int(decimals or 18)
     except (ValueError, TypeError):
         return 0.0
 
@@ -182,10 +196,10 @@ def fetch_harvest(address, network, api_key, since_date=None):
                             stop_pagination = True; continue
 
                         asset = cfg['native']; dec = 18
-                        if label == "Tokens" or "token" in t:
-                            tok = t.get('token') or {}
+                        if label == "Tokens" or "token" in t or "token_transfer" in t:
+                            tok = t.get('token') or t.get('token_transfer', {}).get('token') or {}
                             asset = tok.get('symbol') or t.get('tokenSymbol') or 'TOKEN'
-                            dec = int(tok.get('decimals') or t.get('tokenDecimal') or 18)
+                            dec = tok.get('decimals') or t.get('tokenDecimal') or 18
 
                         amount = extract_amount(t, dec)
                         f_addr = (t.get('from', {}).get('hash') if isinstance(t.get('from'), dict) else t.get('from', 'Unknown')).lower()
@@ -298,8 +312,12 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
             year_tx = all_tx[all_tx['date'].dt.year == selected_year].copy()
 
             if not year_tx.empty:
-                tx_hashes_with_tokens = year_tx[year_tx['type'].isin(['Tokens', 'NFT'])]['id'].unique()
-                year_tx = year_tx[~((year_tx['type'] == 'Native') & (year_tx['amount'] == 0) & (year_tx['id'].isin(tx_hashes_with_tokens)))]
+                # On ne supprime que les lignes Native à 0 SI il y a déjà une ligne Token pour ce hash
+                # Mais on garde si c'est la seule ligne de la transaction (ex: interaction contrat simple)
+                tx_hashes_with_tokens = year_tx[year_tx['type'].isin(['Tokens', 'NFT', 'Internal'])]['id'].unique()
+                mask_redundant_native = (year_tx['type'] == 'Native') & (year_tx['amount'] == 0) & (year_tx['id'].isin(tx_hashes_with_tokens))
+                year_tx = year_tx[~mask_redundant_native]
+
                 journal_rows = []
                 counter = 1
                 for _, row in year_tx.iterrows():
@@ -314,13 +332,19 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
                     })
                     counter += 1
                     if row.get('fee', 0) > 0:
+                        # On s'assure que les frais sont toujours valorisés
                         native_asset = NETWORKS_CFG.get(row['network'], {}).get('native', 'ETH')
                         p_usd_fee, p_eur_fee = get_price_data(native_asset, row['date'])
+
+                        # Fallback prix fee si la récolte directe a échoué mais qu'on a le prix native
+                        f_usd = -abs(row['fee'] * p_usd_fee)
+                        f_eur = -abs(row['fee'] * p_eur_fee)
+
                         journal_rows.append({
                             "numéro": counter, "source": row['source'], "id": row['id'], "date": row['date'],
                             "account": row['account'], "counterparty": "Network Fee", "asset": native_asset,
-                            "type": "Fee", "amount": -row['fee'], "valeur $": -abs(row['fee'] * p_usd_fee),
-                            "valeur €": -abs(row['fee'] * p_eur_fee), "category": "Frais", "network": row['network'], "from/to": "OUT"
+                            "type": "Fee", "amount": -row['fee'], "valeur $": f_usd,
+                            "valeur €": f_eur, "category": "Frais", "network": row['network'], "from/to": "OUT"
                         })
                         counter += 1
                 pd.DataFrame(journal_rows).to_csv(db_file, index=False)
@@ -368,8 +392,8 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
         df_to_show['valeur €'] = pd.to_numeric(df_to_show['valeur €'], errors='coerce').fillna(0.0)
         df_to_show['Solde Progressif (EUR)'] = initial_balance_fiat + df_to_show['valeur €'].cumsum()
 
-        # Ordre des colonnes fixe pour éviter les sauts visuels
-        cols_order = ["Is_Spam", "numéro", "date", "asset", "amount", "valeur €", "valeur $", "counterparty", "type", "network", "Solde Progressif (EUR)"]
+        # Ordre des colonnes complet pour répondre à la demande de l'utilisateur
+        cols_order = ["Is_Spam", "numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "valeur €", "valeur $", "category", "network", "from/to", "Solde Progressif (EUR)"]
 
         # Style : Jaune pour les suspects affichés (Is_Spam=True mais hide_spam=False)
         styled_df = df_to_show.style.apply(lambda row: ['background-color: #fff3cd']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1)
