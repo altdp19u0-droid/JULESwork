@@ -121,7 +121,6 @@ def fetch_harvest(address, network, api_key, since_date=None):
     txs = []
     addr_low = address.lower()
 
-    # Conversion date limite en datetime aware (début de journée)
     limit_dt = None
     if since_date:
         limit_dt = datetime.combine(since_date, datetime.min.time()).replace(tzinfo=timezone.utc)
@@ -130,70 +129,53 @@ def fetch_harvest(address, network, api_key, since_date=None):
 
     status = st.status(f"🚜 Récolte en cours pour {network}...", expanded=True)
 
-    # 1. VOIE LIBRE (Blockscout API v2)
     if "free_api" in cfg and "blockscout" in cfg["free_api"]:
         status.write("📡 Interrogation Blockscout V2...")
         endpoints = [("transactions", "Native"), ("token-transfers", "Tokens"), ("internal-transactions", "Internal")]
         for endpoint, label in endpoints:
             url = f"{cfg['free_api']}/addresses/{address}/{endpoint}"
-            for page in range(500): # Capacité de 25 000 transactions (50 items par page)
+            for page in range(500):
                 try:
                     res = requests.get(url, timeout=15).json()
-                    # Détection flexible Blockscout v1/v2
                     items = res.get("items") if isinstance(res, dict) else res if isinstance(res, list) else None
-                    if items is None and isinstance(res, dict):
-                        items = res.get("result")
-
+                    if items is None and isinstance(res, dict): items = res.get("result")
                     if not isinstance(items, list) or not items: break
 
                     stop_pagination = False
                     for t in items:
-                        tx_id = t.get('hash') or t.get('tx_hash')
                         dt_str = t.get('timestamp') or t.get('timeStamp')
                         try:
                             dt = pd.to_datetime(dt_str, utc=True).to_pydatetime() if dt_str else datetime.now(timezone.utc)
-                        except:
-                            dt = datetime.now(timezone.utc)
+                        except: dt = datetime.now(timezone.utc)
 
-                        # Arrêt précoce si mode incrémental
                         if limit_dt and dt < limit_dt:
-                            stop_pagination = True
-                            continue # On traite la suite du bloc au cas où l'ordre n'est pas strict, mais on arrêtera après
+                            stop_pagination = True; continue
 
-                        asset = cfg['native']
-                        dec = 18
+                        asset = cfg['native']; dec = 18
                         if label == "Tokens" or "token" in t:
                             tok = t.get('token') or {}
                             asset = tok.get('symbol') or t.get('tokenSymbol') or 'TOKEN'
                             dec = int(tok.get('decimals') or t.get('tokenDecimal') or 18)
 
                         amount = extract_amount(t, dec)
-
                         f_addr = (t.get('from', {}).get('hash') if isinstance(t.get('from'), dict) else t.get('from', 'Unknown')).lower()
                         t_addr = (t.get('to', {}).get('hash') if isinstance(t.get('to'), dict) else t.get('to', 'Unknown')).lower()
                         direction = "IN" if t_addr == addr_low else "OUT"
-                        cp = f_addr if direction == "IN" else t_addr
 
                         p_usd, p_eur = get_price_data(asset, dt)
                         txs.append({
-                            "source": f"Blockscout ({label})", "id": tx_id, "date": dt,
-                            "account": address, "counterparty": cp, "asset": asset,
+                            "source": f"Blockscout ({label})", "id": t.get('hash') or t.get('tx_hash'), "date": dt,
+                            "account": address, "counterparty": f_addr if direction == "IN" else t_addr, "asset": asset,
                             "type": label, "amount": amount, "network": network, "from/to": direction,
                             "fee": float(t.get('fee', {}).get('value', 0)) / 10**18 if isinstance(t.get('fee'), dict) else 0,
-                            "valeur $": amount * p_usd,
-                            "valeur €": amount * p_eur
+                            "valeur $": amount * p_usd, "valeur €": amount * p_eur
                         })
-
                     if stop_pagination: break
-
                     next_params = res.get("next_page_params")
                     if not next_params: break
                     url = f"{cfg['free_api']}/addresses/{address}/{endpoint}?" + "&".join([f"{k}={v}" for k, v in next_params.items()])
-                except Exception as e:
-                    status.write(f"⚠️ Erreur Blockscout {label}: {e}")
-                    break
+                except: break
 
-    # 2. VOIE SCAN RÉSEAU (Discovery via Balances)
     if "free_api" in cfg and "blockscout" in cfg["free_api"]:
         status.write("🌐 Scan réseau (Discovery)...")
         try:
@@ -202,47 +184,41 @@ def fetch_harvest(address, network, api_key, since_date=None):
             items = res.get("items") if isinstance(res, dict) else res if isinstance(res, list) else None
             if isinstance(items, list):
                 for t in items:
-                    tok = t.get('token') or {}
-                    asset = tok.get('symbol') or 'TOKEN'
-                    dec = int(tok.get('decimals') or 18)
-                    val = extract_amount(t, dec)
+                    tok = t.get('token') or {}; asset = tok.get('symbol') or 'TOKEN'
+                    dec = int(tok.get('decimals') or 18); val = extract_amount(t, dec)
                     if val > 0:
                         p_usd, p_eur = get_price_data(asset, datetime.now(timezone.utc))
                         txs.append({
                             "source": "Scan Réseau (Balance)", "id": f"BAL-{asset}-{address[:8]}", "date": datetime.now(timezone.utc),
                             "account": address, "counterparty": "Balance Discovery", "asset": asset,
                             "type": "Discovery", "amount": val, "network": network, "from/to": "IN", "fee": 0,
-                            "valeur $": val * p_usd,
-                            "valeur €": val * p_eur
+                            "valeur $": val * p_usd, "valeur €": val * p_eur
                         })
         except: pass
 
-    # 3. VOIE NFT (Blockscout V2 ERC-721/1155)
     if "free_api" in cfg and "blockscout" in cfg["free_api"]:
-        status.write("🎨 Scan NFTs (ERC-721/1155)...")
+        status.write("🎨 Scan NFTs...")
         try:
             url = f"{cfg['free_api']}/addresses/{address}/nft"
             res = requests.get(url, timeout=15).json()
             items = res.get("items") if isinstance(res, dict) else res if isinstance(res, list) else None
             if isinstance(items, list):
                 for t in items:
-                    tok = t.get('token') or {}
-                    asset = tok.get('symbol') or tok.get('name') or 'NFT'
+                    tok = t.get('token') or {}; asset = tok.get('symbol') or tok.get('name') or 'NFT'
                     txs.append({
                         "source": "Blockscout (NFT)", "id": f"NFT-{asset}-{t.get('id')}", "date": datetime.now(timezone.utc),
                         "account": address, "counterparty": "NFT Discovery", "asset": asset,
                         "type": "NFT", "amount": 1.0, "network": network, "from/to": "IN", "fee": 0,
-                        "valeur $": 0.0, "valeur €": 0.0 # On ne valorise pas les NFTs par défaut
+                        "valeur $": 0.0, "valeur €": 0.0
                     })
         except: pass
 
-    # 4. VOIE API CLÉS (Etherscan clones)
     if api_key:
         status.write(f"🔑 Interrogation API {cfg['api_name']}...")
         api_endpoints = [("txlist", "Native"), ("tokentx", "Tokens"), ("txlistinternal", "Internal")]
         for action, label in api_endpoints:
             start_block = 0
-            for loop in range(10): # Pagination jusqu'à 100 000 transactions
+            for loop in range(10):
                 url = f"https://{cfg['host']}/api?module=account&action={action}&address={address}&startblock={start_block}&endblock=99999999&offset=10000&sort=asc&apikey={api_key}"
                 try:
                     res = requests.get(url, timeout=15).json()
@@ -251,67 +227,40 @@ def fetch_harvest(address, network, api_key, since_date=None):
                     stop_api = False
                     for t in results:
                         dt = datetime.fromtimestamp(int(t['timeStamp']), tz=timezone.utc)
-
-                        # Arrêt précoce
-                        if limit_dt and dt < limit_dt:
-                            stop_api = True
-                            continue
-
-                        asset = t.get("tokenSymbol", cfg["native"])
-                        dec = int(t.get("tokenDecimal", 18))
+                        if limit_dt and dt < limit_dt: stop_api = True; continue
+                        asset = t.get("tokenSymbol", cfg["native"]); dec = int(t.get("tokenDecimal", 18))
                         amt = extract_amount(t, dec)
-
                         f_addr, t_addr = t.get('from', '').lower(), t.get('to', '').lower()
                         direction = "IN" if t_addr == addr_low else "OUT"
-
                         fee = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 10**18 if 'gasPrice' in t else 0
-
                         p_usd, p_eur = get_price_data(asset, dt)
                         txs.append({
                             "source": f"API ({label})", "id": t['hash'], "date": dt,
                             "account": address, "counterparty": f_addr if direction == "IN" else t_addr,
                             "asset": asset, "type": label, "amount": amt, "network": network, "from/to": direction,
-                            "fee": fee,
-                            "valeur $": amt * p_usd,
-                            "valeur €": amt * p_eur
+                            "fee": fee, "valeur $": amt * p_usd, "valeur €": amt * p_eur
                         })
-
                     if stop_api: break
-
-                    last_block = int(results[-1].get('blockNumber', 0))
+                    start_block = int(results[-1].get('blockNumber', 0)) + 1
                     if len(results) < 10000: break
-                    start_block = last_block + 1
-                except Exception as e:
-                    status.write(f"⚠️ Erreur API {label}: {e}")
-                    break
+                except: break
 
-    if not txs:
-        status.update(label="❌ Aucune transaction trouvée", state="error")
-    else:
-        status.update(label=f"✅ Récolte terminée : {len(txs)} transactions trouvées", state="complete")
+    if not txs: status.update(label="❌ Aucune transaction trouvée", state="error")
+    else: status.update(label=f"✅ Récolte terminée : {len(txs)} transactions trouvées", state="complete")
     return txs
 
 # --- INITIALISATION ---
-if 'spam_addresses' not in st.session_state:
-    st.session_state.spam_addresses = set()
-
-if 'api_keys' not in st.session_state:
-    st.session_state.api_keys = load_api_keys()
-
-if 'accounts' not in st.session_state:
-    st.session_state.accounts = load_accounts()
+if 'spam_addresses' not in st.session_state: st.session_state.spam_addresses = set()
+if 'api_keys' not in st.session_state: st.session_state.api_keys = load_api_keys()
+if 'accounts' not in st.session_state: st.session_state.accounts = load_accounts()
 
 # --- COMPOSANT JOURNAL (FRAGMENT) ---
 @st.fragment
 def journal_fragment(selected_year, db_file, initial_balance_fiat):
-    # Chargement avec cache
     @st.cache_data(show_spinner=False)
-    def get_annual_df(year):
-        return load_annual_db(year)
-
+    def get_annual_df(year): return load_annual_db(year)
     annual_df = get_annual_df(selected_year)
 
-    # 4. Double Écriture & Traitement
     if st.button("🔄 Générer / Actualiser le Journal " + str(selected_year)):
         if 'all_transactions' in st.session_state and not st.session_state.all_transactions.empty:
             all_tx = st.session_state.all_transactions.copy()
@@ -320,66 +269,47 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
             year_tx = all_tx[all_tx['date'].dt.year == selected_year].copy()
 
             if not year_tx.empty:
-                # OPTIMISATION : Supprimer les lignes Native à 0 si une ligne Token existe pour le même hash
                 tx_hashes_with_tokens = year_tx[year_tx['type'].isin(['Tokens', 'NFT'])]['id'].unique()
                 year_tx = year_tx[~((year_tx['type'] == 'Native') & (year_tx['amount'] == 0) & (year_tx['id'].isin(tx_hashes_with_tokens)))]
-
                 journal_rows = []
                 counter = 1
                 for _, row in year_tx.iterrows():
                     signed_amount = row['amount'] if row['from/to'] == "IN" else -abs(row['amount'])
                     signed_usd = row['valeur $'] if row['from/to'] == "IN" else -abs(row['valeur $'])
                     signed_eur = row['valeur €'] if row['from/to'] == "IN" else -abs(row['valeur €'])
-
                     journal_rows.append({
-                        "numéro": counter, "source": row['source'], "id": row['id'],
-                        "date": row['date'], "account": row['account'],
-                        "counterparty": row['counterparty'], "asset": row['asset'],
-                        "type": row['type'], "amount": signed_amount,
-                        "valeur $": signed_usd, "valeur €": signed_eur,
-                        "category": "Transfert", "network": row['network'],
-                        "from/to": row['from/to']
+                        "numéro": counter, "source": row['source'], "id": row['id'], "date": row['date'],
+                        "account": row['account'], "counterparty": row['counterparty'], "asset": row['asset'],
+                        "type": row['type'], "amount": signed_amount, "valeur $": signed_usd, "valeur €": signed_eur,
+                        "category": "Transfert", "network": row['network'], "from/to": row['from/to']
                     })
                     counter += 1
-
                     if row.get('fee', 0) > 0:
                         native_asset = NETWORKS_CFG.get(row['network'], {}).get('native', 'ETH')
                         p_usd_fee, p_eur_fee = get_price_data(native_asset, row['date'])
                         journal_rows.append({
-                            "numéro": counter, "source": row['source'], "id": row['id'],
-                            "date": row['date'], "account": row['account'],
-                            "counterparty": "Network Fee", "asset": native_asset,
-                            "type": "Fee", "amount": -row['fee'],
-                            "valeur $": -abs(row['fee'] * p_usd_fee),
-                            "valeur €": -abs(row['fee'] * p_eur_fee),
-                            "category": "Frais", "network": row['network'],
-                            "from/to": "OUT"
+                            "numéro": counter, "source": row['source'], "id": row['id'], "date": row['date'],
+                            "account": row['account'], "counterparty": "Network Fee", "asset": native_asset,
+                            "type": "Fee", "amount": -row['fee'], "valeur $": -abs(row['fee'] * p_usd_fee),
+                            "valeur €": -abs(row['fee'] * p_eur_fee), "category": "Frais", "network": row['network'], "from/to": "OUT"
                         })
                         counter += 1
-
                 pd.DataFrame(journal_rows).to_csv(db_file, index=False)
-                st.cache_data.clear()
-                st.success(f"Journal {selected_year} généré.")
-                st.rerun()
+                st.cache_data.clear(); st.success(f"Journal {selected_year} généré."); st.rerun()
 
     if not annual_df.empty:
-        # Statistiques
         stats_df = annual_df[~annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)]
         total_vol_fiat = stats_df[stats_df['type'] != 'Fee']['valeur €'].abs().sum()
         total_fees_fiat = stats_df[stats_df['type'] == 'Fee']['valeur €'].sum()
         final_balance_fiat = initial_balance_fiat + stats_df['valeur €'].sum()
-
         c1, c2, c3 = st.columns(3)
         c1.metric("Solde Final Estimé", f"{final_balance_fiat:,.2f} €")
         c2.metric("Frais Totaux", f"{total_fees_fiat:,.2f} €")
         c3.metric("Volume Total", f"{total_vol_fiat:,.2f} €")
         st.divider()
-
         hide_spam = st.toggle("🚫 Masquer le spam", value=True, key=f"hide_spam_{selected_year}")
-
         annual_df = annual_df.sort_values('date')
         annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
-
         editor_key = f"editor_{selected_year}"
         edits = st.session_state.get(editor_key, {}).get("edited_rows", {})
         if edits:
@@ -392,10 +322,8 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
                         if changes["Is_Spam"]: st.session_state.spam_addresses.add(cp_addr)
                         else: st.session_state.spam_addresses.discard(cp_addr)
             annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
-
         df_to_show = annual_df[annual_df['Is_Spam'] == False] if hide_spam else annual_df
         df_to_show['Solde Progressif (EUR)'] = initial_balance_fiat + df_to_show['valeur €'].cumsum()
-
         st.data_editor(
             df_to_show.style.apply(lambda row: ['background-color: #ffff99']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1),
             use_container_width=True,
@@ -409,34 +337,22 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
             key=editor_key,
             disabled=["numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "valeur $", "valeur €", "category", "network", "from/to", "Solde Progressif (EUR)"]
         )
-
-        if edits and st.button("🔄 Confirmer & Recalculer", key=f"refresh_{selected_year}"):
-            st.rerun()
-
+        if edits and st.button("🔄 Confirmer & Recalculer", key=f"refresh_{selected_year}"): st.rerun()
         if st.button("📄 Générer Rapport PDF", key=f"pdf_{selected_year}"):
-            pdf = FPDF()
-            pdf.add_page(); pdf.set_font("Arial", 'B', 16)
+            pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16)
             pdf.cell(190, 10, f"Journal Comptable {selected_year}", 0, 1, 'C')
             pdf.ln(10); pdf.set_fill_color(200, 220, 255); pdf.set_font("Arial", '', 10)
             headers = [("N°", 10), ("Date", 30), ("Asset", 30), ("Quantité", 30), ("Contrepartie", 90)]
             for h, w in headers: pdf.cell(w, 8, h, 1, 0, 'C', 1)
             pdf.ln()
             for _, row in df_to_show.head(2000).iterrows():
-                pdf.cell(10, 8, str(row['numéro']), 1)
-                pdf.cell(30, 8, str(row['date'].strftime('%Y-%m-%d')), 1)
-                pdf.cell(30, 8, str(row['asset']), 1)
-                pdf.cell(30, 8, f"{row['amount']:.4f}", 1)
-                cp_safe = str(row['counterparty']).encode('latin-1', 'replace').decode('latin-1')
-                pdf.cell(90, 8, cp_safe[:40], 1, 1)
+                pdf.cell(10, 8, str(row['numéro']), 1); pdf.cell(30, 8, str(row['date'].strftime('%Y-%m-%d')), 1); pdf.cell(30, 8, str(row['asset']), 1); pdf.cell(30, 8, f"{row['amount']:.4f}", 1); pdf.cell(90, 8, str(row['counterparty']).encode('latin-1', 'replace').decode('latin-1')[:40], 1, 1)
             st.download_button("⬇️ Télécharger PDF", pdf.output(), f"Rapport_{selected_year}.pdf", "application/pdf")
-    else:
-        st.info("Journal vide. Lancez une récolte puis actualisez.")
+    else: st.info("Journal vide. Lancez une récolte puis actualisez.")
 
 # --- ROUTAGE DES PAGES ---
 if page == "PAGE 1 : Gestion des Comptes & Récolte":
     st.header("PAGE 1 : Gestion des Comptes & Récolte")
-
-    # Section : Gestion des Comptes (CRUD)
     st.subheader("📋 Tableau de Bord des Comptes")
     with st.container(border=True):
         column_config = {
@@ -446,63 +362,40 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
             "Tx": st.column_config.NumberColumn("Tx", disabled=True),
             "Dernière transaction": st.column_config.TextColumn("Dernière transaction", disabled=True)
         }
-
         edited_accounts = st.data_editor(st.session_state.accounts, num_rows="dynamic", use_container_width=True, key="accounts_editor", column_config=column_config)
-
         if st.button("💾 Sauvegarder les Comptes"):
             if not edited_accounts.empty:
                 edited_accounts["N°"] = range(1, len(edited_accounts) + 1)
-                edited_accounts["Tx"] = edited_accounts["Tx"].fillna(0)
-                edited_accounts["Dernière transaction"] = edited_accounts["Dernière transaction"].fillna("N/A")
-            st.session_state.accounts = edited_accounts
-            save_accounts(edited_accounts)
-            st.success("Comptes sauvegardés !")
-            st.rerun()
-
-    st.subheader("📖 Journal des Comptes")
-    st.dataframe(st.session_state.accounts, use_container_width=True)
-
+                edited_accounts["Tx"] = edited_accounts["Tx"].fillna(0); edited_accounts["Dernière transaction"] = edited_accounts["Dernière transaction"].fillna("N/A")
+            st.session_state.accounts = edited_accounts; save_accounts(edited_accounts); st.success("Comptes sauvegardés !"); st.rerun()
+    st.subheader("📖 Journal des Comptes"); st.dataframe(st.session_state.accounts, use_container_width=True)
     st.subheader("⚙️ Configuration API")
     with st.expander("Gérer les clés API"):
         api_names = ["Etherscan", "Polygonscan", "BscScan", "Arbiscan", "Basescan", "Optimism Etherscan"]
         new_keys = {}
         for name in api_names:
-            current_val = st.session_state.api_keys.get(name, "")
-            new_keys[name] = st.text_input(f"Clé {name}", value=current_val, type="password", key=f"api_{name}")
-        if st.button("💾 Sauvegarder les Clés API"):
-            st.session_state.api_keys = new_keys
-            save_api_keys(new_keys)
-            st.success("Clés API sauvegardées !")
-
+            current_val = st.session_state.api_keys.get(name, ""); new_keys[name] = st.text_input(f"Clé {name}", value=current_val, type="password", key=f"api_{name}")
+        if st.button("💾 Sauvegarder les Clés API"): st.session_state.api_keys = new_keys; save_api_keys(new_keys); st.success("Clés API sauvegardées !")
     st.subheader("🚜 Moteur de Récolte 3 Voies")
     harvest_mode = st.radio("Mode de récolte", ["Complet", "Incrémental (depuis une date)"], horizontal=True)
     since_date = st.date_input("Récolter à partir du :", datetime.now().date()) if harvest_mode == "Incrémental (depuis une date)" else None
-
     col_harvest1, col_harvest2 = st.columns([2, 1])
     acc_list = st.session_state.accounts.apply(lambda r: f"{r['Adresse']} ({r['Réseau Blockchain']})", axis=1).tolist() if not st.session_state.accounts.empty else []
     selected_acc_full = col_harvest1.selectbox("Sélectionner un compte", options=acc_list)
-
     if col_harvest2.button("🚀 Lancer la récolte"):
-        if st.session_state.get('accounts_editor', {}).get('edited_rows') or st.session_state.get('accounts_editor', {}).get('added_rows') or st.session_state.get('accounts_editor', {}).get('deleted_rows'):
-            st.warning("⚠️ Sauvegardez vos modifications d'abord.")
+        if st.session_state.get('accounts_editor', {}).get('edited_rows') or st.session_state.get('accounts_editor', {}).get('added_rows') or st.session_state.get('accounts_editor', {}).get('deleted_rows'): st.warning("⚠️ Sauvegardez vos modifications d'abord.")
         elif selected_acc_full:
-            addr = selected_acc_full.split(" (")[0]
-            net = selected_acc_full.split(" (")[1].replace(")", "")
+            addr = selected_acc_full.split(" (")[0]; net = selected_acc_full.split(" (")[1].replace(")", "")
             row = st.session_state.accounts[(st.session_state.accounts["Adresse"] == addr) & (st.session_state.accounts["Réseau Blockchain"] == net)].iloc[0]
             api_key = st.session_state.api_keys.get(NETWORKS_CFG[net]["api_name"], "")
             raw_txs = fetch_harvest(addr, net, api_key, since_date=since_date)
             if raw_txs:
-                new_df = pd.DataFrame(raw_txs)
-                dup_subset = ['id', 'asset', 'amount', 'valeur $', 'valeur €', 'network', 'from/to']
+                new_df = pd.DataFrame(raw_txs); dup_subset = ['id', 'asset', 'amount', 'valeur $', 'valeur €', 'network', 'from/to']
                 if 'all_transactions' not in st.session_state: st.session_state.all_transactions = pd.DataFrame()
                 st.session_state.all_transactions = pd.concat([st.session_state.all_transactions, new_df]).drop_duplicates(subset=dup_subset)
                 idx = st.session_state.accounts[(st.session_state.accounts["Adresse"] == addr) & (st.session_state.accounts["Réseau Blockchain"] == net)].index[0]
-                st.session_state.accounts.at[idx, "Tx"] = len(new_df)
-                st.session_state.accounts.at[idx, "Dernière transaction"] = new_df["date"].max().strftime("%Y-%m-%d %H:%M")
-                save_accounts(st.session_state.accounts)
-                st.success(f"Récolte réussie : {len(new_df)} transactions importées !")
+                st.session_state.accounts.at[idx, "Tx"] = len(new_df); st.session_state.accounts.at[idx, "Dernière transaction"] = new_df["date"].max().strftime("%Y-%m-%d %H:%M"); save_accounts(st.session_state.accounts); st.success(f"Récolte réussie : {len(new_df)} transactions importées !")
             else: st.warning("Aucun résultat.")
-
 elif page == "PAGE 2 : Analyse & Journal Comptable":
     st.header("PAGE 2 : Analyse & Journal Comptable")
     available_years = list(range(2020, datetime.now(timezone.utc).year + 1))
