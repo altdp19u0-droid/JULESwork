@@ -21,7 +21,7 @@ def get_eur_usd_rate(date_obj):
         return res["rates"]["EUR"]
     except: return 0.92
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner=False)
 def get_price_data(asset, date_obj):
     if not asset or not isinstance(asset, str): return 0.0, 0.0
     asset = asset.upper().strip()
@@ -30,7 +30,7 @@ def get_price_data(asset, date_obj):
     cg_map = {
         "ETH": "ethereum", "BNB": "binancecoin", "POL": "polygon-ecosystem-token",
         "USDT": "tether", "USDC": "usd-coin", "DAI": "dai",
-        "8LND": "8lends", "8LNDS": "8lends",
+        "8LND": "8lends", "8LNDS": "8lends", "8LENDS": "8lends",
         "ARB": "arbitrum", "OP": "optimism", "MATIC": "matic-network"
     }
     asset_id = cg_map.get(asset, asset.lower())
@@ -60,7 +60,8 @@ st.sidebar.title("1Recolte V4.0")
 page = st.sidebar.radio("Navigation", ["PAGE 1 : Gestion des Comptes & Récolte", "PAGE 2 : Analyse & Journal Comptable"])
 
 # --- CONSTANTES ---
-DB_COLS = ["numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "valeur $", "valeur €", "category", "network", "from/to"]
+# Ordre exact demandé : source, id, date, account, counterparty, asset, type, amount, category, coche spam, network, valeur $, valeur €, from/to
+DB_COLS = ["source", "id", "date", "account", "counterparty", "asset", "type", "amount", "category", "Is_Spam", "network", "valeur $", "valeur €", "from/to"]
 ACCOUNTS_FILE = "accounts_log.csv"
 API_KEYS_FILE = "api_keys.json"
 SPAM_FILE = "spam_blacklist.json"
@@ -145,20 +146,30 @@ def extract_amount(t, decimals=18):
     val_raw = 0
     for k in keys:
         v = t.get(k)
-        if v is not None:
+        if v is not None and v != "":
             val_raw = v
             break
 
-    # Gestion des objets imbriqués (Blockscout V2)
+    # Gestion des objets imbriqués spécifiques à Blockscout V2
     if isinstance(val_raw, dict):
-        val_raw = val_raw.get('value') or val_raw.get('amount') or 0
+        val_raw = val_raw.get('value') or val_raw.get('amount') or val_raw.get('total') or 0
+
+    # Cas particulier : token_transfer dans Blockscout V2
+    if val_raw == 0 and 'token_transfer' in t:
+        val_raw = t['token_transfer'].get('total', {}).get('value') or t['token_transfer'].get('value') or 0
 
     try:
         # Nettoyage si c'est une chaîne
         if isinstance(val_raw, str):
-            val_raw = val_raw.replace(',', '')
-        return float(val_raw) / 10**int(decimals or 18)
-    except (ValueError, TypeError):
+            val_raw = val_raw.replace(',', '').replace(' ', '')
+
+        # Sécurité sur les décimales
+        d = 18
+        if isinstance(decimals, (int, float)): d = int(decimals)
+        elif isinstance(decimals, str) and decimals.isdigit(): d = int(decimals)
+
+        return float(val_raw) / 10**d
+    except:
         return 0.0
 
 def fetch_harvest(address, network, api_key, since_date=None):
@@ -197,6 +208,7 @@ def fetch_harvest(address, network, api_key, since_date=None):
 
                         asset = cfg['native']; dec = 18
                         if label == "Tokens" or "token" in t or "token_transfer" in t:
+                            # Détection profonde du token
                             tok = t.get('token') or t.get('token_transfer', {}).get('token') or {}
                             asset = tok.get('symbol') or t.get('tokenSymbol') or 'TOKEN'
                             dec = tok.get('decimals') or t.get('tokenDecimal') or 18
@@ -312,41 +324,42 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
             year_tx = all_tx[all_tx['date'].dt.year == selected_year].copy()
 
             if not year_tx.empty:
-                # On ne supprime que les lignes Native à 0 SI il y a déjà une ligne Token pour ce hash
-                # Mais on garde si c'est la seule ligne de la transaction (ex: interaction contrat simple)
-                tx_hashes_with_tokens = year_tx[year_tx['type'].isin(['Tokens', 'NFT', 'Internal'])]['id'].unique()
-                mask_redundant_native = (year_tx['type'] == 'Native') & (year_tx['amount'] == 0) & (year_tx['id'].isin(tx_hashes_with_tokens))
-                year_tx = year_tx[~mask_redundant_native]
-
                 journal_rows = []
-                counter = 1
+                # On trie pour garder la chronologie
+                year_tx = year_tx.sort_values('date')
+
                 for _, row in year_tx.iterrows():
+                    # Ligne ASSET (Double Écriture - Ligne 1)
+                    # On garde même les lignes Native à 0 si elles ont une importance (frais attachés)
                     signed_amount = row['amount'] if row['from/to'] == "IN" else -abs(row['amount'])
                     signed_usd = row['valeur $'] if row['from/to'] == "IN" else -abs(row['valeur $'])
                     signed_eur = row['valeur €'] if row['from/to'] == "IN" else -abs(row['valeur €'])
+
+                    is_spam = row['counterparty'].lower() in st.session_state.spam_addresses
+
                     journal_rows.append({
-                        "numéro": counter, "source": row['source'], "id": row['id'], "date": row['date'],
+                        "source": row['source'], "id": row['id'], "date": row['date'],
                         "account": row['account'], "counterparty": row['counterparty'], "asset": row['asset'],
-                        "type": row['type'], "amount": signed_amount, "valeur $": signed_usd, "valeur €": signed_eur,
-                        "category": "Transfert", "network": row['network'], "from/to": row['from/to']
+                        "type": row['type'], "amount": signed_amount, "category": "Mouvement",
+                        "Is_Spam": is_spam, "network": row['network'],
+                        "valeur $": signed_usd, "valeur €": signed_eur, "from/to": row['from/to']
                     })
-                    counter += 1
+
+                    # Ligne FEE (Double Écriture - Ligne 2)
                     if row.get('fee', 0) > 0:
-                        # On s'assure que les frais sont toujours valorisés
                         native_asset = NETWORKS_CFG.get(row['network'], {}).get('native', 'ETH')
                         p_usd_fee, p_eur_fee = get_price_data(native_asset, row['date'])
 
-                        # Fallback prix fee si la récolte directe a échoué mais qu'on a le prix native
                         f_usd = -abs(row['fee'] * p_usd_fee)
                         f_eur = -abs(row['fee'] * p_eur_fee)
 
                         journal_rows.append({
-                            "numéro": counter, "source": row['source'], "id": row['id'], "date": row['date'],
+                            "source": row['source'], "id": row['id'], "date": row['date'],
                             "account": row['account'], "counterparty": "Network Fee", "asset": native_asset,
-                            "type": "Fee", "amount": -row['fee'], "valeur $": f_usd,
-                            "valeur €": f_eur, "category": "Frais", "network": row['network'], "from/to": "OUT"
+                            "type": "Fee", "amount": -row['fee'], "category": "Frais",
+                            "Is_Spam": is_spam, "network": row['network'],
+                            "valeur $": f_usd, "valeur €": f_eur, "from/to": "OUT"
                         })
-                        counter += 1
                 pd.DataFrame(journal_rows).to_csv(db_file, index=False)
                 st.cache_data.clear(); st.success(f"Journal {selected_year} généré."); st.rerun()
 
@@ -392,11 +405,11 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
         df_to_show['valeur €'] = pd.to_numeric(df_to_show['valeur €'], errors='coerce').fillna(0.0)
         df_to_show['Solde Progressif (EUR)'] = initial_balance_fiat + df_to_show['valeur €'].cumsum()
 
-        # Ordre des colonnes complet pour répondre à la demande de l'utilisateur
-        cols_order = ["Is_Spam", "numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "valeur €", "valeur $", "category", "network", "from/to", "Solde Progressif (EUR)"]
+        # Ordre exact demandé : source, id, date, account, counterparty, asset, type, amount, category, coche spam, network, valeur $, valeur €, from/to
+        cols_order = ["source", "id", "date", "account", "counterparty", "asset", "type", "amount", "category", "Is_Spam", "network", "valeur $", "valeur €", "from/to", "Solde Progressif (EUR)"]
 
         # Style : Jaune pour les suspects affichés (Is_Spam=True mais hide_spam=False)
-        styled_df = df_to_show.style.apply(lambda row: ['background-color: #fff3cd']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1)
+        styled_df = df_to_show.style.apply(lambda row: ['background-color: #ffff00']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1)
 
         st.data_editor(
             styled_df,
@@ -404,26 +417,44 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
             use_container_width=True,
             height=600,
             column_config={
-                "Is_Spam": st.column_config.CheckboxColumn("Spam", width="small"),
+                "Is_Spam": st.column_config.CheckboxColumn("Coche Spam", width="small"),
                 "date": st.column_config.DatetimeColumn("Date", format="DD/MM/YYYY HH:mm"),
-                "amount": st.column_config.NumberColumn("Quantité", format="%.6f"),
+                "amount": st.column_config.NumberColumn("Quantité", format="%.8f"),
                 "valeur $": st.column_config.NumberColumn("Valeur $", format="%.2f $"),
                 "valeur €": st.column_config.NumberColumn("Valeur €", format="%.2f €"),
                 "Solde Progressif (EUR)": st.column_config.NumberColumn("Solde EUR", format="%.2f €")
             },
             key=editor_key,
-            disabled=DB_COLS + ["Solde Progressif (EUR)"]
+            disabled=[c for c in DB_COLS if c != "Is_Spam"] + ["Solde Progressif (EUR)"]
         )
         if edits and st.button("🔄 Confirmer & Recalculer", key=f"refresh_{selected_year}"): st.rerun()
         if st.button("📄 Générer Rapport PDF", key=f"pdf_{selected_year}"):
-            pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16)
-            pdf.cell(190, 10, f"Journal Comptable {selected_year}", 0, 1, 'C')
-            pdf.ln(10); pdf.set_fill_color(200, 220, 255); pdf.set_font("Arial", '', 10)
-            headers = [("N°", 10), ("Date", 30), ("Asset", 30), ("Quantité", 30), ("Contrepartie", 90)]
-            for h, w in headers: pdf.cell(w, 8, h, 1, 0, 'C', 1)
+            pdf = FPDF(orientation='L', unit='mm', format='A4') # Mode paysage pour plus de place
+            pdf.add_page(); pdf.set_font("Arial", 'B', 14)
+            pdf.cell(0, 10, f"Journal Comptable {selected_year}", 0, 1, 'C')
+            pdf.ln(5); pdf.set_fill_color(240, 240, 240); pdf.set_font("Arial", 'B', 8)
+
+            # Colonnes simplifiées pour le PDF (A4 Paysage = 297mm)
+            pdf_cols = [
+                ("Date", 35), ("Asset", 20), ("Quantité", 25), ("Valeur €", 25),
+                ("Type", 20), ("Contrepartie", 110), ("Réseau", 25)
+            ]
+            for h, w in pdf_cols: pdf.cell(w, 7, h, 1, 0, 'C', 1)
             pdf.ln()
-            for _, row in df_to_show.head(2000).iterrows():
-                pdf.cell(10, 8, str(row['numéro']), 1); pdf.cell(30, 8, str(row['date'].strftime('%Y-%m-%d')), 1); pdf.cell(30, 8, str(row['asset']), 1); pdf.cell(30, 8, f"{row['amount']:.4f}", 1); pdf.cell(90, 8, str(row['counterparty']).encode('latin-1', 'replace').decode('latin-1')[:40], 1, 1)
+
+            pdf.set_font("Arial", '', 7)
+            for _, row in df_to_show.head(1000).iterrows():
+                d_str = row['date'].strftime('%d/%m/%Y %H:%M')
+                pdf.cell(35, 6, d_str, 1)
+                pdf.cell(20, 6, str(row['asset']), 1)
+                pdf.cell(25, 6, f"{row['amount']:.6f}", 1)
+                pdf.cell(25, 6, f"{row['valeur €']:.2f} €", 1)
+                pdf.cell(20, 6, str(row['type']), 1)
+                cp_str = str(row['counterparty'])[:60].encode('latin-1', 'replace').decode('latin-1')
+                pdf.cell(110, 6, cp_str, 1)
+                pdf.cell(25, 6, str(row['network']), 1)
+                pdf.ln()
+
             st.download_button("⬇️ Télécharger PDF", pdf.output(), f"Rapport_{selected_year}.pdf", "application/pdf")
     else: st.info("Journal vide. Lancez une récolte puis actualisez.")
 
