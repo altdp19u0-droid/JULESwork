@@ -93,9 +93,14 @@ def save_accounts(df):
     df.to_csv(ACCOUNTS_FILE, index=False)
 
 # --- MOTEUR DE RÉCOLTE ---
-def fetch_harvest(address, network, api_key):
+def fetch_harvest(address, network, api_key, since_date=None):
     txs = []
     addr_low = address.lower()
+
+    # Conversion date limite en datetime aware (début de journée)
+    limit_dt = None
+    if since_date:
+        limit_dt = datetime.combine(since_date, datetime.min.time()).replace(tzinfo=timezone.utc)
     cfg = NETWORKS_CFG.get(network)
     if not cfg: return []
 
@@ -116,6 +121,8 @@ def fetch_harvest(address, network, api_key):
                         items = res.get("result")
 
                     if not isinstance(items, list) or not items: break
+
+                    stop_pagination = False
                     for t in items:
                         tx_id = t.get('hash') or t.get('tx_hash')
                         dt_str = t.get('timestamp') or t.get('timeStamp')
@@ -123,6 +130,11 @@ def fetch_harvest(address, network, api_key):
                             dt = pd.to_datetime(dt_str, utc=True).to_pydatetime() if dt_str else datetime.now(timezone.utc)
                         except:
                             dt = datetime.now(timezone.utc)
+
+                        # Arrêt précoce si mode incrémental
+                        if limit_dt and dt < limit_dt:
+                            stop_pagination = True
+                            continue # On traite la suite du bloc au cas où l'ordre n'est pas strict, mais on arrêtera après
 
                         asset = cfg['native']
                         amount = float(t.get('value', 0)) / 10**18
@@ -146,6 +158,8 @@ def fetch_harvest(address, network, api_key):
                             "valeur $": amount * p_usd,
                             "valeur €": amount * p_eur
                         })
+
+                    if stop_pagination: break
 
                     next_params = res.get("next_page_params")
                     if not next_params: break
@@ -211,7 +225,15 @@ def fetch_harvest(address, network, api_key):
                     res = requests.get(url, timeout=15).json()
                     results = res.get("result", [])
                     if not isinstance(results, list) or not results: break
+                    stop_api = False
                     for t in results:
+                        dt = datetime.fromtimestamp(int(t['timeStamp']), tz=timezone.utc)
+
+                        # Arrêt précoce
+                        if limit_dt and dt < limit_dt:
+                            stop_api = True
+                            continue
+
                         asset = t.get("tokenSymbol", cfg["native"])
                         dec = int(t.get("tokenDecimal", 18))
                         amt = float(t.get("value", 0)) / 10**dec
@@ -221,15 +243,18 @@ def fetch_harvest(address, network, api_key):
 
                         fee = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 10**18 if 'gasPrice' in t else 0
 
-                        p_usd, p_eur = get_price_data(asset, datetime.fromtimestamp(int(t['timeStamp']), tz=timezone.utc))
+                        p_usd, p_eur = get_price_data(asset, dt)
                         txs.append({
-                            "source": f"API ({label})", "id": t['hash'], "date": datetime.fromtimestamp(int(t['timeStamp']), tz=timezone.utc),
+                            "source": f"API ({label})", "id": t['hash'], "date": dt,
                             "account": address, "counterparty": f_addr if direction == "IN" else t_addr,
                             "asset": asset, "type": label, "amount": amt, "network": network, "from/to": direction,
                             "fee": fee,
                             "valeur $": amt * p_usd,
                             "valeur €": amt * p_eur
                         })
+
+                    if stop_api: break
+
                     last_block = int(results[-1].get('blockNumber', 0))
                     if len(results) < 10000: break
                     start_block = last_block + 1
@@ -313,6 +338,13 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
 
     # Section : Moteur de Récolte
     st.subheader("🚜 Moteur de Récolte 3 Voies")
+
+    # Options de mode de récolte
+    harvest_mode = st.radio("Mode de récolte", ["Complet", "Incrémental (depuis une date)"], horizontal=True)
+    since_date = None
+    if harvest_mode == "Incrémental (depuis une date)":
+        since_date = st.date_input("Récolter à partir du :", datetime.now().date())
+
     col_harvest1, col_harvest2 = st.columns([2, 1])
 
     # Trouver le réseau associé à l'adresse sélectionnée
@@ -339,7 +371,7 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
             cfg = NETWORKS_CFG.get(net, {})
             api_key = st.session_state.api_keys.get(cfg.get("api_name"), "")
 
-            raw_txs = fetch_harvest(addr_to_harvest, net, api_key)
+            raw_txs = fetch_harvest(addr_to_harvest, net, api_key, since_date=since_date)
             if raw_txs:
                 new_df = pd.DataFrame(raw_txs)
                 # Dédoublonnage robuste incluant le montant et la direction
