@@ -327,6 +327,7 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
         st.data_editor(
             df_to_show.style.apply(lambda row: ['background-color: #ffff99']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1),
             use_container_width=True,
+            height=600, # Fixe la hauteur pour stabiliser le scroll vertical
             column_config={
                 "Is_Spam": st.column_config.CheckboxColumn("Spam"),
                 "amount": st.column_config.NumberColumn("Quantité", format="%.8f"),
@@ -335,7 +336,7 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
                 "Solde Progressif (EUR)": st.column_config.NumberColumn("Solde EUR", format="%.2f €")
             },
             key=editor_key,
-            disabled=["numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "valeur $", "valeur €", "category", "network", "from/to", "Solde Progressif (EUR)"]
+            disabled=DB_COLS + ["Solde Progressif (EUR)"] # Empêche les sauts dus à l'édition de colonnes bloquées
         )
         if edits and st.button("🔄 Confirmer & Recalculer", key=f"refresh_{selected_year}"): st.rerun()
         if st.button("📄 Générer Rapport PDF", key=f"pdf_{selected_year}"):
