@@ -61,7 +61,8 @@ page = st.sidebar.radio("Navigation", ["PAGE 1 : Gestion des Comptes & Récolte"
 
 # --- CONSTANTES ---
 # Ordre exact demandé : source, id, date, account, counterparty, asset, type, amount, category, coche spam, network, valeur $, valeur €, from/to
-DB_COLS = ["source", "id", "date", "account", "counterparty", "asset", "type", "amount", "category", "Is_Spam", "network", "valeur $", "valeur €", "from/to"]
+# Note: 'manual_spam' est stocké pour la coche ligne par ligne, 'Is_Spam' est calculé pour l'affichage (global + manuel)
+DB_COLS = ["source", "id", "date", "account", "counterparty", "asset", "type", "amount", "category", "manual_spam", "network", "valeur $", "valeur €", "from/to"]
 ACCOUNTS_FILE = "accounts_log.csv"
 API_KEYS_FILE = "api_keys.json"
 SPAM_FILE = "spam_blacklist.json"
@@ -131,11 +132,13 @@ def load_annual_db(year):
         if df['date'].isna().any():
             df['date'] = pd.to_datetime(df['date'], utc=True, errors='coerce')
 
-        # Rétrocompatibilité : Assurer la présence des colonnes de valeur
+        # Rétrocompatibilité : Assurer la présence des colonnes
         if 'valeur $' not in df.columns: df['valeur $'] = 0.0
         if 'valeur €' not in df.columns: df['valeur €'] = 0.0
+        if 'manual_spam' not in df.columns: df['manual_spam'] = False
 
-        return df
+        # S'assurer du bon ordre des colonnes stockées
+        return df[DB_COLS]
     return pd.DataFrame(columns=DB_COLS)
 
 # --- MOTEUR DE RÉCOLTE ---
@@ -341,7 +344,7 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
                         "source": row['source'], "id": row['id'], "date": row['date'],
                         "account": row['account'], "counterparty": row['counterparty'], "asset": row['asset'],
                         "type": row['type'], "amount": signed_amount, "category": "Mouvement",
-                        "Is_Spam": is_spam, "network": row['network'],
+                        "manual_spam": False, "network": row['network'],
                         "valeur $": signed_usd, "valeur €": signed_eur, "from/to": row['from/to']
                     })
 
@@ -357,7 +360,7 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
                             "source": row['source'], "id": row['id'], "date": row['date'],
                             "account": row['account'], "counterparty": "Network Fee", "asset": native_asset,
                             "type": "Fee", "amount": -row['fee'], "category": "Frais",
-                            "Is_Spam": is_spam, "network": row['network'],
+                            "manual_spam": False, "network": row['network'],
                             "valeur $": f_usd, "valeur €": f_eur, "from/to": "OUT"
                         })
                 pd.DataFrame(journal_rows).to_csv(db_file, index=False)
@@ -385,26 +388,29 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
         editor_key = f"editor_{selected_year}_{st.session_state[session_key]}"
         edits = st.session_state.get(editor_key, {}).get("edited_rows", {})
 
-        # État initial basé sur la mémoire permanente
+        # État initial : Is_Spam est calculé (Global OR Ligne)
         annual_df = annual_df.sort_values('date')
-        annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
+        # On calcule l'état global (Blacklist)
+        annual_df['Is_Blacklisted'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses) | \
+                                       annual_df['asset'].str.lower().isin(st.session_state.spam_addresses)
+        # Is_Spam pour l'affichage = Blacklisté OU coché manuellement sur la ligne
+        annual_df['Is_Spam'] = annual_df['Is_Blacklisted'] | annual_df['manual_spam']
 
-        # Buffer temporaire (session) pour les nouvelles adresses marquées durant cette vue
-        if 'pending_spam' not in st.session_state: st.session_state.pending_spam = set()
+        # Buffer temporaire pour les changements de session (coche ligne par ligne)
+        if 'pending_manual_spam' not in st.session_state: st.session_state.pending_manual_spam = {}
 
-        # Mise à jour du buffer à chaque clic (SANS filtrage immédiat des lignes)
+        # Application du buffer sur l'affichage
+        for idx, val in st.session_state.pending_manual_spam.items():
+            if idx in annual_df.index: annual_df.at[idx, 'Is_Spam'] = val
+
+        # Mise à jour du buffer à chaque clic sur "Coche Spam"
         if edits:
             df_ref = annual_df[~annual_df['Is_Spam']] if hide_spam else annual_df
             for idx_str, changes in edits.items():
                 if "Is_Spam" in changes:
-                    idx = int(idx_str)
-                    if idx < len(df_ref):
-                        cp_addr = str(df_ref.iloc[idx]['counterparty']).lower()
-                        if changes["Is_Spam"]: st.session_state.pending_spam.add(cp_addr)
-                        else: st.session_state.pending_spam.discard(cp_addr)
-
-        # On applique le buffer visuellement (surlignage jaune immédiat)
-        annual_df.loc[annual_df['counterparty'].str.lower().isin(st.session_state.pending_spam), 'Is_Spam'] = True
+                    real_idx = df_ref.index[int(idx_str)]
+                    st.session_state.pending_manual_spam[real_idx] = changes["Is_Spam"]
+                    annual_df.at[real_idx, 'Is_Spam'] = changes["Is_Spam"]
 
         df_to_show = annual_df[~annual_df['Is_Spam']].copy() if hide_spam else annual_df.copy()
 
@@ -412,25 +418,27 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
         df_to_show['valeur €'] = pd.to_numeric(df_to_show['valeur €'], errors='coerce').fillna(0.0)
         df_to_show['Solde Progressif (EUR)'] = initial_balance_fiat + df_to_show['valeur €'].cumsum()
 
-        # Ordre exact demandé : source, id, date, account, counterparty, asset, type, amount, category, coche spam, network, valeur $, valeur €, from/to
+        # Ordre exact demandé
         cols_order = ["source", "id", "date", "account", "counterparty", "asset", "type", "amount", "category", "Is_Spam", "network", "valeur $", "valeur €", "from/to", "Solde Progressif (EUR)"]
 
         # Style : Jaune vif pour TOUT ce qui est marqué Spam (Permanent + Pending)
         styled_df = df_to_show.style.apply(lambda row: ['background-color: #ffff00']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1)
 
         # Affichage du statut du buffer
-        if st.session_state.pending_spam:
-            st.warning(f"⏳ **BUFFER ACTIF** : {len(st.session_state.pending_spam)} adresses en attente de marquage permanent.")
+        if st.session_state.pending_manual_spam:
+            st.warning(f"⏳ **MODIFICATIONS EN ATTENTE** : {len(st.session_state.pending_manual_spam)} lignes modifiées.")
 
-        # Bouton pour vider le buffer vers la mémoire permanente
-        if st.session_state.pending_spam:
-            if st.button(f"💾 Appliquer le marquage ({len(st.session_state.pending_spam)} adresses) & Nettoyer", type="primary"):
-                st.session_state.spam_addresses.update(st.session_state.pending_spam)
-                save_spam_blacklist(st.session_state.spam_addresses)
-                st.session_state.pending_spam = set()
-                # On change la clé de l'éditeur pour forcer un rafraîchissement propre après commit
+        # Bouton pour vider le buffer vers la mémoire permanente (CSV annuel)
+        if st.session_state.pending_manual_spam:
+            if st.button(f"💾 Sauvegarder les coches ({len(st.session_state.pending_manual_spam)} lignes)", type="primary"):
+                for idx, val in st.session_state.pending_manual_spam.items():
+                    annual_df.at[idx, 'manual_spam'] = val
+                # On retire les colonnes calculées avant sauvegarde
+                cols_to_save = [c for c in DB_COLS]
+                annual_df[cols_to_save].to_csv(db_file, index=False)
+                st.session_state.pending_manual_spam = {}
                 st.session_state[session_key] += 1
-                st.success("Buffer transféré en mémoire permanente. Nettoyage de l'historique effectué.")
+                st.success("Coches enregistrées dans le journal annuel.")
                 st.rerun()
 
         st.data_editor(
@@ -538,11 +546,20 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
     st.sidebar.metric("Solde Initial (EUR)", f"{initial_balance_fiat:,.2f} €")
 
     with st.sidebar.expander("🛡️ Sécurité & Anti-Spam"):
-        st.write(f"Adresses bloquées : **{len(st.session_state.spam_addresses)}**")
-        if st.button("🗑️ Vider la liste noire"):
+        st.write(f"Blacklist globale : **{len(st.session_state.spam_addresses)}**")
+
+        # Ajout d'adresse ou d'asset global
+        global_to_add = st.text_input("Ajouter une adresse/asset à la Blacklist", key="global_spam_input")
+        if st.button("🚫 Blacklister Globalement") and global_to_add:
+            st.session_state.spam_addresses.add(global_to_add.lower())
+            save_spam_blacklist(st.session_state.spam_addresses)
+            st.success(f"'{global_to_add}' ajouté à la blacklist.")
+            st.rerun()
+
+        if st.button("🗑️ Vider la Blacklist globale"):
             st.session_state.spam_addresses = set()
             save_spam_blacklist(set())
             st.rerun()
-        st.info("Le marquage d'une adresse comme spam dans le journal l'ajoute globalement à cette liste.")
+        st.info("La Blacklist sature en jaune TOUTES les transactions d'une adresse/asset dans TOUTES les périodes.")
 
     journal_fragment(selected_year, f"DB_{selected_year}.csv", initial_balance_fiat)
