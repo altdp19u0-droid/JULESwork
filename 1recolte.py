@@ -487,8 +487,32 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
         # Suivi du solde avec .cumsum()
         annual_df = annual_df.sort_values('date')
 
-        # Identification du spam
-        annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().apply(lambda x: x in st.session_state.spam_addresses)
+        # Traitement immédiat des éditions de spam (Réactivité maximale)
+        editor_key = f"journal_editor_{selected_year}"
+        edits = st.session_state.get(editor_key, {}).get("edited_rows", {})
+
+        # On calcule Is_Spam basé sur la liste noire actuelle
+        annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
+
+        # Si l'utilisateur vient de cocher/décocher, on met à jour la liste noire AVANT l'affichage
+        if edits:
+            # Pour accéder aux adresses, on a besoin du DF tel qu'il était affiché au tour précédent
+            # On utilise une copie temporaire pour la détection
+            df_ref = annual_df.copy()
+            if hide_spam:
+                df_ref = df_ref[df_ref['Is_Spam'] == False]
+
+            for idx_str, changes in edits.items():
+                if "Is_Spam" in changes:
+                    idx = int(idx_str)
+                    if idx < len(df_ref):
+                        cp_addr = str(df_ref.iloc[idx]['counterparty']).lower()
+                        if changes["Is_Spam"]:
+                            st.session_state.spam_addresses.add(cp_addr)
+                        else:
+                            st.session_state.spam_addresses.discard(cp_addr)
+            # On recalcule Is_Spam après mise à jour pour le rendu actuel
+            annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
 
         # Filtrage si toggle activé
         df_to_show = annual_df.copy()
@@ -500,13 +524,14 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
 
         # Style pour le surlignage jaune des suspects
         def highlight_spam_rows(row):
-            if row['Is_Spam']:
+            cp = str(row['counterparty']).lower()
+            if cp in st.session_state.spam_addresses:
                 return ['background-color: #ffff99'] * len(row)
             return [''] * len(row)
 
-        # Utilisation de st.data_editor pour permettre de cocher/décocher le spam
+        # Utilisation de st.data_editor
         column_config_journal = {
-            "Is_Spam": st.column_config.CheckboxColumn("Spam", help="Marquer comme spam"),
+            "Is_Spam": st.column_config.CheckboxColumn("Spam", help="Cochez pour marquer l'adresse comme SPAM"),
             "numéro": st.column_config.NumberColumn("N°", disabled=True),
             "date": st.column_config.DatetimeColumn("Date", disabled=True),
             "amount": st.column_config.NumberColumn("Quantité", format="%.8f", disabled=True),
@@ -515,35 +540,16 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
             "Solde Progressif (EUR)": st.column_config.NumberColumn("Solde EUR", format="%.2f €", disabled=True)
         }
 
-        edited_journal = st.data_editor(
+        # Le bouton reste utile pour forcer un recalcul propre des soldes si nécessaire
+        if edits and st.button("🔄 Confirmer & Recalculer les Soldes"):
+            st.rerun()
+
+        st.data_editor(
             df_to_show.style.apply(highlight_spam_rows, axis=1),
             use_container_width=True,
             column_config=column_config_journal,
-            key=f"journal_editor_{selected_year}"
+            key=editor_key
         )
-
-        # Détection des changements de spam et propagation
-        if st.button("💾 Appliquer les modifications Spam"):
-            # On compare le DF édité avec le DF original pour trouver les changements de Is_Spam
-            # Note: streamlit renvoie les lignes éditées dans session_state[key]['edited_rows']
-            edits = st.session_state.get(f"journal_editor_{selected_year}", {}).get("edited_rows", {})
-            if edits:
-                for idx_str, changes in edits.items():
-                    if "Is_Spam" in changes:
-                        idx = int(idx_str)
-                        # Récupérer l'adresse de contrepartie originale via l'index du DF affiché
-                        row_data = df_to_show.iloc[idx]
-                        cp_addr = str(row_data['counterparty']).lower()
-                        new_val = changes["Is_Spam"]
-
-                        if new_val:
-                            st.session_state.spam_addresses.add(cp_addr)
-                        else:
-                            if cp_addr in st.session_state.spam_addresses:
-                                st.session_state.spam_addresses.remove(cp_addr)
-
-                st.success("Modifications propagées à l'ensemble de l'historique ! Relancez la génération pour mettre à jour les calculs de solde.")
-                st.rerun()
 
         # Action : Marquer comme spam
         st.divider()
@@ -574,12 +580,14 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
             pdf.cell(90, 8, "Contrepartie", 1, 1, 'C', 1)
 
             # Lignes
-            for idx, row in df_to_show.head(100).iterrows(): # Limite à 100 pour le PDF de démo
+            for idx, row in df_to_show.head(2000).iterrows():
                 pdf.cell(10, 8, str(row['numéro']), 1)
                 pdf.cell(30, 8, str(row['date'].strftime('%Y-%m-%d')), 1)
                 pdf.cell(30, 8, str(row['asset']), 1)
                 pdf.cell(30, 8, f"{row['amount']:.4f}", 1)
-                pdf.cell(90, 8, str(row['counterparty'])[:40], 1, 1)
+                # Nettoyage des caractères non-compatibles Latin-1
+                cp_safe = str(row['counterparty']).encode('latin-1', 'replace').decode('latin-1')
+                pdf.cell(90, 8, cp_safe[:40], 1, 1)
 
             pdf_bytes = pdf.output()
             st.download_button(label="⬇️ Télécharger le Rapport PDF", data=pdf_bytes, file_name=f"Rapport_{selected_year}.pdf", mime="application/pdf")
