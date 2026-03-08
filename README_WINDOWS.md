@@ -2,19 +2,43 @@
 
 Si vous obtenez "Accès refusé" en lançant Streamlit, suivez ces étapes dans l'ordre :
 
-### 1. Désactiver les Alias d'exécution (Cause n°1 - CRITIQUE)
-Windows 11 intercepte parfois les commandes `python` avec des alias vides (liens vers le Microsoft Store) au lieu de votre installation Python 3.12.
-- Ouvrez le menu **Démarrer** et tapez **"Alias d'exécution"** (ou "Manage app execution aliases").
-- Cherchez **TOUTES** les lignes contenant **python**, **python3**, **pip**, **streamlit**.
-- **Décochez-les toutes** (mettez-les sur "Désactivé").
-- **Redémarrez votre ordinateur** (certains alias restent en cache mémoire).
+# GUIDE DE RÉINSTALLATION PROPRE (PROCÉDURE "CLEAN SLATE")
 
-### 1b. Erreur "%1 n'est pas une application Win32 valide"
-Cette erreur signifie que le fichier `python.exe` est soit corrompu (0 Ko), soit bloqué par un antivirus.
-- Allez dans `C:\Users\Pp\AppData\Local\Programs\Python\Python312\`
-- Vérifiez la taille de `python.exe`. S'il fait **0 Ko**, votre installation est cassée : **Désinstallez et réinstallez Python 3.12**.
+Si vous avez toujours "Accès refusé" ou "Erreur Fatale", votre environnement Python est gravement corrompu. Suivez cette procédure rigoureusement :
 
-### 2. Utiliser le fichier de lancement automatique (`lanceur_1recolte.bat`)
+### ÉTAPE A : DÉSINSTALLATION TOTALE
+1. Ouvrez le **Panneau de Configuration** > **Désinstaller un programme**.
+2. Désinstallez **TOUTES** les versions de Python (3.12, 3.14, Launcher, etc.).
+3. Redémarrez votre ordinateur.
+
+### ÉTAPE B : NETTOYAGE MANUEL (CRITIQUE)
+Supprimez manuellement ces dossiers s'ils existent (copiez-collez les chemins dans l'explorateur) :
+1. `%AppData%\..\Local\Programs\Python` (Dossier complet)
+2. `%AppData%\Roaming\Python` (Dossier complet)
+3. `%AppData%\..\Local\pip`
+4. Supprimez la ligne Python 3.14 de vos **Variables d'environnement PATH** (Système et Utilisateur).
+
+### ÉTAPE C : RÉINSTALLATION SÉCURISÉE
+1. Téléchargez **Python 3.12.9** sur [python.org](https://www.python.org/downloads/windows/).
+2. Lancez l'installeur en **clic droit > Exécuter en tant qu'administrateur**.
+3. **TRÈS IMPORTANT :**
+   - [X] Cochez **"Add Python to PATH"** en bas.
+   - [X] Cochez **"Use admin privileges when installing py.exe"**.
+4. Cliquez sur **"Customize installation"**.
+   - Vérifiez que **pip** et **py launcher** sont cochés. Suivant.
+   - [X] Cochez **"Install Python for all users"**.
+   - Le chemin doit devenir `C:\Program Files\Python312`. Cela évite les erreurs d'accès dans AppData.
+5. Cliquez sur **Install**.
+
+### ÉTAPE D : INSTALLATION DES MODULES
+1. Ouvrez un **Terminal (CMD)** en mode **Administrateur**.
+2. Tapez la commande suivante pour vérifier :
+   `python --version` (Doit répondre 3.12.x)
+3. Installez les outils :
+   `python -m pip install --upgrade pip`
+   `python -m pip install streamlit pandas requests fpdf2`
+
+### ÉTAPE E : LANCEMENT
 J'ai créé un fichier nommé `lanceur_1recolte.bat` dans votre dossier.
 - Faites un **clic droit** dessus et choisissez **"Exécuter en tant qu'administrateur"**.
 - Cela forcera les droits d'accès nécessaires.

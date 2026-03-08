@@ -2,32 +2,23 @@
 REM Lanceur 1Recolte V4.3 - Windows 11 Compatibility Version
 REM Bypassing System32 decoy and handling corrupted aliases
 
-set PY_EXE="C:\Users\Pp\AppData\Local\Programs\Python\Python312\python.exe"
-set ST_EXE="C:\Users\Pp\AppData\Local\Programs\Python\Python312\Scripts\streamlit.exe"
+REM Chemins standard apres installation "All Users"
+set PY_EXE="C:\Program Files\Python312\python.exe"
+set PY_LAUNCHER="py"
 
 echo --- Lancement de 1Recolte V4.3 ---
 
-echo Tentative 1: via le Python Launcher (py -3.12)
-py -3.12 -m streamlit run 1recolte.py
+echo Tentative 1: via le Python Launcher
+%PY_LAUNCHER% -3.12 -m streamlit run 1recolte.py
 
 if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo Tentative 2: via le chemin absolu Python 3.12
-    if exist %PY_EXE% (
-        %PY_EXE% -m streamlit run 1recolte.py
-    ) else (
-        echo ERREUR: Le fichier %PY_EXE% est introuvable.
-    )
+    echo Tentative 2: via le chemin standard Program Files
+    %PY_EXE% -m streamlit run 1recolte.py
 )
 
 if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo Tentative 3: via streamlit.exe direct
-    if exist %ST_EXE% (
-        %ST_EXE% run 1recolte.py
-    ) else (
-        echo ERREUR: Le fichier %ST_EXE% est introuvable.
-    )
+    echo Tentative 3: via la commande directe
+    python -m streamlit run 1recolte.py
 )
 
 if %ERRORLEVEL% NEQ 0 (
