@@ -92,7 +92,31 @@ def load_accounts():
 def save_accounts(df):
     df.to_csv(ACCOUNTS_FILE, index=False)
 
+def load_annual_db(year):
+    fname = f"DB_{year}.csv"
+    if os.path.exists(fname):
+        df = pd.read_csv(fname)
+        # Gestion unifiée et robuste des dates
+        df['date'] = pd.to_datetime(df['date'], utc=True, format='ISO8601', errors='coerce')
+        if df['date'].isna().any():
+            df['date'] = pd.to_datetime(df['date'], utc=True, errors='coerce')
+
+        # Rétrocompatibilité : Assurer la présence des colonnes de valeur
+        if 'valeur $' not in df.columns: df['valeur $'] = 0.0
+        if 'valeur €' not in df.columns: df['valeur €'] = 0.0
+
+        return df
+    return pd.DataFrame(columns=DB_COLS)
+
 # --- MOTEUR DE RÉCOLTE ---
+def extract_amount(t, decimals=18):
+    """Extraction robuste du montant depuis divers formats d'API"""
+    val_raw = t.get('value') or t.get('amount') or t.get('total') or 0
+    try:
+        return float(val_raw) / 10**int(decimals)
+    except:
+        return 0.0
+
 def fetch_harvest(address, network, api_key, since_date=None):
     txs = []
     addr_low = address.lower()
@@ -137,12 +161,13 @@ def fetch_harvest(address, network, api_key, since_date=None):
                             continue # On traite la suite du bloc au cas où l'ordre n'est pas strict, mais on arrêtera après
 
                         asset = cfg['native']
-                        amount = float(t.get('value', 0)) / 10**18
+                        dec = 18
                         if label == "Tokens" or "token" in t:
                             tok = t.get('token') or {}
                             asset = tok.get('symbol') or t.get('tokenSymbol') or 'TOKEN'
                             dec = int(tok.get('decimals') or t.get('tokenDecimal') or 18)
-                            amount = float(t.get('value', 0)) / 10**dec
+
+                        amount = extract_amount(t, dec)
 
                         f_addr = (t.get('from', {}).get('hash') if isinstance(t.get('from'), dict) else t.get('from', 'Unknown')).lower()
                         t_addr = (t.get('to', {}).get('hash') if isinstance(t.get('to'), dict) else t.get('to', 'Unknown')).lower()
@@ -180,9 +205,7 @@ def fetch_harvest(address, network, api_key, since_date=None):
                     tok = t.get('token') or {}
                     asset = tok.get('symbol') or 'TOKEN'
                     dec = int(tok.get('decimals') or 18)
-                    # Extraction robuste de la valeur
-                    val_raw = t.get('value') or t.get('amount') or 0
-                    val = float(val_raw) / 10**dec
+                    val = extract_amount(t, dec)
                     if val > 0:
                         p_usd, p_eur = get_price_data(asset, datetime.now(timezone.utc))
                         txs.append({
@@ -236,7 +259,7 @@ def fetch_harvest(address, network, api_key, since_date=None):
 
                         asset = t.get("tokenSymbol", cfg["native"])
                         dec = int(t.get("tokenDecimal", 18))
-                        amt = float(t.get("value", 0)) / 10**dec
+                        amt = extract_amount(t, dec)
 
                         f_addr, t_addr = t.get('from', '').lower(), t.get('to', '').lower()
                         direction = "IN" if t_addr == addr_low else "OUT"
@@ -398,115 +421,70 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
         else:
             st.warning("Veuillez sélectionner ou ajouter une adresse d'abord.")
 
-elif page == "PAGE 2 : Analyse & Journal Comptable":
-    st.header("PAGE 2 : Analyse & Journal Comptable")
-
-    # 1. Sélection de l'année
-    available_years = range(2020, datetime.now().year + 1)
-    selected_year = st.sidebar.selectbox("Sélectionner l'année", options=reversed(available_years))
-
-    db_file = f"DB_{selected_year}.csv"
-
-    # 2. Chargement des données annuelles avec @st.cache_data
+@st.fragment
+def journal_fragment(selected_year, db_file, initial_balance_fiat):
+    # Chargement avec cache
     @st.cache_data(show_spinner=False)
-    def load_annual_db(year):
-        fname = f"DB_{year}.csv"
-        if os.path.exists(fname):
-            df = pd.read_csv(fname)
-            # Utilisation de format='mixed' pour plus de robustesse sur les formats stockés
-            df['date'] = pd.to_datetime(df['date'], utc=True, format='ISO8601', errors='coerce')
-            if df['date'].isna().any():
-                df['date'] = pd.to_datetime(df['date'], utc=True, errors='coerce')
+    def get_annual_df(year):
+        return load_annual_db(year)
 
-            # Rétrocompatibilité : Assurer la présence des nouvelles colonnes de valeur
-            if 'valeur $' not in df.columns: df['valeur $'] = 0.0
-            if 'valeur €' not in df.columns: df['valeur €'] = 0.0
-
-            return df
-        return pd.DataFrame(columns=DB_COLS)
-
-    annual_df = load_annual_db(selected_year)
-
-    # 3. Calcul du Solde Initial (Continuité Cumulative en EUR)
-    initial_balance_fiat = 0.0
-    for y in range(2020, selected_year):
-        y_df = load_annual_db(y)
-        if not y_df.empty:
-            initial_balance_fiat += y_df['valeur €'].sum()
-
-    st.sidebar.metric("Solde Initial (EUR)", f"{initial_balance_fiat:,.2f} €")
+    annual_df = get_annual_df(selected_year)
 
     # 4. Double Écriture & Traitement
     if st.button("🔄 Générer / Actualiser le Journal " + str(selected_year)):
         if 'all_transactions' in st.session_state and not st.session_state.all_transactions.empty:
             all_tx = st.session_state.all_transactions.copy()
-            # Utilisation de format='mixed' pour gérer les différents formats de date
             all_tx['date'] = pd.to_datetime(all_tx['date'], utc=True, format='ISO8601', errors='coerce')
-
-            # Filtrer par année (en s'assurant que l'année est accessible)
             all_tx = all_tx.dropna(subset=['date'])
             year_tx = all_tx[all_tx['date'].dt.year == selected_year].copy()
 
             if not year_tx.empty:
+                # OPTIMISATION : Supprimer les lignes Native à 0 si une ligne Token existe pour le même hash
+                # Cela évite les lignes "doublons" inutiles signalées par l'utilisateur
+                tx_hashes_with_tokens = year_tx[year_tx['type'].isin(['Tokens', 'NFT'])]['id'].unique()
+                year_tx = year_tx[~((year_tx['type'] == 'Native') & (year_tx['amount'] == 0) & (year_tx['id'].isin(tx_hashes_with_tokens)))]
+
                 journal_rows = []
                 counter = 1
                 for _, row in year_tx.iterrows():
-                    # Correction Signe : Négatif si OUT
                     signed_amount = row['amount'] if row['from/to'] == "IN" else -abs(row['amount'])
-
-                    # Correction Signe Fiat
                     signed_usd = row['valeur $'] if row['from/to'] == "IN" else -abs(row['valeur $'])
                     signed_eur = row['valeur €'] if row['from/to'] == "IN" else -abs(row['valeur €'])
 
-                    # Ligne 1 : L'Asset (Mouvement principal)
                     journal_rows.append({
                         "numéro": counter, "source": row['source'], "id": row['id'],
                         "date": row['date'], "account": row['account'],
                         "counterparty": row['counterparty'], "asset": row['asset'],
                         "type": row['type'], "amount": signed_amount,
-                        "valeur $": signed_usd,
-                        "valeur €": signed_eur,
+                        "valeur $": signed_usd, "valeur €": signed_eur,
                         "category": "Transfert", "network": row['network'],
                         "from/to": row['from/to']
                     })
                     counter += 1
 
-                    # Ligne 2 : Les Fees (Frais)
                     if row.get('fee', 0) > 0:
                         native_asset = NETWORKS_CFG.get(row['network'], {}).get('native', 'ETH')
                         p_usd_fee, p_eur_fee = get_price_data(native_asset, row['date'])
-                        fee_usd = -abs(row['fee'] * p_usd_fee)
-                        fee_eur = -abs(row['fee'] * p_eur_fee)
-                        # Les frais sont toujours une sortie (OUT)
                         journal_rows.append({
                             "numéro": counter, "source": row['source'], "id": row['id'],
                             "date": row['date'], "account": row['account'],
                             "counterparty": "Network Fee", "asset": native_asset,
                             "type": "Fee", "amount": -row['fee'],
-                            "valeur $": fee_usd,
-                            "valeur €": fee_eur,
+                            "valeur $": -abs(row['fee'] * p_usd_fee),
+                            "valeur €": -abs(row['fee'] * p_eur_fee),
                             "category": "Frais", "network": row['network'],
                             "from/to": "OUT"
                         })
                         counter += 1
 
-                annual_df = pd.DataFrame(journal_rows)
-                annual_df.to_csv(db_file, index=False)
+                pd.DataFrame(journal_rows).to_csv(db_file, index=False)
                 st.cache_data.clear()
-                st.success(f"Journal {selected_year} généré avec {len(annual_df)} lignes.")
+                st.success(f"Journal {selected_year} généré.")
                 st.rerun()
-            else:
-                st.warning(f"Aucune transaction trouvée pour l'année {selected_year} dans la récolte.")
-        else:
-            st.warning("Aucune donnée récoltée. Allez en Page 1 pour lancer une récolte.")
 
-    # 5. Affichage du Journal
-    st.subheader(f"📅 Journal Comptable {selected_year}")
-
-    # Statistiques (st.metric en EUR)
     if not annual_df.empty:
-        # Filtrer le spam pour les stats
-        stats_df = annual_df[annual_df['counterparty'].str.lower().apply(lambda x: x not in st.session_state.spam_addresses)]
+        # Statistiques
+        stats_df = annual_df[~annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)]
         total_vol_fiat = stats_df[stats_df['type'] != 'Fee']['valeur €'].abs().sum()
         total_fees_fiat = stats_df[stats_df['type'] == 'Fee']['valeur €'].sum()
         final_balance_fiat = initial_balance_fiat + stats_df['valeur €'].sum()
@@ -517,117 +495,77 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
         c3.metric("Volume Total", f"{total_vol_fiat:,.2f} €")
         st.divider()
 
-    # Toggle Anti-Spam
-    hide_spam = st.sidebar.toggle("🚫 Masquer le spam", value=True)
+        hide_spam = st.toggle("🚫 Masquer le spam", value=True, key=f"hide_spam_{selected_year}")
 
-    if not annual_df.empty:
-        # Suivi du solde avec .cumsum()
         annual_df = annual_df.sort_values('date')
-
-        # Traitement immédiat des éditions de spam (Réactivité maximale)
-        editor_key = f"journal_editor_{selected_year}"
-        edits = st.session_state.get(editor_key, {}).get("edited_rows", {})
-
-        # On calcule Is_Spam basé sur la liste noire actuelle
         annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
 
-        # Si l'utilisateur vient de cocher/décocher, on met à jour la liste noire AVANT l'affichage
+        editor_key = f"editor_{selected_year}"
+        edits = st.session_state.get(editor_key, {}).get("edited_rows", {})
         if edits:
-            # Pour accéder aux adresses, on a besoin du DF tel qu'il était affiché au tour précédent
-            # On utilise une copie temporaire pour la détection
-            df_ref = annual_df.copy()
-            if hide_spam:
-                df_ref = df_ref[df_ref['Is_Spam'] == False]
-
+            df_ref = annual_df[annual_df['Is_Spam'] == False] if hide_spam else annual_df
             for idx_str, changes in edits.items():
                 if "Is_Spam" in changes:
                     idx = int(idx_str)
                     if idx < len(df_ref):
                         cp_addr = str(df_ref.iloc[idx]['counterparty']).lower()
-                        if changes["Is_Spam"]:
-                            st.session_state.spam_addresses.add(cp_addr)
-                        else:
-                            st.session_state.spam_addresses.discard(cp_addr)
-            # On recalcule Is_Spam après mise à jour pour le rendu actuel
+                        if changes["Is_Spam"]: st.session_state.spam_addresses.add(cp_addr)
+                        else: st.session_state.spam_addresses.discard(cp_addr)
             annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
 
-        # Filtrage si toggle activé
-        df_to_show = annual_df.copy()
-        if hide_spam:
-            df_to_show = df_to_show[df_to_show['Is_Spam'] == False]
-
-        # Solde Progressif en EUR
+        df_to_show = annual_df[annual_df['Is_Spam'] == False] if hide_spam else annual_df
         df_to_show['Solde Progressif (EUR)'] = initial_balance_fiat + df_to_show['valeur €'].cumsum()
 
-        # Style pour le surlignage jaune des suspects
-        def highlight_spam_rows(row):
-            cp = str(row['counterparty']).lower()
-            if cp in st.session_state.spam_addresses:
-                return ['background-color: #ffff99'] * len(row)
-            return [''] * len(row)
-
-        # Utilisation de st.data_editor
-        column_config_journal = {
-            "Is_Spam": st.column_config.CheckboxColumn("Spam", help="Cochez pour marquer l'adresse comme SPAM"),
-            "numéro": st.column_config.NumberColumn("N°", disabled=True),
-            "date": st.column_config.DatetimeColumn("Date", disabled=True),
-            "amount": st.column_config.NumberColumn("Quantité", format="%.8f", disabled=True),
-            "valeur $": st.column_config.NumberColumn("Valeur $", format="%.2f $", disabled=True),
-            "valeur €": st.column_config.NumberColumn("Valeur €", format="%.2f €", disabled=True),
-            "Solde Progressif (EUR)": st.column_config.NumberColumn("Solde EUR", format="%.2f €", disabled=True)
-        }
-
-        # Le bouton reste utile pour forcer un recalcul propre des soldes si nécessaire
-        if edits and st.button("🔄 Confirmer & Recalculer les Soldes"):
-            st.rerun()
-
         st.data_editor(
-            df_to_show.style.apply(highlight_spam_rows, axis=1),
+            df_to_show.style.apply(lambda row: ['background-color: #ffff99']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1),
             use_container_width=True,
-            column_config=column_config_journal,
-            key=editor_key
+            column_config={
+                "Is_Spam": st.column_config.CheckboxColumn("Spam"),
+                "amount": st.column_config.NumberColumn("Quantité", format="%.8f"),
+                "valeur $": st.column_config.NumberColumn("Valeur $", format="%.2f $"),
+                "valeur €": st.column_config.NumberColumn("Valeur €", format="%.2f €"),
+                "Solde Progressif (EUR)": st.column_config.NumberColumn("Solde EUR", format="%.2f €")
+            },
+            key=editor_key,
+            disabled=["numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "valeur $", "valeur €", "category", "network", "from/to", "Solde Progressif (EUR)"]
         )
 
-        # Action : Marquer comme spam
-        st.divider()
-        col_s1, col_s2 = st.columns([2, 1])
-        addr_spam = col_s1.text_input("Marquer une adresse comme SPAM", placeholder="0x...")
-        if col_s2.button("🧹 Nettoyer l'historique"):
-            if addr_spam:
-                st.session_state.spam_addresses.add(addr_spam.lower())
-                st.success(f"Adresse {addr_spam} ajoutée au filtre spam. Relancez la génération du journal pour appliquer.")
-                st.rerun()
+        if edits and st.button("🔄 Confirmer & Recalculer", key=f"refresh_{selected_year}"):
+            st.rerun()
 
-        # Action : Export PDF
-        st.divider()
-        if st.button("📄 Générer Rapport PDF"):
+        if st.button("📄 Générer Rapport PDF", key=f"pdf_{selected_year}"):
             pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", 'B', 16)
+            pdf.add_page(); pdf.set_font("Arial", 'B', 16)
             pdf.cell(190, 10, f"Journal Comptable {selected_year}", 0, 1, 'C')
-            pdf.set_font("Arial", '', 10)
-            pdf.ln(10)
-
-            # Entêtes
-            pdf.set_fill_color(200, 220, 255)
-            pdf.cell(10, 8, "N°", 1, 0, 'C', 1)
-            pdf.cell(30, 8, "Date", 1, 0, 'C', 1)
-            pdf.cell(30, 8, "Asset", 1, 0, 'C', 1)
-            pdf.cell(30, 8, "Montant", 1, 0, 'C', 1)
-            pdf.cell(90, 8, "Contrepartie", 1, 1, 'C', 1)
-
-            # Lignes
-            for idx, row in df_to_show.head(2000).iterrows():
+            pdf.ln(10); pdf.set_fill_color(200, 220, 255); pdf.set_font("Arial", '', 10)
+            headers = [("N°", 10), ("Date", 30), ("Asset", 30), ("Quantité", 30), ("Contrepartie", 90)]
+            for h, w in headers: pdf.cell(w, 8, h, 1, 0, 'C', 1)
+            pdf.ln()
+            for _, row in df_to_show.head(2000).iterrows():
                 pdf.cell(10, 8, str(row['numéro']), 1)
                 pdf.cell(30, 8, str(row['date'].strftime('%Y-%m-%d')), 1)
                 pdf.cell(30, 8, str(row['asset']), 1)
                 pdf.cell(30, 8, f"{row['amount']:.4f}", 1)
-                # Nettoyage des caractères non-compatibles Latin-1
-                cp_safe = str(row['counterparty']).encode('latin-1', 'replace').decode('latin-1')
-                pdf.cell(90, 8, cp_safe[:40], 1, 1)
-
-            pdf_bytes = pdf.output()
-            st.download_button(label="⬇️ Télécharger le Rapport PDF", data=pdf_bytes, file_name=f"Rapport_{selected_year}.pdf", mime="application/pdf")
-
+                pdf.cell(90, 8, str(row['counterparty']).encode('latin-1', 'replace').decode('latin-1')[:40], 1, 1)
+            st.download_button("⬇️ Télécharger PDF", pdf.output(), f"Rapport_{selected_year}.pdf", "application/pdf")
     else:
-        st.info("Le journal pour cette année est vide. Cliquez sur le bouton ci-dessus pour le générer si vous avez récolté des données.")
+        st.info("Journal vide. Lancez une récolte puis actualisez.")
+
+elif page == "PAGE 2 : Analyse & Journal Comptable":
+    st.header("PAGE 2 : Analyse & Journal Comptable")
+
+    # 1. Sélection de l'année (Utilisation d'une plage stable)
+    available_years = list(range(2020, datetime.now(timezone.utc).year + 1))
+    selected_year = st.sidebar.selectbox("Sélectionner l'année", options=reversed(available_years), key="year_selector")
+
+    # Calcul du Solde Initial (Continuité Cumulative en EUR)
+    initial_balance_fiat = 0.0
+    for y in range(2020, selected_year):
+        # Utilisation de la fonction robuste pour éviter les KeyError
+        y_df = load_annual_db(y)
+        if not y_df.empty:
+            initial_balance_fiat += y_df['valeur €'].sum()
+
+    st.sidebar.metric("Solde Initial (EUR)", f"{initial_balance_fiat:,.2f} €")
+
+    journal_fragment(selected_year, f"DB_{selected_year}.csv", initial_balance_fiat)
