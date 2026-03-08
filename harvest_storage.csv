@@ -1,0 +1,4 @@
+source,id,date,account,counterparty,asset,type,amount,network,from/to,fee,valeur $,valeur €
+Manual,0x1,2026-01-01 10:00:00+00:00,0x123,0x456,ETH,Native,1.0,Ethereum,IN,0.01,2500.0,2300.0
+Manual,0x2,2026-01-01 10:05:00+00:00,0x123,0x789,USDC,Tokens,100.0,Ethereum,IN,0.0,100.0,92.0
+Manual,0x3,2026-01-01 10:10:00+00:00,0x123,0xabc,SPAM,Tokens,1.0,Ethereum,IN,0.0,0.0,0.0

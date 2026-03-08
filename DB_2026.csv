@@ -1,0 +1,5 @@
+source,id,date,account,counterparty,asset,type,amount,category,manual_spam,network,valeur $,valeur €,from/to
+Manual,0x1,2026-01-01 10:00:00+00:00,0x123,0x456,ETH,Native,1.0,Mouvement,False,Ethereum,2500.0,2300.0,IN
+Manual,0x1,2026-01-01 10:00:00+00:00,0x123,Network Fee,ETH,Fee,-0.01,Frais,False,Ethereum,-29.667741798134106,-25.249028334720016,OUT
+Manual,0x2,2026-01-01 10:05:00+00:00,0x123,0x789,USDC,Tokens,100.0,Mouvement,False,Ethereum,100.0,92.0,IN
+Manual,0x3,2026-01-01 10:10:00+00:00,0x123,0xabc,SPAM,Tokens,1.0,Mouvement,False,Ethereum,0.0,0.0,IN

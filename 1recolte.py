@@ -396,58 +396,57 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
         # Is_Spam pour l'affichage = Blacklisté OU coché manuellement sur la ligne
         annual_df['Is_Spam'] = annual_df['Is_Blacklisted'] | annual_df['manual_spam']
 
-        # Buffer temporaire pour les changements de session (coche ligne par ligne)
-        if 'pending_manual_spam' not in st.session_state: st.session_state.pending_manual_spam = {}
+        # Buffer temporaire pour les changements de session (coche ligne par ligne) - Spécifique à l'année
+        buf_key = f"pending_spam_{selected_year}"
+        if buf_key not in st.session_state: st.session_state[buf_key] = {}
 
-        # Application du buffer sur l'affichage
-        for idx, val in st.session_state.pending_manual_spam.items():
-            if idx in annual_df.index: annual_df.at[idx, 'Is_Spam'] = val
+        # DÉFINITION DE LA VUE (Fixité de position)
+        # On ne filtre QUE par ce qui est déjà permanent (Blacklist ou manual_spam en base)
+        # On ne filtre JAMAIS par le buffer pending pour éviter que la liste ne saute pendant la saisie
+        df_view = annual_df.copy()
+        if hide_spam:
+            # Filtre strict sur le stocké uniquement (Permanent)
+            df_view = df_view[~(df_view['Is_Blacklisted'] | df_view['manual_spam'])]
+
+        # Application du buffer UNIQUEMENT sur l'état 'Is_Spam' pour le rendu visuel (jaune)
+        for idx, val in st.session_state[buf_key].items():
+            if idx in df_view.index:
+                df_view.at[idx, 'Is_Spam'] = val
 
         # Mise à jour du buffer à chaque clic sur "Coche Spam"
         if edits:
-            df_ref = annual_df[~annual_df['Is_Spam']] if hide_spam else annual_df
+            # On utilise df_view comme référence car c'est elle qui est affichée
             for idx_str, changes in edits.items():
                 if "Is_Spam" in changes:
-                    real_idx = df_ref.index[int(idx_str)]
-                    st.session_state.pending_manual_spam[real_idx] = changes["Is_Spam"]
-                    annual_df.at[real_idx, 'Is_Spam'] = changes["Is_Spam"]
+                    real_idx = df_view.index[int(idx_str)]
+                    st.session_state[buf_key][real_idx] = changes["Is_Spam"]
+                    # On force la mise à jour immédiate pour le re-render du fragment
+                    df_view.at[real_idx, 'Is_Spam'] = changes["Is_Spam"]
 
-        df_to_show = annual_df[~annual_df['Is_Spam']].copy() if hide_spam else annual_df.copy()
+        df_to_show = df_view.copy()
 
         # Nettoyage et calcul du solde progressif
         df_to_show['valeur €'] = pd.to_numeric(df_to_show['valeur €'], errors='coerce').fillna(0.0)
         df_to_show['Solde Progressif (EUR)'] = initial_balance_fiat + df_to_show['valeur €'].cumsum()
+        df_to_show.insert(0, "N°", range(1, len(df_to_show) + 1))
 
-        # Ordre exact demandé
-        cols_order = ["source", "id", "date", "account", "counterparty", "asset", "type", "amount", "category", "Is_Spam", "network", "valeur $", "valeur €", "from/to", "Solde Progressif (EUR)"]
+        # Ordre exact demandé (numéro, source, id, date, account, counterparty, asset, type, amount, category, network, from/to) + extras
+        cols_order = ["N°", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "category", "Is_Spam", "network", "valeur $", "valeur €", "from/to", "Solde Progressif (EUR)"]
 
         # Style : Jaune vif pour TOUT ce qui est marqué Spam (Permanent + Pending)
         styled_df = df_to_show.style.apply(lambda row: ['background-color: #ffff00']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1)
 
-        # Affichage du statut du buffer
-        if st.session_state.pending_manual_spam:
-            st.warning(f"⏳ **MODIFICATIONS EN ATTENTE** : {len(st.session_state.pending_manual_spam)} lignes modifiées.")
-
-        # Bouton pour vider le buffer vers la mémoire permanente (CSV annuel)
-        if st.session_state.pending_manual_spam:
-            if st.button(f"💾 Sauvegarder les coches ({len(st.session_state.pending_manual_spam)} lignes)", type="primary"):
-                for idx, val in st.session_state.pending_manual_spam.items():
-                    annual_df.at[idx, 'manual_spam'] = val
-                # On retire les colonnes calculées avant sauvegarde
-                cols_to_save = [c for c in DB_COLS]
-                annual_df[cols_to_save].to_csv(db_file, index=False)
-                st.session_state.pending_manual_spam = {}
-                st.session_state[session_key] += 1
-                st.success("Coches enregistrées dans le journal annuel.")
-                st.rerun()
-
-        st.data_editor(
+        # L'éditeur est affiché en PREMIER pour garantir la fixité de sa position haut de page
+        # Note: On utilise un conteneur vide pour stabiliser l'affichage haut de page
+        ui_container = st.container()
+        ui_container.data_editor(
             styled_df,
             column_order=cols_order,
             use_container_width=True,
             height=600,
             column_config={
-                "Is_Spam": st.column_config.CheckboxColumn("Coche Spam", width="small"),
+                "N°": st.column_config.NumberColumn("N°", width="small"),
+                "Is_Spam": st.column_config.CheckboxColumn("Spam ?", width="small"),
                 "date": st.column_config.DatetimeColumn("Date", format="DD/MM/YYYY HH:mm"),
                 "amount": st.column_config.NumberColumn("Quantité", format="%.8f"),
                 "valeur $": st.column_config.NumberColumn("Valeur $", format="%.2f $"),
@@ -455,8 +454,23 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
                 "Solde Progressif (EUR)": st.column_config.NumberColumn("Solde EUR", format="%.2f €")
             },
             key=editor_key,
-            disabled=[c for c in DB_COLS if c != "Is_Spam"] + ["Solde Progressif (EUR)"]
+            disabled=[c for c in DB_COLS if c != "Is_Spam"] + ["Solde Progressif (EUR)", "N°"]
         )
+
+        # Affichage du statut du buffer et bouton de sauvegarde EN DESSOUS
+        if st.session_state[buf_key]:
+            st.divider()
+            col_b1, col_b2 = st.columns([2, 1])
+            col_b1.warning(f"⏳ **BUFFER ACTIF** ({selected_year}) : {len(st.session_state[buf_key])} modifications en attente.")
+            if col_b2.button(f"💾 Sauvegarder ({len(st.session_state[buf_key])} lignes)", type="primary", key=f"save_buf_{selected_year}"):
+                for idx, val in st.session_state[buf_key].items():
+                    annual_df.at[idx, 'manual_spam'] = val
+                # On retire les colonnes calculées avant sauvegarde
+                cols_to_save = [c for c in DB_COLS]
+                annual_df[cols_to_save].to_csv(db_file, index=False)
+                st.session_state[buf_key] = {}
+                st.session_state[session_key] += 1
+                st.success("Enregistré."); st.rerun()
         if edits and st.button("🔄 Confirmer & Recalculer", key=f"refresh_{selected_year}"): st.rerun()
         if st.button("📄 Générer Rapport PDF", key=f"pdf_{selected_year}"):
             pdf = FPDF(orientation='L', unit='mm', format='A4') # Mode paysage pour plus de place
