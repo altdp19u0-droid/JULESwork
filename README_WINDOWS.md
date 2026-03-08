@@ -51,7 +51,16 @@ Si des chemins vers **Python 3.14** réapparaissent dans votre `PATH` (ex: `AppD
    - `C:\Users\Pp\AppData\Roaming\Python\Python314\`
    - `C:\Users\Pp\AppData\Local\Python\Python314\` (si présent)
 3. **Pourquoi ?** Si Pip reste lié à 3.14, il va continuer à créer des scripts qui pointent vers un interpréteur inexistant, ce qui recrée la ligne dans le PATH et cause des "Accès Refusés".
-4. **Réinstallation Propre :** Forcez la réinstallation des modules sur la version 3.12 uniquement.
+
+ ### 4. Réparer / Réinstaller Pip (Si `pip` n'est pas reconnu)
+ Si la commande `pip` ne fonctionne toujours pas, ne réinstallez pas tout Windows. Utilisez la fonction d'auto-réparation de Python :
+ 1. Ouvrez un terminal (CMD) en Administrateur.
+ 2. Tapez cette commande pour restaurer Pip proprement sur la version 3.12 :
+    `py -3.12 -m ensurepip --default-pip`
+ 3. Puis mettez-le à jour :
+    `py -3.12 -m pip install --upgrade pip`
+
+ ### 5. Réinstallation Propre des modules
    **Note :** N'utilisez pas la commande `pip` seule (elle est souvent cassée par les conflits). Utilisez toujours `py -3.12 -m pip`.
 
    Commande à copier/coller :

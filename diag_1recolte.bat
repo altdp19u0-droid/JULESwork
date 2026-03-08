@@ -30,6 +30,8 @@ echo 3b. Test Pip via Local...
 %PY_LOCAL% -m pip --version
 if %ERRORLEVEL% NEQ 0 (
     echo ERREUR: Pip est inaccessible.
+    echo TENTATIVE DE REPARATION...
+    %PY_LOCAL% -m ensurepip --default-pip
 ) else (
     echo OK: Pip est operationnel.
 )
