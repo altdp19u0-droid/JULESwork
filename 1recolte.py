@@ -11,10 +11,19 @@ import io
 # --- CONFIGURATION PAGE ---
 st.set_page_config(page_title="1Recolte - Crypto Harvest Pro", layout="wide")
 
-# --- MOTEUR DE PRIX (EUR) ---
+# --- MOTEUR DE PRIX (USD & EUR) ---
 @st.cache_data(ttl=86400)
-def get_price_eur(asset, date_obj):
-    if not asset or not isinstance(asset, str): return 0.0
+def get_eur_usd_rate(date_obj):
+    date_str = date_obj.strftime("%Y-%m-%d")
+    try:
+        url = f"https://api.frankfurter.app/{date_str}?from=USD&to=EUR"
+        res = requests.get(url, timeout=5).json()
+        return res["rates"]["EUR"]
+    except: return 0.92
+
+@st.cache_data(ttl=86400)
+def get_price_data(asset, date_obj):
+    if not asset or not isinstance(asset, str): return 0.0, 0.0
     asset = asset.upper().strip()
 
     # Mapping basique pour CoinGecko
@@ -26,26 +35,27 @@ def get_price_eur(asset, date_obj):
     asset_id = cg_map.get(asset, asset.lower())
     d_str = date_obj.strftime("%d-%m-%Y")
 
+    usd_price = 0.0
     try:
         url = f"https://api.coingecko.com/api/v3/coins/{asset_id}/history?date={d_str}&localization=false"
         res = requests.get(url, timeout=5).json()
         if "market_data" in res:
-            usd_price = res["market_data"]["current_price"]["usd"]
-            # Taux fixe simplifié EUR/USD si Frankfurter non dispo
-            return usd_price * 0.92
+            usd_price = float(res["market_data"]["current_price"]["usd"])
     except: pass
 
-    # Fallbacks Stables
-    if asset in ["USDT", "USDC", "DAI"]: return 0.92
-    if asset in ["EURA", "AGEUR"]: return 1.0
-    return 0.0
+    if usd_price == 0:
+        if asset in ["USDT", "USDC", "DAI"]: usd_price = 1.0
+        elif asset in ["EURA", "AGEUR"]: usd_price = 1.08
+
+    eur_rate = get_eur_usd_rate(date_obj)
+    return usd_price, usd_price * eur_rate
 
 # --- NAVIGATION ---
 st.sidebar.title("1Recolte V4.0")
 page = st.sidebar.radio("Navigation", ["PAGE 1 : Gestion des Comptes & Récolte", "PAGE 2 : Analyse & Journal Comptable"])
 
 # --- CONSTANTES ---
-DB_COLS = ["numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "fiat_value", "category", "network", "from/to"]
+DB_COLS = ["numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "valeur $", "valeur €", "category", "network", "from/to"]
 ACCOUNTS_FILE = "accounts_log.csv"
 API_KEYS_FILE = "api_keys.json"
 
@@ -127,12 +137,14 @@ def fetch_harvest(address, network, api_key):
                         direction = "IN" if t_addr == addr_low else "OUT"
                         cp = f_addr if direction == "IN" else t_addr
 
+                        p_usd, p_eur = get_price_data(asset, dt)
                         txs.append({
                             "source": f"Blockscout ({label})", "id": tx_id, "date": dt,
                             "account": address, "counterparty": cp, "asset": asset,
                             "type": label, "amount": amount, "network": network, "from/to": direction,
                             "fee": float(t.get('fee', {}).get('value', 0)) / 10**18 if isinstance(t.get('fee'), dict) else 0,
-                            "fiat_value": amount * get_price_eur(asset, dt)
+                            "valeur $": amount * p_usd,
+                            "valeur €": amount * p_eur
                         })
 
                     next_params = res.get("next_page_params")
@@ -158,11 +170,13 @@ def fetch_harvest(address, network, api_key):
                     val_raw = t.get('value') or t.get('amount') or 0
                     val = float(val_raw) / 10**dec
                     if val > 0:
+                        p_usd, p_eur = get_price_data(asset, datetime.now(timezone.utc))
                         txs.append({
                             "source": "Scan Réseau (Balance)", "id": f"BAL-{asset}-{address[:8]}", "date": datetime.now(timezone.utc),
                             "account": address, "counterparty": "Balance Discovery", "asset": asset,
                             "type": "Discovery", "amount": val, "network": network, "from/to": "IN", "fee": 0,
-                            "fiat_value": val * get_price_eur(asset, datetime.now(timezone.utc))
+                            "valeur $": val * p_usd,
+                            "valeur €": val * p_eur
                         })
         except: pass
 
@@ -181,7 +195,7 @@ def fetch_harvest(address, network, api_key):
                         "source": "Blockscout (NFT)", "id": f"NFT-{asset}-{t.get('id')}", "date": datetime.now(timezone.utc),
                         "account": address, "counterparty": "NFT Discovery", "asset": asset,
                         "type": "NFT", "amount": 1.0, "network": network, "from/to": "IN", "fee": 0,
-                        "fiat_value": 0.0 # On ne valorise pas les NFTs par défaut
+                        "valeur $": 0.0, "valeur €": 0.0 # On ne valorise pas les NFTs par défaut
                     })
         except: pass
 
@@ -207,12 +221,14 @@ def fetch_harvest(address, network, api_key):
 
                         fee = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 10**18 if 'gasPrice' in t else 0
 
+                        p_usd, p_eur = get_price_data(asset, datetime.fromtimestamp(int(t['timeStamp']), tz=timezone.utc))
                         txs.append({
                             "source": f"API ({label})", "id": t['hash'], "date": datetime.fromtimestamp(int(t['timeStamp']), tz=timezone.utc),
                             "account": address, "counterparty": f_addr if direction == "IN" else t_addr,
                             "asset": asset, "type": label, "amount": amt, "network": network, "from/to": direction,
                             "fee": fee,
-                            "fiat_value": amt * get_price_eur(asset, datetime.fromtimestamp(int(t['timeStamp']), tz=timezone.utc))
+                            "valeur $": amt * p_usd,
+                            "valeur €": amt * p_eur
                         })
                     last_block = int(results[-1].get('blockNumber', 0))
                     if len(results) < 10000: break
@@ -328,7 +344,7 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
                 new_df = pd.DataFrame(raw_txs)
                 # Dédoublonnage robuste incluant le montant et la direction
                 # pour gérer les multi-transferts de même actif dans une transaction
-                dup_subset = ['id', 'asset', 'amount', 'fiat_value', 'network', 'from/to']
+                dup_subset = ['id', 'asset', 'amount', 'valeur $', 'valeur €', 'network', 'from/to']
                 new_df = new_df.drop_duplicates(subset=dup_subset)
 
                 # Injection dans la session (global)
@@ -379,7 +395,7 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
     for y in range(2020, selected_year):
         y_df = load_annual_db(y)
         if not y_df.empty:
-            initial_balance_fiat += y_df['fiat_value'].sum()
+            initial_balance_fiat += y_df['valeur €'].sum()
 
     st.sidebar.metric("Solde Initial (EUR)", f"{initial_balance_fiat:,.2f} €")
 
@@ -402,7 +418,8 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
                     signed_amount = row['amount'] if row['from/to'] == "IN" else -abs(row['amount'])
 
                     # Correction Signe Fiat
-                    signed_fiat = row['fiat_value'] if row['from/to'] == "IN" else -abs(row['fiat_value'])
+                    signed_usd = row['valeur $'] if row['from/to'] == "IN" else -abs(row['valeur $'])
+                    signed_eur = row['valeur €'] if row['from/to'] == "IN" else -abs(row['valeur €'])
 
                     # Ligne 1 : L'Asset (Mouvement principal)
                     journal_rows.append({
@@ -410,7 +427,8 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
                         "date": row['date'], "account": row['account'],
                         "counterparty": row['counterparty'], "asset": row['asset'],
                         "type": row['type'], "amount": signed_amount,
-                        "fiat_value": signed_fiat,
+                        "valeur $": signed_usd,
+                        "valeur €": signed_eur,
                         "category": "Transfert", "network": row['network'],
                         "from/to": row['from/to']
                     })
@@ -419,14 +437,17 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
                     # Ligne 2 : Les Fees (Frais)
                     if row.get('fee', 0) > 0:
                         native_asset = NETWORKS_CFG.get(row['network'], {}).get('native', 'ETH')
-                        fee_fiat = -abs(row['fee'] * get_price_eur(native_asset, row['date']))
+                        p_usd_fee, p_eur_fee = get_price_data(native_asset, row['date'])
+                        fee_usd = -abs(row['fee'] * p_usd_fee)
+                        fee_eur = -abs(row['fee'] * p_eur_fee)
                         # Les frais sont toujours une sortie (OUT)
                         journal_rows.append({
                             "numéro": counter, "source": row['source'], "id": row['id'],
                             "date": row['date'], "account": row['account'],
                             "counterparty": "Network Fee", "asset": native_asset,
                             "type": "Fee", "amount": -row['fee'],
-                            "fiat_value": fee_fiat,
+                            "valeur $": fee_usd,
+                            "valeur €": fee_eur,
                             "category": "Frais", "network": row['network'],
                             "from/to": "OUT"
                         })
@@ -449,9 +470,9 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
     if not annual_df.empty:
         # Filtrer le spam pour les stats
         stats_df = annual_df[annual_df['counterparty'].str.lower().apply(lambda x: x not in st.session_state.spam_addresses)]
-        total_vol_fiat = stats_df[stats_df['type'] != 'Fee']['fiat_value'].abs().sum()
-        total_fees_fiat = stats_df[stats_df['type'] == 'Fee']['fiat_value'].sum()
-        final_balance_fiat = initial_balance_fiat + stats_df['fiat_value'].sum()
+        total_vol_fiat = stats_df[stats_df['type'] != 'Fee']['valeur €'].abs().sum()
+        total_fees_fiat = stats_df[stats_df['type'] == 'Fee']['valeur €'].sum()
+        final_balance_fiat = initial_balance_fiat + stats_df['valeur €'].sum()
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Solde Final Estimé", f"{final_balance_fiat:,.2f} €")
@@ -475,7 +496,7 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
             df_to_show = df_to_show[df_to_show['Is_Spam'] == False]
 
         # Solde Progressif en EUR
-        df_to_show['Solde Progressif (EUR)'] = initial_balance_fiat + df_to_show['fiat_value'].cumsum()
+        df_to_show['Solde Progressif (EUR)'] = initial_balance_fiat + df_to_show['valeur €'].cumsum()
 
         # Style pour le surlignage jaune des suspects
         def highlight_spam_rows(row):
@@ -488,8 +509,9 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
             "Is_Spam": st.column_config.CheckboxColumn("Spam", help="Marquer comme spam"),
             "numéro": st.column_config.NumberColumn("N°", disabled=True),
             "date": st.column_config.DatetimeColumn("Date", disabled=True),
-            "amount": st.column_config.NumberColumn("Montant", format="%.8f", disabled=True),
-            "fiat_value": st.column_config.NumberColumn("Valeur EUR", format="%.2f €", disabled=True),
+            "amount": st.column_config.NumberColumn("Quantité", format="%.8f", disabled=True),
+            "valeur $": st.column_config.NumberColumn("Valeur $", format="%.2f $", disabled=True),
+            "valeur €": st.column_config.NumberColumn("Valeur €", format="%.2f €", disabled=True),
             "Solde Progressif (EUR)": st.column_config.NumberColumn("Solde EUR", format="%.2f €", disabled=True)
         }
 
