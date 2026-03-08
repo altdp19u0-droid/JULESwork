@@ -34,13 +34,23 @@ if 'fiat_accounts' not in st.session_state:
     st.session_state.fiat_accounts = pd.DataFrame(columns=['Date', 'Label', 'Amount_EUR', 'Type'])
 if 'spam_addresses' not in st.session_state:
     st.session_state.spam_addresses = set()
+if 'labels' not in st.session_state:
+    st.session_state.labels = {}
+if 'global_api_key' not in st.session_state:
+    st.session_state.global_api_key = ""
 
 def save_data():
     st.session_state.transactions.to_csv(DB_FILE, index=False)
     if st.session_state.accounts_metadata:
         pd.DataFrame(st.session_state.accounts_metadata).T.to_csv(LOG_FILE)
+
+    blacklist_data = {
+        "spam_addresses": list(st.session_state.spam_addresses),
+        "labels": st.session_state.labels,
+        "global_api_key": st.session_state.global_api_key
+    }
     with open(BLACKLIST_FILE, 'w') as f:
-        json.dump(list(st.session_state.spam_addresses), f)
+        json.dump(blacklist_data, f)
 
 def load_data():
     if os.path.exists(DB_FILE):
@@ -64,7 +74,13 @@ def load_data():
     if os.path.exists(BLACKLIST_FILE):
         try:
             with open(BLACKLIST_FILE, 'r') as f:
-                st.session_state.spam_addresses = set(json.load(f))
+                data = json.load(f)
+                if isinstance(data, dict):
+                    st.session_state.spam_addresses = set(data.get("spam_addresses", []))
+                    st.session_state.labels = data.get("labels", {})
+                    st.session_state.global_api_key = data.get("global_api_key", "")
+                else:
+                    st.session_state.spam_addresses = set(data)
         except Exception:
             pass
 
@@ -125,6 +141,16 @@ def get_price_eur(asset, date_obj):
     usd = get_price_usd(asset, date_obj)
     if usd == 0: return 0.0
     return usd * get_eur_usd_rate(date_obj)
+
+def get_label_display(address):
+    if not address or pd.isna(address) or str(address).lower() == "network fee" or str(address).lower() == "discovery balance":
+        return "—"
+    addr_clean = str(address).lower().strip()
+    is_int = any(addr_clean == str(info.get('address')).lower() for info in st.session_state.accounts_metadata.values())
+    alias = st.session_state.labels.get(addr_clean)
+    if is_int: return f"🟢 [INT] {alias.upper() if alias else 'MON COMPTE'}"
+    if alias: return f"🔵 [POS] {alias.upper()}"
+    return f"⚪ [EXT] {addr_clean[:10]}..."
 
 # --- MOTEUR DE RÉCOLTE ULTIME (V3.0) ---
 
@@ -317,11 +343,41 @@ def fetch_data(address, api_key, network):
     return df
 
 # --- UI PRINCIPALE ---
-st.sidebar.title("Jules Crypto Pro V3")
+st.sidebar.title("Jules Crypto Pro V4")
+
+with st.sidebar.expander("🔑 Clé API Globale", expanded=not st.session_state.global_api_key):
+    new_k = st.text_input("Clé (Etherscan/BSC...)", value=st.session_state.global_api_key, type="password")
+    if st.button("Sauvegarder Clé"):
+        st.session_state.global_api_key = new_k
+        save_data()
+        st.success("Clé enregistrée")
+
 menu = st.sidebar.selectbox("Navigation", ["Harvest", "Consultation", "Frais & Fiscalité", "Settings"], key="main_nav")
 
 if menu == "Harvest":
     st.header("🚜 Récolte Massive de Données")
+
+    if st.session_state.accounts_metadata:
+        if st.button("🔄 TOUT METTRE À JOUR", use_container_width=True):
+            prog = st.progress(0)
+            items = list(st.session_state.accounts_metadata.items())
+            for idx, (acc_key, info) in enumerate(items):
+                try:
+                    addr_to_sync = info.get('address')
+                    net_to_sync = info.get('network')
+                    if addr_to_sync and net_to_sync:
+                        new_df = fetch_data(addr_to_sync, st.session_state.global_api_key, net_to_sync)
+                        if not new_df.empty:
+                            st.session_state.transactions = pd.concat([st.session_state.transactions, new_df])
+                            st.session_state.transactions = st.session_state.transactions.drop_duplicates(subset=['ID', 'Asset', 'Network'], keep='first')
+                            # Mise à jour du compteur avec une comparaison insensible à la casse
+                            st.session_state.accounts_metadata[acc_key]['Count'] = len(st.session_state.transactions[st.session_state.transactions['Account'].str.lower() == addr_to_sync.lower()])
+                except: pass
+                prog.progress((idx + 1) / len(items))
+            save_data()
+            st.success("Mise à jour terminée")
+            st.rerun()
+
     t1, t2 = st.tabs(["Exploration Automatique", "Saisie Manuelle"])
 
     with t1:
@@ -329,7 +385,8 @@ if menu == "Harvest":
             col1, col2 = st.columns(2)
             addr = col1.text_input("Adresse Blockchain (0x...)")
             net = col2.selectbox("Réseau", list(NETWORKS_CFG.keys()))
-            key = st.text_input(f"Clé API pour {net} (Optionnel)", type="password")
+            key = st.text_input(f"Clé API pour {net} (Optionnel)", value=st.session_state.global_api_key, type="password")
+            label = st.text_input("Étiquette (Optionnel)")
             submit = st.form_submit_button("Lancer la récolte profonde")
 
     with t2:
@@ -360,9 +417,16 @@ if menu == "Harvest":
             st.session_state.transactions = pd.concat([st.session_state.transactions, new_df])
             st.session_state.transactions = st.session_state.transactions.drop_duplicates(subset=['ID', 'Asset', 'Network'], keep='first')
             st.session_state.transactions = st.session_state.transactions.sort_values('Date', ascending=False)
-            st.session_state.accounts_metadata[f"{addr[:10]}... ({net})"] = {"Count": len(new_df)}
+
+            acc_key = f"{addr[:10]}... ({net})"
+            total_count = len(st.session_state.transactions[st.session_state.transactions['Account'].str.lower() == addr.lower()])
+            st.session_state.accounts_metadata[acc_key] = {
+                "Count": total_count, "address": addr, "network": net, "label": label
+            }
+            if label: st.session_state.labels[addr.lower()] = label
+
             save_data()
-            st.success(f"Récolte réussie : {len(new_df)} lignes.")
+            st.success(f"Récolte réussie : {len(new_df)} nouvelles lignes ({total_count} au total).")
 
     if st.session_state.accounts_metadata:
         for acc, meta in list(st.session_state.accounts_metadata.items()):
@@ -374,9 +438,18 @@ if menu == "Harvest":
 
 elif menu == "Consultation":
     st.header("🔍 Consultation & Inventaire")
-    show_spam = st.sidebar.checkbox("Afficher les transactions Spam", value=False)
 
     if not st.session_state.transactions.empty:
+        # On calcule les étiquettes pour les filtres
+        st.session_state.transactions['Étiquette'] = st.session_state.transactions['Counterparty'].apply(get_label_display)
+
+        with st.container(border=True):
+            f1, f2, f3 = st.columns([1, 1, 2])
+            show_spam = f1.toggle("Voir Spams (Jaune)", value=False)
+            hide_fees = f2.toggle("Masquer Frais Réseau", value=False)
+            all_tags = sorted(st.session_state.transactions['Étiquette'].unique())
+            sel_tags = f3.multiselect("Filtrer par Étiquette", all_tags, default=all_tags)
+
         # Filtrage strict pour l'inventaire
         clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
         inv = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
@@ -394,17 +467,34 @@ elif menu == "Consultation":
 
         st.divider()
         df_display = st.session_state.transactions.copy()
-        # Masquage immédiat si l'option est décochée (Comportement automatique)
-        if not show_spam:
-            df_display = df_display[df_display['Is_Spam'] == False]
 
-        # On libère aussi la liste des assets filtrables de tout spam
+        # Filtres logiques
+        if not show_spam: df_display = df_display[df_display['Is_Spam'] == False]
+        if hide_fees: df_display = df_display[df_display['Type'] != 'Frais Réseau']
+        df_display = df_display[df_display['Étiquette'].isin(sel_tags)]
+
+        # Filtre additionnel par Asset (V3)
         available_assets = sorted(df_display['Asset'].unique())
-        f_asset = st.multiselect("Filtrer Asset", options=available_assets)
+        f_asset = st.multiselect("Filtrer par Asset", options=available_assets)
         if f_asset: df_display = df_display[df_display['Asset'].isin(f_asset)]
 
         st.subheader("📝 Historique des Mouvements")
-        edited = st.data_editor(df_display.sort_values('Date', ascending=False), use_container_width=True, key="tx_ed")
+
+        styled_df = df_display.sort_values('Date', ascending=False).style.apply(
+            lambda r: ['background-color: #ffffcc' if r.Is_Spam else '' for _ in r], axis=1
+        )
+
+        edited = st.data_editor(
+            styled_df,
+            use_container_width=True,
+            key="tx_ed",
+            column_config={
+                "Is_Spam": st.column_config.CheckboxColumn("SPAM"),
+                "ID": None,
+                "Fiat_Value_EUR": st.column_config.NumberColumn("Valeur EUR", format="%.2f €")
+            },
+            disabled=[c for c in df_display.columns if c not in ["Is_Spam", "Category"]]
+        )
         if st.button("💾 Sauvegarder modifications"):
             for _, row in edited.iterrows():
                 # Mise à jour de la ligne spécifique
@@ -441,8 +531,27 @@ elif menu == "Frais & Fiscalité":
             st.success(f"Plus-value : {pv:,.2f} € | Impôt estimé (30%) : {pv*0.3:,.2f} €")
 
 elif menu == "Settings":
+    st.header("⚙️ Paramètres")
+
+    with st.container(border=True):
+        st.subheader("🏷️ Gestion des Labels")
+        l_addr = st.text_input("Adresse Blockchain")
+        l_name = st.text_input("Nom de l'étiquette")
+        if st.button("Enregistrer Label"):
+            if l_addr and l_name:
+                st.session_state.labels[l_addr.lower().strip()] = l_name
+                save_data()
+                st.success("Label enregistré !")
+                st.rerun()
+
+    st.divider()
     if st.button("🗑️ Vider toute la base de données"):
         st.session_state.transactions = pd.DataFrame(columns=REQUIRED_COLS)
-        st.session_state.accounts_metadata = {}; st.rerun()
+        st.session_state.accounts_metadata = {}
+        st.session_state.labels = {}
+        if os.path.exists(DB_FILE): os.remove(DB_FILE)
+        if os.path.exists(LOG_FILE): os.remove(LOG_FILE)
+        if os.path.exists(BLACKLIST_FILE): os.remove(BLACKLIST_FILE)
+        st.rerun()
 
-st.sidebar.divider(); st.sidebar.caption("Jules AI Harvest Pro v3.0")
+st.sidebar.divider(); st.sidebar.caption("Jules AI Harvest Pro v4.0")
