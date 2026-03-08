@@ -58,6 +58,8 @@ page = st.sidebar.radio("Navigation", ["PAGE 1 : Gestion des Comptes & Récolte"
 DB_COLS = ["numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "valeur $", "valeur €", "category", "network", "from/to"]
 ACCOUNTS_FILE = "accounts_log.csv"
 API_KEYS_FILE = "api_keys.json"
+SPAM_FILE = "spam_blacklist.json"
+HARVEST_FILE = "harvest_storage.csv"
 
 # Configuration des Réseaux
 NETWORKS_CFG = {
@@ -92,6 +94,28 @@ def load_accounts():
 def save_accounts(df):
     df.to_csv(ACCOUNTS_FILE, index=False)
 
+def load_spam_blacklist():
+    if os.path.exists(SPAM_FILE):
+        with open(SPAM_FILE, 'r') as f: return set(json.load(f))
+    return set()
+
+def save_spam_blacklist(blacklist):
+    with open(SPAM_FILE, 'w') as f: json.dump(list(blacklist), f)
+
+def load_harvest():
+    if os.path.exists(HARVEST_FILE):
+        try:
+            df = pd.read_csv(HARVEST_FILE)
+            df['date'] = pd.to_datetime(df['date'], utc=True, errors='coerce')
+            return df.dropna(subset=['date'])
+        except: return pd.DataFrame()
+    return pd.DataFrame()
+
+def save_harvest(df):
+    if df is not None and not df.empty:
+        df.to_csv(HARVEST_FILE, index=False)
+
+@st.cache_data(show_spinner=False)
 def load_annual_db(year):
     fname = f"DB_{year}.csv"
     if os.path.exists(fname):
@@ -110,11 +134,17 @@ def load_annual_db(year):
 
 # --- MOTEUR DE RÉCOLTE ---
 def extract_amount(t, decimals=18):
-    """Extraction robuste du montant depuis divers formats d'API"""
+    """Extraction robuste du montant depuis divers formats d'API (Blockscout/Etherscan)"""
+    # On cherche 'value', 'amount' ou 'total'
     val_raw = t.get('value') or t.get('amount') or t.get('total') or 0
+
+    # Blockscout V2 peut renvoyer un objet pour 'total' ou 'fee'
+    if isinstance(val_raw, dict):
+        val_raw = val_raw.get('value', 0)
+
     try:
         return float(val_raw) / 10**int(decimals)
-    except:
+    except (ValueError, TypeError):
         return 0.0
 
 def fetch_harvest(address, network, api_key, since_date=None):
@@ -250,16 +280,15 @@ def fetch_harvest(address, network, api_key, since_date=None):
     return txs
 
 # --- INITIALISATION ---
-if 'spam_addresses' not in st.session_state: st.session_state.spam_addresses = set()
+if 'spam_addresses' not in st.session_state: st.session_state.spam_addresses = load_spam_blacklist()
 if 'api_keys' not in st.session_state: st.session_state.api_keys = load_api_keys()
 if 'accounts' not in st.session_state: st.session_state.accounts = load_accounts()
+if 'all_transactions' not in st.session_state: st.session_state.all_transactions = load_harvest()
 
 # --- COMPOSANT JOURNAL (FRAGMENT) ---
 @st.fragment
 def journal_fragment(selected_year, db_file, initial_balance_fiat):
-    @st.cache_data(show_spinner=False)
-    def get_annual_df(year): return load_annual_db(year)
-    annual_df = get_annual_df(selected_year)
+    annual_df = load_annual_db(selected_year)
 
     if st.button("🔄 Générer / Actualiser le Journal " + str(selected_year)):
         if 'all_transactions' in st.session_state and not st.session_state.all_transactions.empty:
@@ -307,13 +336,22 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
         c2.metric("Frais Totaux", f"{total_fees_fiat:,.2f} €")
         c3.metric("Volume Total", f"{total_vol_fiat:,.2f} €")
         st.divider()
-        hide_spam = st.toggle("🚫 Masquer le spam", value=True, key=f"hide_spam_{selected_year}")
-        annual_df = annual_df.sort_values('date')
-        annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
+        # Options
+        col_opt1, col_opt2 = st.columns([1, 1])
+        hide_spam = col_opt1.toggle("🚫 Masquer le spam", value=True, key=f"hide_spam_{selected_year}")
+
+        # Traitement Spam réactif (AVANT le rendu)
         editor_key = f"editor_{selected_year}"
         edits = st.session_state.get(editor_key, {}).get("edited_rows", {})
+
+        # On calcule Is_Spam pour tout le journal
+        annual_df = annual_df.sort_values('date')
+        annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
+
+        # Si édition en cours, on applique à la liste noire et on recalcule
         if edits:
-            df_ref = annual_df[annual_df['Is_Spam'] == False] if hide_spam else annual_df
+            # On a besoin d'une référence stable de ce qui était affiché lors de l'édition
+            df_ref = annual_df[~annual_df['Is_Spam']] if hide_spam else annual_df
             for idx_str, changes in edits.items():
                 if "Is_Spam" in changes:
                     idx = int(idx_str)
@@ -321,22 +359,36 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
                         cp_addr = str(df_ref.iloc[idx]['counterparty']).lower()
                         if changes["Is_Spam"]: st.session_state.spam_addresses.add(cp_addr)
                         else: st.session_state.spam_addresses.discard(cp_addr)
+            save_spam_blacklist(st.session_state.spam_addresses)
             annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
-        df_to_show = annual_df[annual_df['Is_Spam'] == False] if hide_spam else annual_df
+
+        df_to_show = annual_df[~annual_df['Is_Spam']].copy() if hide_spam else annual_df.copy()
+
+        # Nettoyage et calcul du solde progressif
+        df_to_show['valeur €'] = pd.to_numeric(df_to_show['valeur €'], errors='coerce').fillna(0.0)
         df_to_show['Solde Progressif (EUR)'] = initial_balance_fiat + df_to_show['valeur €'].cumsum()
+
+        # Ordre des colonnes fixe pour éviter les sauts visuels
+        cols_order = ["Is_Spam", "numéro", "date", "asset", "amount", "valeur €", "valeur $", "counterparty", "type", "network", "Solde Progressif (EUR)"]
+
+        # Style : Jaune pour les suspects affichés (Is_Spam=True mais hide_spam=False)
+        styled_df = df_to_show.style.apply(lambda row: ['background-color: #fff3cd']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1)
+
         st.data_editor(
-            df_to_show.style.apply(lambda row: ['background-color: #ffff99']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1),
+            styled_df,
+            column_order=cols_order,
             use_container_width=True,
-            height=600, # Fixe la hauteur pour stabiliser le scroll vertical
+            height=600,
             column_config={
-                "Is_Spam": st.column_config.CheckboxColumn("Spam"),
-                "amount": st.column_config.NumberColumn("Quantité", format="%.8f"),
+                "Is_Spam": st.column_config.CheckboxColumn("Spam", width="small"),
+                "date": st.column_config.DatetimeColumn("Date", format="DD/MM/YYYY HH:mm"),
+                "amount": st.column_config.NumberColumn("Quantité", format="%.6f"),
                 "valeur $": st.column_config.NumberColumn("Valeur $", format="%.2f $"),
                 "valeur €": st.column_config.NumberColumn("Valeur €", format="%.2f €"),
                 "Solde Progressif (EUR)": st.column_config.NumberColumn("Solde EUR", format="%.2f €")
             },
             key=editor_key,
-            disabled=DB_COLS + ["Solde Progressif (EUR)"] # Empêche les sauts dus à l'édition de colonnes bloquées
+            disabled=DB_COLS + ["Solde Progressif (EUR)"]
         )
         if edits and st.button("🔄 Confirmer & Recalculer", key=f"refresh_{selected_year}"): st.rerun()
         if st.button("📄 Générer Rapport PDF", key=f"pdf_{selected_year}"):
@@ -394,6 +446,7 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
                 new_df = pd.DataFrame(raw_txs); dup_subset = ['id', 'asset', 'amount', 'valeur $', 'valeur €', 'network', 'from/to']
                 if 'all_transactions' not in st.session_state: st.session_state.all_transactions = pd.DataFrame()
                 st.session_state.all_transactions = pd.concat([st.session_state.all_transactions, new_df]).drop_duplicates(subset=dup_subset)
+                save_harvest(st.session_state.all_transactions)
                 idx = st.session_state.accounts[(st.session_state.accounts["Adresse"] == addr) & (st.session_state.accounts["Réseau Blockchain"] == net)].index[0]
                 st.session_state.accounts.at[idx, "Tx"] = len(new_df); st.session_state.accounts.at[idx, "Dernière transaction"] = new_df["date"].max().strftime("%Y-%m-%d %H:%M"); save_accounts(st.session_state.accounts); st.success(f"Récolte réussie : {len(new_df)} transactions importées !")
             else: st.warning("Aucun résultat.")
@@ -406,4 +459,13 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
         y_df = load_annual_db(y)
         if not y_df.empty: initial_balance_fiat += y_df['valeur €'].sum()
     st.sidebar.metric("Solde Initial (EUR)", f"{initial_balance_fiat:,.2f} €")
+
+    with st.sidebar.expander("🛡️ Sécurité & Anti-Spam"):
+        st.write(f"Adresses bloquées : **{len(st.session_state.spam_addresses)}**")
+        if st.button("🗑️ Vider la liste noire"):
+            st.session_state.spam_addresses = set()
+            save_spam_blacklist(set())
+            st.rerun()
+        st.info("Le marquage d'une adresse comme spam dans le journal l'ajoute globalement à cette liste.")
+
     journal_fragment(selected_year, f"DB_{selected_year}.csv", initial_balance_fiat)

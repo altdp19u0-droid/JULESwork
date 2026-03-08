@@ -1,4 +1,3 @@
-  Stopping...
 
 Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
 
@@ -8,3 +7,24 @@ Collecting usage statistics. To deactivate, set browser.gatherUsageStats to fals
   Local URL: http://localhost:8501
   Network URL: http://192.168.0.2:8501
   External URL: http://34.46.237.233:8501
+
+2026-03-08 12:02:47.609 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-08 12:02:47.633 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-08 12:04:07.087 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-08 12:04:07.092 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
