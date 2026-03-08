@@ -87,10 +87,11 @@ def fetch_harvest(address, network, api_key):
 
                         asset = cfg['native']
                         amount = float(t.get('value', 0)) / 10**18
-                        if label == "Tokens":
-                            tok = t.get('token', {})
-                            asset = tok.get('symbol', 'TOKEN')
-                            amount = float(t.get('value', 0)) / 10**int(tok.get('decimals', 18))
+                        if label == "Tokens" or "token" in t:
+                            tok = t.get('token') or {}
+                            asset = tok.get('symbol') or t.get('tokenSymbol') or 'TOKEN'
+                            dec = int(tok.get('decimals') or t.get('tokenDecimal') or 18)
+                            amount = float(t.get('value', 0)) / 10**dec
 
                         f_addr = (t.get('from', {}).get('hash') if isinstance(t.get('from'), dict) else t.get('from', 'Unknown')).lower()
                         t_addr = (t.get('to', {}).get('hash') if isinstance(t.get('to'), dict) else t.get('to', 'Unknown')).lower()
@@ -117,11 +118,13 @@ def fetch_harvest(address, network, api_key):
         try:
             url = f"{cfg['free_api']}/addresses/{address}/token-balances"
             res = requests.get(url, timeout=15).json()
-            if isinstance(res, list):
-                for t in res:
-                    tok = t.get('token', {})
-                    asset = tok.get('symbol', 'TOKEN')
-                    val = float(t.get('value', 0)) / 10**int(tok.get('decimals', 18))
+            items = res.get("items") if isinstance(res, dict) else res if isinstance(res, list) else None
+            if isinstance(items, list):
+                for t in items:
+                    tok = t.get('token') or {}
+                    asset = tok.get('symbol') or 'TOKEN'
+                    dec = int(tok.get('decimals') or 18)
+                    val = float(t.get('value', 0)) / 10**dec
                     if val > 0:
                         txs.append({
                             "source": "Scan Réseau (Balance)", "id": f"BAL-{asset}-{address[:8]}", "date": datetime.now(timezone.utc),
