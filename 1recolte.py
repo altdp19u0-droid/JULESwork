@@ -42,9 +42,13 @@ def save_api_keys(keys):
         json.dump(keys, f, indent=4)
 
 def load_accounts():
+    cols = ["N°", "Réseau Blockchain", "Adresse", "Étiquette", "Tx", "Dernière transaction"]
     if os.path.exists(ACCOUNTS_FILE):
-        return pd.read_csv(ACCOUNTS_FILE)
-    return pd.DataFrame(columns=["Réseau Blockchain", "Adresse", "Étiquette", "Tx", "Dernière transaction"])
+        df = pd.read_csv(ACCOUNTS_FILE)
+        if "N°" not in df.columns:
+            df.insert(0, "N°", range(1, len(df) + 1))
+        return df
+    return pd.DataFrame(columns=cols)
 
 def save_accounts(df):
     df.to_csv(ACCOUNTS_FILE, index=False)
@@ -100,7 +104,26 @@ def fetch_harvest(address, network, api_key):
                     status.write(f"⚠️ Erreur Blockscout {label}: {e}")
                     break
 
-    # 2. VOIE API CLÉS (Etherscan clones)
+    # 2. VOIE SCAN RÉSEAU (Discovery via Balances)
+    if "free_api" in cfg and "blockscout" in cfg["free_api"]:
+        status.write("🌐 Scan réseau (Discovery)...")
+        try:
+            url = f"{cfg['free_api']}/addresses/{address}/token-balances"
+            res = requests.get(url, timeout=15).json()
+            if isinstance(res, list):
+                for t in res:
+                    tok = t.get('token', {})
+                    asset = tok.get('symbol', 'TOKEN')
+                    val = float(t.get('value', 0)) / 10**int(tok.get('decimals', 18))
+                    if val > 0:
+                        txs.append({
+                            "source": "Scan Réseau (Balance)", "id": f"BAL-{asset}-{address[:8]}", "date": datetime.now(),
+                            "account": address, "counterparty": "Balance Discovery", "asset": asset,
+                            "type": "Discovery", "amount": val, "network": network, "from/to": "IN", "fee": 0
+                        })
+        except: pass
+
+    # 3. VOIE API CLÉS (Etherscan clones)
     if api_key:
         status.write(f"🔑 Interrogation API {cfg['api_name']}...")
         api_endpoints = [("txlist", "Native"), ("tokentx", "Tokens"), ("txlistinternal", "Internal")]
@@ -135,7 +158,10 @@ def fetch_harvest(address, network, api_key):
                     status.write(f"⚠️ Erreur API {label}: {e}")
                     break
 
-    status.update(label=f"✅ Récolte terminée : {len(txs)} transactions trouvées", state="complete")
+    if not txs:
+        status.update(label="❌ Aucune transaction trouvée", state="error")
+    else:
+        status.update(label=f"✅ Récolte terminée : {len(txs)} transactions trouvées", state="complete")
     return txs
 
 # --- INITIALISATION ---
@@ -154,11 +180,39 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
     # Section : Gestion des Comptes (CRUD)
     st.subheader("📋 Tableau de Bord des Comptes")
     with st.container(border=True):
-        edited_accounts = st.data_editor(st.session_state.accounts, num_rows="dynamic", use_container_width=True, key="accounts_editor")
+        # Configuration des colonnes pour la saisie
+        column_config = {
+            "N°": st.column_config.NumberColumn("N°", disabled=True),
+            "Réseau Blockchain": st.column_config.SelectboxColumn(
+                "Réseau Blockchain",
+                options=list(NETWORKS_CFG.keys()),
+                required=True
+            ),
+            "Adresse": st.column_config.TextColumn("Adresse (0x...)", required=True),
+            "Tx": st.column_config.NumberColumn("Tx", disabled=True),
+            "Dernière transaction": st.column_config.TextColumn("Dernière transaction", disabled=True)
+        }
+
+        edited_accounts = st.data_editor(
+            st.session_state.accounts,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="accounts_editor",
+            column_config=column_config
+        )
+
         if st.button("💾 Sauvegarder les Comptes"):
+            # Auto-numérotation des lignes
+            if not edited_accounts.empty:
+                edited_accounts["N°"] = range(1, len(edited_accounts) + 1)
+                # Valeurs par défaut pour les nouvelles lignes
+                edited_accounts["Tx"] = edited_accounts["Tx"].fillna(0)
+                edited_accounts["Dernière transaction"] = edited_accounts["Dernière transaction"].fillna("N/A")
+
             st.session_state.accounts = edited_accounts
             save_accounts(edited_accounts)
             st.success("Comptes sauvegardés avec succès !")
+            st.rerun()
 
     # Section : Journal des Comptes
     st.subheader("📖 Journal des Comptes")
@@ -183,12 +237,25 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
     col_harvest1, col_harvest2 = st.columns([2, 1])
 
     # Trouver le réseau associé à l'adresse sélectionnée
-    addr_options = st.session_state.accounts["Adresse"].tolist() if not st.session_state.accounts.empty else []
-    addr_to_harvest = col_harvest1.selectbox("Sélectionner une adresse à récolter", options=addr_options)
+    if not st.session_state.accounts.empty:
+        acc_list = st.session_state.accounts.apply(lambda r: f"{r['Adresse']} ({r['Réseau Blockchain']})", axis=1).tolist()
+    else:
+        acc_list = []
+
+    selected_acc_full = col_harvest1.selectbox("Sélectionner un compte à récolter", options=acc_list)
 
     if col_harvest2.button("🚀 Lancer la récolte"):
-        if addr_to_harvest:
-            row = st.session_state.accounts[st.session_state.accounts["Adresse"] == addr_to_harvest].iloc[0]
+        if st.session_state.get('accounts_editor', {}).get('edited_rows') or \
+           st.session_state.get('accounts_editor', {}).get('added_rows') or \
+           st.session_state.get('accounts_editor', {}).get('deleted_rows'):
+            st.warning("⚠️ Vous avez des modifications non enregistrées dans le Tableau de Bord des Comptes. Veuillez cliquer sur 'Sauvegarder les Comptes' avant de lancer la récolte.")
+        elif selected_acc_full:
+            # Extraire l'adresse et le réseau
+            addr_to_harvest = selected_acc_full.split(" (")[0]
+            net_to_harvest = selected_acc_full.split(" (")[1].replace(")", "")
+
+            row = st.session_state.accounts[(st.session_state.accounts["Adresse"] == addr_to_harvest) &
+                                            (st.session_state.accounts["Réseau Blockchain"] == net_to_harvest)].iloc[0]
             net = row["Réseau Blockchain"]
             cfg = NETWORKS_CFG.get(net, {})
             api_key = st.session_state.api_keys.get(cfg.get("api_name"), "")
@@ -206,12 +273,15 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
                 st.session_state.all_transactions = pd.concat([st.session_state.all_transactions, new_df]).drop_duplicates(subset=['id', 'asset', 'network'])
 
                 # Mise à jour des métadonnées du compte
-                idx = st.session_state.accounts[st.session_state.accounts["Adresse"] == addr_to_harvest].index[0]
+                idx = st.session_state.accounts[(st.session_state.accounts["Adresse"] == addr_to_harvest) &
+                                                (st.session_state.accounts["Réseau Blockchain"] == net_to_harvest)].index[0]
                 st.session_state.accounts.at[idx, "Tx"] = len(new_df)
                 st.session_state.accounts.at[idx, "Dernière transaction"] = new_df["date"].max().strftime("%Y-%m-%d %H:%M")
                 save_accounts(st.session_state.accounts)
 
                 st.success(f"Récolte réussie : {len(new_df)} transactions importées !")
+            else:
+                st.warning("La récolte n'a retourné aucun résultat. Assurez-vous que l'adresse est correcte et active sur ce réseau.")
         else:
             st.warning("Veuillez sélectionner ou ajouter une adresse d'abord.")
 
@@ -236,15 +306,12 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
 
     annual_df = load_annual_db(selected_year)
 
-    # 3. Calcul du Solde Initial (Continuité)
+    # 3. Calcul du Solde Initial (Continuité Cumulative)
     initial_balance = 0.0
-    if selected_year > 2020:
-        prev_df = load_annual_db(selected_year - 1)
-        if not prev_df.empty:
-            # On calcule le solde final de l'année précédente
-            # Pour simplifier, on somme tous les mouvements d'assets (hors fees)
-            # Une implémentation plus fine par asset serait idéale
-            initial_balance = prev_df[prev_df['type'] != 'Fee']['amount'].sum()
+    for y in range(2020, selected_year):
+        y_df = load_annual_db(y)
+        if not y_df.empty:
+            initial_balance += y_df['amount'].sum()
 
     st.sidebar.metric("Solde Initial (Asset)", f"{initial_balance:,.4f}")
 
@@ -379,7 +446,7 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
                 pdf.cell(30, 8, f"{row['amount']:.4f}", 1)
                 pdf.cell(90, 8, str(row['counterparty'])[:40], 1, 1)
 
-            pdf_bytes = pdf.output(dest='S').encode('latin-1')
+            pdf_bytes = pdf.output()
             st.download_button(label="⬇️ Télécharger le Rapport PDF", data=pdf_bytes, file_name=f"Rapport_{selected_year}.pdf", mime="application/pdf")
 
     else:
