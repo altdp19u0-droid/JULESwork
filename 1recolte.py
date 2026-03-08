@@ -124,7 +124,9 @@ def fetch_harvest(address, network, api_key):
                     tok = t.get('token') or {}
                     asset = tok.get('symbol') or 'TOKEN'
                     dec = int(tok.get('decimals') or 18)
-                    val = float(t.get('value', 0)) / 10**dec
+                    # Extraction robuste de la valeur
+                    val_raw = t.get('value') or t.get('amount') or 0
+                    val = float(val_raw) / 10**dec
                     if val > 0:
                         txs.append({
                             "source": "Scan Réseau (Balance)", "id": f"BAL-{asset}-{address[:8]}", "date": datetime.now(timezone.utc),
@@ -133,7 +135,25 @@ def fetch_harvest(address, network, api_key):
                         })
         except: pass
 
-    # 3. VOIE API CLÉS (Etherscan clones)
+    # 3. VOIE NFT (Blockscout V2 ERC-721/1155)
+    if "free_api" in cfg and "blockscout" in cfg["free_api"]:
+        status.write("🎨 Scan NFTs (ERC-721/1155)...")
+        try:
+            url = f"{cfg['free_api']}/addresses/{address}/nft"
+            res = requests.get(url, timeout=15).json()
+            items = res.get("items") if isinstance(res, dict) else res if isinstance(res, list) else None
+            if isinstance(items, list):
+                for t in items:
+                    tok = t.get('token') or {}
+                    asset = tok.get('symbol') or tok.get('name') or 'NFT'
+                    txs.append({
+                        "source": "Blockscout (NFT)", "id": f"NFT-{asset}-{t.get('id')}", "date": datetime.now(timezone.utc),
+                        "account": address, "counterparty": "NFT Discovery", "asset": asset,
+                        "type": "NFT", "amount": 1.0, "network": network, "from/to": "IN", "fee": 0
+                    })
+        except: pass
+
+    # 4. VOIE API CLÉS (Etherscan clones)
     if api_key:
         status.write(f"🔑 Interrogation API {cfg['api_name']}...")
         api_endpoints = [("txlist", "Native"), ("tokentx", "Tokens"), ("txlistinternal", "Internal")]
@@ -273,14 +293,16 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
             raw_txs = fetch_harvest(addr_to_harvest, net, api_key)
             if raw_txs:
                 new_df = pd.DataFrame(raw_txs)
-                # Dédoublonnage
-                new_df = new_df.drop_duplicates(subset=['id', 'asset', 'network'])
+                # Dédoublonnage robuste incluant le montant et la direction
+                # pour gérer les multi-transferts de même actif dans une transaction
+                dup_subset = ['id', 'asset', 'amount', 'network', 'from/to']
+                new_df = new_df.drop_duplicates(subset=dup_subset)
 
                 # Injection dans la session (global)
                 if 'all_transactions' not in st.session_state:
                     st.session_state.all_transactions = pd.DataFrame()
 
-                st.session_state.all_transactions = pd.concat([st.session_state.all_transactions, new_df]).drop_duplicates(subset=['id', 'asset', 'network'])
+                st.session_state.all_transactions = pd.concat([st.session_state.all_transactions, new_df]).drop_duplicates(subset=dup_subset)
 
                 # Mise à jour des métadonnées du compte
                 idx = st.session_state.accounts[(st.session_state.accounts["Adresse"] == addr_to_harvest) &
@@ -426,8 +448,8 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
             "Is_Spam": st.column_config.CheckboxColumn("Spam", help="Marquer comme spam"),
             "numéro": st.column_config.NumberColumn("N°", disabled=True),
             "date": st.column_config.DatetimeColumn("Date", disabled=True),
-            "amount": st.column_config.NumberColumn("Montant", disabled=True),
-            "Solde Progressif": st.column_config.NumberColumn("Solde", disabled=True)
+            "amount": st.column_config.NumberColumn("Montant", format="%.8f", disabled=True),
+            "Solde Progressif": st.column_config.NumberColumn("Solde", format="%.8f", disabled=True)
         }
 
         edited_journal = st.data_editor(
