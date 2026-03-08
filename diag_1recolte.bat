@@ -10,6 +10,7 @@ echo.
 echo 2. Test presence Python Local (Vrai)...
 if exist %PY_LOCAL% (
     echo OK: Python 3.12 local trouve.
+    for %%I in (%PY_LOCAL%) do echo Taille du fichier: %%~zI octets
     %PY_LOCAL% --version
 ) else (
     echo ERREUR: Python 3.12 introuvable a l'adresse specifiee.

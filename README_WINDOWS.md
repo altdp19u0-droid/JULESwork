@@ -5,12 +5,17 @@ Si vous obtenez "Accès refusé" en lançant Streamlit, suivez ces étapes dans 
 ### 1. Désactiver les Alias d'exécution (Cause n°1 - CRITIQUE)
 Windows 11 intercepte parfois les commandes `python` avec des alias vides (liens vers le Microsoft Store) au lieu de votre installation Python 3.12.
 - Ouvrez le menu **Démarrer** et tapez **"Alias d'exécution"** (ou "Manage app execution aliases").
-- Cherchez **python.exe** et **python3.exe** dans la liste.
-- **Décochez-les tous** (mettez-les sur "Désactivé").
-- **Redémarrez votre terminal (CMD ou PowerShell)**.
+- Cherchez **TOUTES** les lignes contenant **python**, **python3**, **pip**, **streamlit**.
+- **Décochez-les toutes** (mettez-les sur "Désactivé").
+- **Redémarrez votre ordinateur** (certains alias restent en cache mémoire).
 
-### 2. Utiliser le fichier de lancement automatique (`lancer_1recolte.bat`)
-J'ai créé un fichier nommé `lancer_1recolte.bat` dans votre dossier.
+### 1b. Erreur "%1 n'est pas une application Win32 valide"
+Cette erreur signifie que le fichier `python.exe` est soit corrompu (0 Ko), soit bloqué par un antivirus.
+- Allez dans `C:\Users\Pp\AppData\Local\Programs\Python\Python312\`
+- Vérifiez la taille de `python.exe`. S'il fait **0 Ko**, votre installation est cassée : **Désinstallez et réinstallez Python 3.12**.
+
+### 2. Utiliser le fichier de lancement automatique (`lanceur_1recolte.bat`)
+J'ai créé un fichier nommé `lanceur_1recolte.bat` dans votre dossier.
 - Faites un **clic droit** dessus et choisissez **"Exécuter en tant qu'administrateur"**.
 - Cela forcera les droits d'accès nécessaires.
 
@@ -35,7 +40,7 @@ Ce leurre ne contient pas Python mais ouvre le Microsoft Store, ce qui provoque 
 2. Désactivez **"Installateur Python"** (python.exe et python3.exe).
 3. Une fois désactivé, `where python` devrait afficher votre vrai chemin dans `AppData\Local\Programs\Python\Python312\`.
 
-**Note technique :** Votre installation Python 3.12 locale est la seule valide. Le fichier `lancer_1recolte.bat` est configuré pour ignorer le leurre de System32 et appeler directement votre vrai Python.
+**Note technique :** Votre installation Python 3.12 locale est la seule valide. Le fichier `lanceur_1recolte.bat` est configuré pour ignorer le leurre de System32 et appeler directement votre vrai Python.
 
 ### Alerte : Conflit avec Python 3.14 (Scripts Pip)
 Si des chemins vers **Python 3.14** réapparaissent dans votre `PATH` (ex: `AppData\Roaming\Python\Python314\Scripts`), cela va provoquer des erreurs "Accès Refusé" ou des conflits de modules.
