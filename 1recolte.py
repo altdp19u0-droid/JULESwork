@@ -377,27 +377,34 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
         col_opt1, col_opt2 = st.columns([1, 1])
         hide_spam = col_opt1.toggle("🚫 Masquer le spam", value=True, key=f"hide_spam_{selected_year}")
 
-        # Traitement Spam réactif (AVANT le rendu)
-        editor_key = f"editor_{selected_year}"
+        # BUFFER DE MARQUAGE SPAM (Position Fixe)
+        # On utilise une clé stable dépendant de hide_spam pour forcer un rechargement uniquement lors du commit
+        session_key = f"spam_session_{selected_year}_{hide_spam}"
+        if session_key not in st.session_state: st.session_state[session_key] = 0
+
+        editor_key = f"editor_{selected_year}_{st.session_state[session_key]}"
         edits = st.session_state.get(editor_key, {}).get("edited_rows", {})
 
-        # On calcule Is_Spam pour tout le journal
+        # État initial basé sur la mémoire permanente
         annual_df = annual_df.sort_values('date')
         annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
 
-        # Si édition en cours, on applique à la liste noire et on recalcule
+        # Buffer temporaire (session) pour les nouvelles adresses marquées durant cette vue
+        if 'pending_spam' not in st.session_state: st.session_state.pending_spam = set()
+
+        # Mise à jour du buffer à chaque clic (SANS filtrage immédiat des lignes)
         if edits:
-            # On a besoin d'une référence stable de ce qui était affiché lors de l'édition
             df_ref = annual_df[~annual_df['Is_Spam']] if hide_spam else annual_df
             for idx_str, changes in edits.items():
                 if "Is_Spam" in changes:
                     idx = int(idx_str)
                     if idx < len(df_ref):
                         cp_addr = str(df_ref.iloc[idx]['counterparty']).lower()
-                        if changes["Is_Spam"]: st.session_state.spam_addresses.add(cp_addr)
-                        else: st.session_state.spam_addresses.discard(cp_addr)
-            save_spam_blacklist(st.session_state.spam_addresses)
-            annual_df['Is_Spam'] = annual_df['counterparty'].str.lower().isin(st.session_state.spam_addresses)
+                        if changes["Is_Spam"]: st.session_state.pending_spam.add(cp_addr)
+                        else: st.session_state.pending_spam.discard(cp_addr)
+
+        # On applique le buffer visuellement (surlignage jaune immédiat)
+        annual_df.loc[annual_df['counterparty'].str.lower().isin(st.session_state.pending_spam), 'Is_Spam'] = True
 
         df_to_show = annual_df[~annual_df['Is_Spam']].copy() if hide_spam else annual_df.copy()
 
@@ -408,8 +415,23 @@ def journal_fragment(selected_year, db_file, initial_balance_fiat):
         # Ordre exact demandé : source, id, date, account, counterparty, asset, type, amount, category, coche spam, network, valeur $, valeur €, from/to
         cols_order = ["source", "id", "date", "account", "counterparty", "asset", "type", "amount", "category", "Is_Spam", "network", "valeur $", "valeur €", "from/to", "Solde Progressif (EUR)"]
 
-        # Style : Jaune pour les suspects affichés (Is_Spam=True mais hide_spam=False)
+        # Style : Jaune vif pour TOUT ce qui est marqué Spam (Permanent + Pending)
         styled_df = df_to_show.style.apply(lambda row: ['background-color: #ffff00']*len(row) if row['Is_Spam'] else ['']*len(row), axis=1)
+
+        # Affichage du statut du buffer
+        if st.session_state.pending_spam:
+            st.warning(f"⏳ **BUFFER ACTIF** : {len(st.session_state.pending_spam)} adresses en attente de marquage permanent.")
+
+        # Bouton pour vider le buffer vers la mémoire permanente
+        if st.session_state.pending_spam:
+            if st.button(f"💾 Appliquer le marquage ({len(st.session_state.pending_spam)} adresses) & Nettoyer", type="primary"):
+                st.session_state.spam_addresses.update(st.session_state.pending_spam)
+                save_spam_blacklist(st.session_state.spam_addresses)
+                st.session_state.pending_spam = set()
+                # On change la clé de l'éditeur pour forcer un rafraîchissement propre après commit
+                st.session_state[session_key] += 1
+                st.success("Buffer transféré en mémoire permanente. Nettoyage de l'historique effectué.")
+                st.rerun()
 
         st.data_editor(
             styled_df,
