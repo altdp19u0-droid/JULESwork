@@ -11,12 +11,41 @@ import io
 # --- CONFIGURATION PAGE ---
 st.set_page_config(page_title="1Recolte - Crypto Harvest Pro", layout="wide")
 
+# --- MOTEUR DE PRIX (EUR) ---
+@st.cache_data(ttl=86400)
+def get_price_eur(asset, date_obj):
+    if not asset or not isinstance(asset, str): return 0.0
+    asset = asset.upper().strip()
+
+    # Mapping basique pour CoinGecko
+    cg_map = {
+        "ETH": "ethereum", "BNB": "binancecoin", "POL": "polygon-ecosystem-token",
+        "USDT": "tether", "USDC": "usd-coin", "DAI": "dai", "8LND": "8lnd",
+        "ARB": "arbitrum", "OP": "optimism", "MATIC": "matic-network"
+    }
+    asset_id = cg_map.get(asset, asset.lower())
+    d_str = date_obj.strftime("%d-%m-%Y")
+
+    try:
+        url = f"https://api.coingecko.com/api/v3/coins/{asset_id}/history?date={d_str}&localization=false"
+        res = requests.get(url, timeout=5).json()
+        if "market_data" in res:
+            usd_price = res["market_data"]["current_price"]["usd"]
+            # Taux fixe simplifié EUR/USD si Frankfurter non dispo
+            return usd_price * 0.92
+    except: pass
+
+    # Fallbacks Stables
+    if asset in ["USDT", "USDC", "DAI"]: return 0.92
+    if asset in ["EURA", "AGEUR"]: return 1.0
+    return 0.0
+
 # --- NAVIGATION ---
 st.sidebar.title("1Recolte V4.0")
 page = st.sidebar.radio("Navigation", ["PAGE 1 : Gestion des Comptes & Récolte", "PAGE 2 : Analyse & Journal Comptable"])
 
 # --- CONSTANTES ---
-DB_COLS = ["numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "category", "network", "from/to"]
+DB_COLS = ["numéro", "source", "id", "date", "account", "counterparty", "asset", "type", "amount", "fiat_value", "category", "network", "from/to"]
 ACCOUNTS_FILE = "accounts_log.csv"
 API_KEYS_FILE = "api_keys.json"
 
@@ -102,7 +131,8 @@ def fetch_harvest(address, network, api_key):
                             "source": f"Blockscout ({label})", "id": tx_id, "date": dt,
                             "account": address, "counterparty": cp, "asset": asset,
                             "type": label, "amount": amount, "network": network, "from/to": direction,
-                            "fee": float(t.get('fee', {}).get('value', 0)) / 10**18 if isinstance(t.get('fee'), dict) else 0
+                            "fee": float(t.get('fee', {}).get('value', 0)) / 10**18 if isinstance(t.get('fee'), dict) else 0,
+                            "fiat_value": amount * get_price_eur(asset, dt)
                         })
 
                     next_params = res.get("next_page_params")
@@ -131,7 +161,8 @@ def fetch_harvest(address, network, api_key):
                         txs.append({
                             "source": "Scan Réseau (Balance)", "id": f"BAL-{asset}-{address[:8]}", "date": datetime.now(timezone.utc),
                             "account": address, "counterparty": "Balance Discovery", "asset": asset,
-                            "type": "Discovery", "amount": val, "network": network, "from/to": "IN", "fee": 0
+                            "type": "Discovery", "amount": val, "network": network, "from/to": "IN", "fee": 0,
+                            "fiat_value": val * get_price_eur(asset, datetime.now(timezone.utc))
                         })
         except: pass
 
@@ -149,7 +180,8 @@ def fetch_harvest(address, network, api_key):
                     txs.append({
                         "source": "Blockscout (NFT)", "id": f"NFT-{asset}-{t.get('id')}", "date": datetime.now(timezone.utc),
                         "account": address, "counterparty": "NFT Discovery", "asset": asset,
-                        "type": "NFT", "amount": 1.0, "network": network, "from/to": "IN", "fee": 0
+                        "type": "NFT", "amount": 1.0, "network": network, "from/to": "IN", "fee": 0,
+                        "fiat_value": 0.0 # On ne valorise pas les NFTs par défaut
                     })
         except: pass
 
@@ -179,7 +211,8 @@ def fetch_harvest(address, network, api_key):
                             "source": f"API ({label})", "id": t['hash'], "date": datetime.fromtimestamp(int(t['timeStamp']), tz=timezone.utc),
                             "account": address, "counterparty": f_addr if direction == "IN" else t_addr,
                             "asset": asset, "type": label, "amount": amt, "network": network, "from/to": direction,
-                            "fee": fee
+                            "fee": fee,
+                            "fiat_value": amt * get_price_eur(asset, datetime.fromtimestamp(int(t['timeStamp']), tz=timezone.utc))
                         })
                     last_block = int(results[-1].get('blockNumber', 0))
                     if len(results) < 10000: break
@@ -295,7 +328,7 @@ if page == "PAGE 1 : Gestion des Comptes & Récolte":
                 new_df = pd.DataFrame(raw_txs)
                 # Dédoublonnage robuste incluant le montant et la direction
                 # pour gérer les multi-transferts de même actif dans une transaction
-                dup_subset = ['id', 'asset', 'amount', 'network', 'from/to']
+                dup_subset = ['id', 'asset', 'amount', 'fiat_value', 'network', 'from/to']
                 new_df = new_df.drop_duplicates(subset=dup_subset)
 
                 # Injection dans la session (global)
@@ -341,14 +374,14 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
 
     annual_df = load_annual_db(selected_year)
 
-    # 3. Calcul du Solde Initial (Continuité Cumulative)
-    initial_balance = 0.0
+    # 3. Calcul du Solde Initial (Continuité Cumulative en EUR)
+    initial_balance_fiat = 0.0
     for y in range(2020, selected_year):
         y_df = load_annual_db(y)
         if not y_df.empty:
-            initial_balance += y_df['amount'].sum()
+            initial_balance_fiat += y_df['fiat_value'].sum()
 
-    st.sidebar.metric("Solde Initial (Asset)", f"{initial_balance:,.4f}")
+    st.sidebar.metric("Solde Initial (EUR)", f"{initial_balance_fiat:,.2f} €")
 
     # 4. Double Écriture & Traitement
     if st.button("🔄 Générer / Actualiser le Journal " + str(selected_year)):
@@ -368,12 +401,16 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
                     # Correction Signe : Négatif si OUT
                     signed_amount = row['amount'] if row['from/to'] == "IN" else -abs(row['amount'])
 
+                    # Correction Signe Fiat
+                    signed_fiat = row['fiat_value'] if row['from/to'] == "IN" else -abs(row['fiat_value'])
+
                     # Ligne 1 : L'Asset (Mouvement principal)
                     journal_rows.append({
                         "numéro": counter, "source": row['source'], "id": row['id'],
                         "date": row['date'], "account": row['account'],
                         "counterparty": row['counterparty'], "asset": row['asset'],
                         "type": row['type'], "amount": signed_amount,
+                        "fiat_value": signed_fiat,
                         "category": "Transfert", "network": row['network'],
                         "from/to": row['from/to']
                     })
@@ -381,12 +418,15 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
 
                     # Ligne 2 : Les Fees (Frais)
                     if row.get('fee', 0) > 0:
+                        native_asset = NETWORKS_CFG.get(row['network'], {}).get('native', 'ETH')
+                        fee_fiat = -abs(row['fee'] * get_price_eur(native_asset, row['date']))
                         # Les frais sont toujours une sortie (OUT)
                         journal_rows.append({
                             "numéro": counter, "source": row['source'], "id": row['id'],
                             "date": row['date'], "account": row['account'],
-                            "counterparty": "Network Fee", "asset": NETWORKS_CFG.get(row['network'], {}).get('native', 'ETH'),
+                            "counterparty": "Network Fee", "asset": native_asset,
                             "type": "Fee", "amount": -row['fee'],
+                            "fiat_value": fee_fiat,
                             "category": "Frais", "network": row['network'],
                             "from/to": "OUT"
                         })
@@ -405,18 +445,18 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
     # 5. Affichage du Journal
     st.subheader(f"📅 Journal Comptable {selected_year}")
 
-    # Statistiques (st.metric)
+    # Statistiques (st.metric en EUR)
     if not annual_df.empty:
         # Filtrer le spam pour les stats
         stats_df = annual_df[annual_df['counterparty'].str.lower().apply(lambda x: x not in st.session_state.spam_addresses)]
-        total_vol = stats_df[stats_df['type'] != 'Fee']['amount'].abs().sum()
-        total_fees = stats_df[stats_df['type'] == 'Fee']['amount'].sum()
-        final_balance = initial_balance + stats_df['amount'].sum()
+        total_vol_fiat = stats_df[stats_df['type'] != 'Fee']['fiat_value'].abs().sum()
+        total_fees_fiat = stats_df[stats_df['type'] == 'Fee']['fiat_value'].sum()
+        final_balance_fiat = initial_balance_fiat + stats_df['fiat_value'].sum()
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Solde Final Estimé", f"{final_balance:,.4f}")
-        c2.metric("Frais Totaux", f"{total_fees:,.4f}")
-        c3.metric("Volume Total", f"{total_vol:,.4f}")
+        c1.metric("Solde Final Estimé", f"{final_balance_fiat:,.2f} €")
+        c2.metric("Frais Totaux", f"{total_fees_fiat:,.2f} €")
+        c3.metric("Volume Total", f"{total_vol_fiat:,.2f} €")
         st.divider()
 
     # Toggle Anti-Spam
@@ -434,8 +474,8 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
         if hide_spam:
             df_to_show = df_to_show[df_to_show['Is_Spam'] == False]
 
-        # Note: cumsum global sur amount (mélange possible d'assets, mais demandé par la consigne)
-        df_to_show['Solde Progressif'] = initial_balance + df_to_show['amount'].cumsum()
+        # Solde Progressif en EUR
+        df_to_show['Solde Progressif (EUR)'] = initial_balance_fiat + df_to_show['fiat_value'].cumsum()
 
         # Style pour le surlignage jaune des suspects
         def highlight_spam_rows(row):
@@ -449,7 +489,8 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
             "numéro": st.column_config.NumberColumn("N°", disabled=True),
             "date": st.column_config.DatetimeColumn("Date", disabled=True),
             "amount": st.column_config.NumberColumn("Montant", format="%.8f", disabled=True),
-            "Solde Progressif": st.column_config.NumberColumn("Solde", format="%.8f", disabled=True)
+            "fiat_value": st.column_config.NumberColumn("Valeur EUR", format="%.2f €", disabled=True),
+            "Solde Progressif (EUR)": st.column_config.NumberColumn("Solde EUR", format="%.2f €", disabled=True)
         }
 
         edited_journal = st.data_editor(
