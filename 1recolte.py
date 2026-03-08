@@ -417,13 +417,48 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
 
         # Style pour le surlignage jaune des suspects
         def highlight_spam_rows(row):
-            # On considère suspect si non encore marqué explicitement mais peut-être suspect?
-            # Pour l'exercice, on surligne ceux qui SONT déjà dans le spam_addresses si on les affiche
             if row['Is_Spam']:
                 return ['background-color: #ffff99'] * len(row)
             return [''] * len(row)
 
-        st.dataframe(df_to_show.style.apply(highlight_spam_rows, axis=1), use_container_width=True)
+        # Utilisation de st.data_editor pour permettre de cocher/décocher le spam
+        column_config_journal = {
+            "Is_Spam": st.column_config.CheckboxColumn("Spam", help="Marquer comme spam"),
+            "numéro": st.column_config.NumberColumn("N°", disabled=True),
+            "date": st.column_config.DatetimeColumn("Date", disabled=True),
+            "amount": st.column_config.NumberColumn("Montant", disabled=True),
+            "Solde Progressif": st.column_config.NumberColumn("Solde", disabled=True)
+        }
+
+        edited_journal = st.data_editor(
+            df_to_show.style.apply(highlight_spam_rows, axis=1),
+            use_container_width=True,
+            column_config=column_config_journal,
+            key=f"journal_editor_{selected_year}"
+        )
+
+        # Détection des changements de spam et propagation
+        if st.button("💾 Appliquer les modifications Spam"):
+            # On compare le DF édité avec le DF original pour trouver les changements de Is_Spam
+            # Note: streamlit renvoie les lignes éditées dans session_state[key]['edited_rows']
+            edits = st.session_state.get(f"journal_editor_{selected_year}", {}).get("edited_rows", {})
+            if edits:
+                for idx_str, changes in edits.items():
+                    if "Is_Spam" in changes:
+                        idx = int(idx_str)
+                        # Récupérer l'adresse de contrepartie originale via l'index du DF affiché
+                        row_data = df_to_show.iloc[idx]
+                        cp_addr = str(row_data['counterparty']).lower()
+                        new_val = changes["Is_Spam"]
+
+                        if new_val:
+                            st.session_state.spam_addresses.add(cp_addr)
+                        else:
+                            if cp_addr in st.session_state.spam_addresses:
+                                st.session_state.spam_addresses.remove(cp_addr)
+
+                st.success("Modifications propagées à l'ensemble de l'historique ! Relancez la génération pour mettre à jour les calculs de solde.")
+                st.rerun()
 
         # Action : Marquer comme spam
         st.divider()
