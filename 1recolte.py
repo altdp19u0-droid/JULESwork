@@ -22,10 +22,10 @@ API_KEYS_FILE = "api_keys.json"
 
 # Configuration des Réseaux
 NETWORKS_CFG = {
-    "Ethereum": {"host": "api.etherscan.io", "native": "ETH", "free_api": "https://api.ethplorer.io", "api_name": "Etherscan"},
-    "Polygon": {"host": "api.polygonscan.com", "native": "POL", "api_name": "Polygonscan"},
-    "BscScan": {"host": "api.bscscan.com", "native": "BNB", "free_api": "https://api.bscscan.com/api", "api_name": "BscScan"},
-    "Arbitrum": {"host": "api.arbiscan.io", "native": "ETH", "api_name": "Arbiscan"},
+    "Ethereum": {"host": "api.etherscan.io", "native": "ETH", "free_api": "https://eth.blockscout.com/api/v2", "api_name": "Etherscan"},
+    "Polygon": {"host": "api.polygonscan.com", "native": "POL", "free_api": "https://polygon.blockscout.com/api/v2", "api_name": "Polygonscan"},
+    "BscScan": {"host": "api.bscscan.com", "native": "BNB", "free_api": "https://bsc.blockscout.com/api/v2", "api_name": "BscScan"},
+    "Arbitrum": {"host": "api.arbiscan.io", "native": "ETH", "free_api": "https://arbitrum.blockscout.com/api/v2", "api_name": "Arbiscan"},
     "Base": {"host": "api.basescan.org", "native": "ETH", "free_api": "https://base.blockscout.com/api/v2", "api_name": "Basescan"},
     "Optimism": {"host": "api-optimistic.etherscan.io", "native": "ETH", "free_api": "https://optimism.blockscout.com/api/v2", "api_name": "Optimism Etherscan"}
 }
@@ -71,12 +71,19 @@ def fetch_harvest(address, network, api_key):
             for page in range(500): # Capacité de 25 000 transactions (50 items par page)
                 try:
                     res = requests.get(url, timeout=15).json()
-                    items = res.get("items", [])
-                    if not items: break
+                    # Détection flexible Blockscout v1/v2
+                    items = res.get("items") if isinstance(res, dict) else res if isinstance(res, list) else None
+                    if items is None and isinstance(res, dict):
+                        items = res.get("result")
+
+                    if not isinstance(items, list) or not items: break
                     for t in items:
                         tx_id = t.get('hash') or t.get('tx_hash')
                         dt_str = t.get('timestamp') or t.get('timeStamp')
-                        dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00')) if dt_str else datetime.now()
+                        try:
+                            dt = pd.to_datetime(dt_str, utc=True).to_pydatetime() if dt_str else datetime.now(timezone.utc)
+                        except:
+                            dt = datetime.now(timezone.utc)
 
                         asset = cfg['native']
                         amount = float(t.get('value', 0)) / 10**18
@@ -300,7 +307,10 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
         fname = f"DB_{year}.csv"
         if os.path.exists(fname):
             df = pd.read_csv(fname)
-            df['date'] = pd.to_datetime(df['date'])
+            # Utilisation de format='mixed' pour plus de robustesse sur les formats stockés
+            df['date'] = pd.to_datetime(df['date'], utc=True, format='ISO8601', errors='coerce')
+            if df['date'].isna().any():
+                df['date'] = pd.to_datetime(df['date'], utc=True, errors='coerce')
             return df
         return pd.DataFrame(columns=DB_COLS)
 
@@ -319,9 +329,11 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
     if st.button("🔄 Générer / Actualiser le Journal " + str(selected_year)):
         if 'all_transactions' in st.session_state and not st.session_state.all_transactions.empty:
             all_tx = st.session_state.all_transactions.copy()
-            all_tx['date'] = pd.to_datetime(all_tx['date'])
+            # Utilisation de format='mixed' pour gérer les différents formats de date
+            all_tx['date'] = pd.to_datetime(all_tx['date'], utc=True, format='ISO8601', errors='coerce')
 
-            # Filtrer par année
+            # Filtrer par année (en s'assurant que l'année est accessible)
+            all_tx = all_tx.dropna(subset=['date'])
             year_tx = all_tx[all_tx['date'].dt.year == selected_year].copy()
 
             if not year_tx.empty:
