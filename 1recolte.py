@@ -385,6 +385,11 @@ elif page == "PAGE 2 : Analyse & Journal Comptable":
             df['date'] = pd.to_datetime(df['date'], utc=True, format='ISO8601', errors='coerce')
             if df['date'].isna().any():
                 df['date'] = pd.to_datetime(df['date'], utc=True, errors='coerce')
+
+            # Rétrocompatibilité : Assurer la présence des nouvelles colonnes de valeur
+            if 'valeur $' not in df.columns: df['valeur $'] = 0.0
+            if 'valeur €' not in df.columns: df['valeur €'] = 0.0
+
             return df
         return pd.DataFrame(columns=DB_COLS)
 
