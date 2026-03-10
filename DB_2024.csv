@@ -1,0 +1,3 @@
+numéro,source,id,date,account,counterparty,asset,type,amount,category,network,from/to
+1,Source,hash1,2024-01-01,acc,cp,ETH,Native,1.5,Transfer,Base,IN
+2,Source,hash1,2024-01-01,acc,Network Fee,ETH,Fee,-0.01,Frais,Base,OUT
