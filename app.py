@@ -117,6 +117,12 @@ def fetch_blockscout_v1_fallback(api_v1, addr, action, max_items, year):
         time.sleep(0.1)
     return items[:max_items]
 
+def extract_value(v):
+    # Blockscout V2 peut renvoyer {'value': '123'} ou '123'
+    if isinstance(v, dict):
+        return v.get("total") or v.get("value") or "0"
+    return str(v or "0")
+
 def fetch_portfolio_v2(api_v2, addr):
     url = f"{api_v2}/addresses/{addr}/token-balances"
     data = call_api(url)
@@ -148,8 +154,8 @@ if harvest_btn:
                     "Chain": chain,
                     "Asset": token.get("symbol", "NATIVE" if not token else "TOKEN"),
                     "Quantity": float(b.get("value", 0)) / (10**int(token.get("decimals", 18) or 18)),
-                    "Price (Spot)": b.get("token_price"),
-                    "Value (Spot)": b.get("value_in_usd"), # Blockscout donne souvent USD
+                    "Price ($)": b.get("token_price"),
+                    "Value ($)": b.get("value_in_usd"), # Blockscout donne souvent USD
                     "Contract": token.get("address")
                 })
         df_portfolio = pd.DataFrame(portfolio_all)
@@ -193,14 +199,19 @@ if harvest_btn:
                     tx_hash = t.get("hash")
 
                 fee = (gas_used * gas_price) / 1e18
+                # Extraction USD native V2 (si disponible dans stats)
+                val_usd = t.get("value_in_usd") or 0.0
+
                 tx_all.append({
                     "Date": dt, "Chain": chain, "Txn hash": tx_hash, "Type": "Native/Internal",
                     "Method": method, "Block": block, "From": f_addr, "To": t_addr,
-                    "Value ETH": val, "Fee ETH": fee if f_addr == addr_c.lower() else 0.0
+                    "Value ETH": val, "Value ($)": val_usd, "Fee ETH": fee if f_addr == addr_c.lower() else 0.0
                 })
             progress_tx.progress((idx + 1) / len(chains))
 
-        df_tx = pd.DataFrame(tx_all).sort_values("Date", ascending=False)
+        df_tx = pd.DataFrame(tx_all)
+        if not df_tx.empty:
+            df_tx = df_tx.sort_values("Date", ascending=False)
         st.dataframe(df_tx, use_container_width=True)
         st.session_state.transactions = df_tx
 
@@ -223,7 +234,8 @@ if harvest_btn:
                     asset = tok.get("symbol", "TOKEN")
                     tok_id = t.get("token_id", "")
                     dec = int(tok.get("decimals") or 18)
-                    val = float(t.get("total", t.get("value", 0))) / (10**dec)
+                    raw_val = extract_value(t.get("total") or t.get("value", "0"))
+                    val = float(raw_val) / (10**dec)
                     f_addr = t.get("from", {}).get("hash", "").lower()
                     t_addr = t.get("to", {}).get("hash", "").lower()
                     tx_hash = t.get("tx_hash")
@@ -237,13 +249,18 @@ if harvest_btn:
                     t_addr = t.get("to", "").lower()
                     tx_hash = t.get("hash")
 
+                # Extraction USD tokens V2
+                val_usd = t.get("value_in_usd") or 0.0
+
                 tok_all.append({
                     "Date": dt, "Chain": chain, "Token": asset, "Token ID": tok_id,
-                    "Txn hash": tx_hash, "From": f_addr, "To": t_addr, "Value": val
+                    "Txn hash": tx_hash, "From": f_addr, "To": t_addr, "Value": val, "Value ($)": val_usd
                 })
             progress_tok.progress((idx + 1) / len(chains))
 
-        df_tok = pd.DataFrame(tok_all).sort_values("Date", ascending=False)
+        df_tok = pd.DataFrame(tok_all)
+        if not df_tok.empty:
+            df_tok = df_tok.sort_values("Date", ascending=False)
         st.dataframe(df_tok, use_container_width=True)
         st.session_state.tokens = df_tok
 
