@@ -60,7 +60,13 @@ with t1:
             st.success("Mouvement ajouté.")
 
     st.divider()
-    st.dataframe(st.session_state.fiat_journal, use_container_width=True)
+    st.subheader("📊 Contrôle & Observation (Journal en cours)")
+    st.session_state.fiat_journal = st.data_editor(
+        st.session_state.fiat_journal,
+        use_container_width=True,
+        num_rows="dynamic",
+        key="fiat_editor"
+    )
 
 with t2:
     st.subheader("📝 Saisie des positions hors-portefeuille direct")
@@ -87,7 +93,13 @@ with t2:
             st.success("Position enregistrée.")
 
     st.divider()
-    st.dataframe(st.session_state.positions_journal, use_container_width=True)
+    st.subheader("📊 Contrôle & Observation (Positions en cours)")
+    st.session_state.positions_journal = st.data_editor(
+        st.session_state.positions_journal,
+        use_container_width=True,
+        num_rows="dynamic",
+        key="pos_editor"
+    )
 
 # --- Sanctuarisation ---
 has_data = not st.session_state.fiat_journal.empty or not st.session_state.positions_journal.empty
