@@ -115,7 +115,7 @@ def fetch_paginated_v1(api_base, addr, action, max_txs):
 def fetch_blockscout_v2(api_v2, addr, max_txs):
     txs = []
     url = f"{api_v2}/addresses/{addr}/transactions"
-    params = {"filter": "to | from"}
+    params = {} # On retire le filtre qui cause l'erreur 422
     for _ in range(20):
         data = call_api(url, params)
         if not data or "items" not in data: break
