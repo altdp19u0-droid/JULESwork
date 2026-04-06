@@ -39,7 +39,12 @@ with t1:
 
         c4, c5, c6 = st.columns(3)
         f_amount = c4.number_input("Montant (EUR)", min_value=0.0, step=10.0)
-        f_type = c5.selectbox("Nature du flux", ["Achat (Virement vers Crypto)", "Vente (Retour vers Banque)"])
+        f_type = c5.selectbox("Nature du flux", [
+            "Achat (Virement vers Crypto)",
+            "Vente (Retour vers Banque)",
+            "(Virement vers )",
+            "(Retrait de)"
+        ])
         f_asset = c6.text_input("Asset concerné (Optionnel)", placeholder="ex: EUR, USDT, BTC")
 
         f_qty = st.number_input("Quantité d'Asset reçue/vendue (Optionnel)", min_value=0.0, format="%.8f")
