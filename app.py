@@ -12,6 +12,11 @@ from web3 import Web3
 st.set_page_config(page_title="Jules Crypto Harvest Pro - Sanctuarisation V7", layout="wide")
 st.title("🚜 Sanctuarisation des Données Blockchain (Harvest Pure)")
 
+# Initialisation Session State
+if "transactions" not in st.session_state: st.session_state.transactions = pd.DataFrame()
+if "tokens" not in st.session_state: st.session_state.tokens = pd.DataFrame()
+if "portfolio" not in st.session_state: st.session_state.portfolio = pd.DataFrame()
+
 # Configuration des Réseaux avec Blockscout V1 et V2
 CHAIN_APIS = {
     "Ethereum": {
@@ -134,6 +139,20 @@ def fetch_portfolio_v2(api_v2, addr):
 # --- Main App Logic ---
 w3 = Web3()
 harvest_btn = st.button("🚀 Lancer la Récolte Totale (Step 1 : Brutes)", use_container_width=True)
+
+# Détection de présence de données pour l'affichage permanent
+has_data = not st.session_state.transactions.empty or not st.session_state.tokens.empty
+
+# Affichage des données mémorisées (en dehors du bloc bouton pour persistance)
+if has_data:
+    st.subheader("📦 Portfolio (Dernière Récolte)")
+    st.dataframe(st.session_state.portfolio, use_container_width=True)
+
+    st.subheader(f"📝 Transactions (Dernière Récolte)")
+    st.dataframe(st.session_state.transactions, use_container_width=True)
+
+    st.subheader(f"🪙 Token Transfers (Dernière Récolte)")
+    st.dataframe(st.session_state.tokens, use_container_width=True)
 
 if harvest_btn:
     if not address or not w3.is_address(address):
@@ -275,9 +294,11 @@ if harvest_btn:
         st.session_state.tokens = df_tok
 
         st.success(f"✅ Récolte terminée pour l'année {target_year} !")
+        st.rerun() # Force re-execution to show the Sanctuarize button immediately
 
 # --- Sanctuarisation ---
-if "transactions" in st.session_state and not st.session_state.transactions.empty:
+# Affichage permanent si données présentes (pour éviter la disparition après récolte)
+if has_data:
     st.divider()
     st.subheader("💾 Étape Finale : Sanctuariser")
     addr_short = address[:10] if address else "Unknown"
