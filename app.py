@@ -89,13 +89,19 @@ def save_csv_local(df, path):
 
 @st.cache_data(ttl=86400)
 def call_api(url, params=None):
-    try:
-        r = requests.get(url, params=params, timeout=20)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        st.error(f"Erreur API ({url}): {e}")
-        return None
+    for i in range(3): # Retries
+        try:
+            r = requests.get(url, params=params, timeout=30)
+            if r.status_code == 429:
+                time.sleep(2 * (i + 1))
+                continue
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            if i == 2:
+                st.warning(f"⚠️ Erreur API persistante ({url}): {e}")
+            time.sleep(1)
+    return None
 
 def fetch_paginated_v1(api_base, addr, action, max_txs):
     items = []
@@ -112,18 +118,18 @@ def fetch_paginated_v1(api_base, addr, action, max_txs):
         time.sleep(0.2)
     return items[:max_txs]
 
-def fetch_blockscout_v2(api_v2, addr, max_txs):
-    txs = []
-    url = f"{api_v2}/addresses/{addr}/transactions"
-    params = {} # On retire le filtre qui cause l'erreur 422
-    for _ in range(20):
+def fetch_blockscout_v2(api_v2, addr, max_txs, endpoint="transactions"):
+    items = []
+    url = f"{api_v2}/addresses/{addr}/{endpoint}"
+    params = {}
+    for _ in range(50): # Increased pagination depth
         data = call_api(url, params)
         if not data or "items" not in data: break
-        txs.extend(data["items"])
-        if len(txs) >= max_txs or "next_page_params" not in data or not data["next_page_params"]: break
+        items.extend(data["items"])
+        if len(items) >= max_txs or "next_page_params" not in data or not data["next_page_params"]: break
         params.update(data["next_page_params"])
         time.sleep(0.2)
-    return txs[:max_txs]
+    return items[:max_txs]
 
 # --- Decoding logic ---
 def fetch_contract_abi(contract, chain_label, api_key):
@@ -172,17 +178,37 @@ def decode_method_4byte(input_data):
 def coingecko_price_on_date_coin(coin_id, date_obj):
     if not cg: return None
     try:
-        time.sleep(1.2) # Rate limit
+        time.sleep(1.5) # Increased delay
         d = date_obj.strftime("%d-%m-%Y")
         res = cg.get_coin_history_by_id(id=coin_id, date=d)
         return res.get("market_data", {}).get("current_price", {}).get("eur")
     except: return None
 
+@st.cache_data(ttl=3600)
+def coingecko_get_spot_prices(platform_id, contract_addresses):
+    # contract_addresses is a list
+    if not contract_addresses: return {}
+    addr_str = ",".join(contract_addresses)
+    url = f"https://api.coingecko.com/api/v3/simple/token_price/{platform_id}"
+    params = {"contract_addresses": addr_str, "vs_currencies": "eur"}
+    j = call_api(url, params=params)
+    if not j: return {}
+    return {addr.lower(): data.get("eur") for addr, data in j.items()}
+
 @st.cache_data(ttl=86400)
 def coingecko_get_coin_id_by_contract(platform_id, contract_address):
+    if not contract_address or contract_address == "0x": return None
     url = f"https://api.coingecko.com/api/v3/coins/{platform_id}/contract/{contract_address}"
-    j = call_api(url)
-    return j.get("id") if j else None
+    # Use a simpler check to avoid st.warning from call_api on 404
+    try:
+        time.sleep(1.2)
+        r = requests.get(url, timeout=15)
+        if r.status_code == 404: return "NOT_FOUND" # Cache negative result
+        if r.status_code == 429: return None # Don't cache 429
+        r.raise_for_status()
+        return r.json().get("id")
+    except:
+        return None
 
 # --- Main Logic ---
 if fetch_button:
@@ -203,7 +229,7 @@ if fetch_button:
             cfg = CHAIN_APIS[chain]
 
             # Natives (Prefer V2)
-            txs_v2 = fetch_blockscout_v2(cfg["v2"], addr_c, max_txs)
+            txs_v2 = fetch_blockscout_v2(cfg["v2"], addr_c, max_txs, "transactions")
             if txs_v2:
                 for t in txs_v2:
                     t["_chain"] = chain
@@ -223,14 +249,29 @@ if fetch_button:
                     t["fee_eth"] = (int(t.get("gasUsed", 0)) * int(t.get("gasPrice", 0))) / 1e18
                 all_txs_raw.extend(txs_v1)
 
-            # Tokens
-            toks = fetch_paginated_v1(cfg["v1"], addr_c, "tokentx", max_txs)
-            for t in toks:
-                t["_chain"] = chain
-                t["timeStamp"] = int(t.get("timeStamp", 0))
-                dec = int(t.get("tokenDecimal") or 18)
-                t["quantity"] = float(t.get("value", 0)) / (10**dec)
-            all_tokens_raw.extend(toks)
+            # Tokens (Prefer V2)
+            toks_v2 = fetch_blockscout_v2(cfg["v2"], addr_c, max_txs, "token-transfers")
+            if toks_v2:
+                for t in toks_v2:
+                    t["_chain"] = chain
+                    t["timeStamp"] = int(datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00")).timestamp())
+                    tok = t.get("token", {})
+                    t["tokenSymbol"] = tok.get("symbol", "TOKEN")
+                    t["contractAddress"] = tok.get("address", "")
+                    dec = int(tok.get("decimals") or 18)
+                    t["quantity"] = float(t.get("total", t.get("value", 0))) / (10**dec)
+                    t["from"] = t.get("from", {}).get("hash", "")
+                    t["to"] = t.get("to", {}).get("hash", "")
+                    t["hash"] = t.get("tx_hash", "")
+                all_tokens_raw.extend(toks_v2)
+            else:
+                toks_v1 = fetch_paginated_v1(cfg["v1"], addr_c, "tokentx", max_txs)
+                for t in toks_v1:
+                    t["_chain"] = chain
+                    t["timeStamp"] = int(t.get("timeStamp", 0))
+                    dec = int(t.get("tokenDecimal") or 18)
+                    t["quantity"] = float(t.get("value", 0)) / (10**dec)
+                all_tokens_raw.extend(toks_v1)
 
             progress.progress((idx + 1) / len(chains))
 
@@ -329,6 +370,18 @@ if fetch_button:
                 # Snapshot EOY & Valuation
                 st.subheader(f"Portfolio au 31/12/{y}")
                 snapshot_rows = []
+
+                # Spot price optimization: group contracts by chain for batch calls
+                if not use_historical_prices and use_coingecko:
+                    with st.spinner("Récupération groupée des prix spot..."):
+                        for chain_name in chains:
+                            contracts = [k.split("::")[2] for k, q in portfolio_balances.items() if k.startswith("TOKEN") and k.endswith(chain_name) and abs(q) > 1e-8]
+                            if contracts:
+                                platform = CHAIN_APIS.get(chain_name, {}).get("cg_platform", "ethereum")
+                                spot_map = coingecko_get_spot_prices(platform, contracts)
+                                # L'utilisation du cache @st.cache_data dans coingecko_get_spot_prices
+                                # rend déjà les appels suivants efficaces.
+
                 for k, qty in portfolio_balances.items():
                     if abs(qty) < 1e-8: continue
                     parts = k.split("::")
@@ -345,10 +398,19 @@ if fetch_button:
                             platform = CHAIN_APIS.get(chain, {}).get("cg_platform", "ethereum")
                             coin_id = coingecko_get_coin_id_by_contract(platform, contract)
 
-                        if coin_id:
-                            price = coingecko_price_on_date_coin(coin_id, datetime(y, 12, 31).date() if use_historical_prices else datetime.now().date())
+                        if coin_id and coin_id != "NOT_FOUND":
+                            if use_historical_prices:
+                                price = coingecko_price_on_date_coin(coin_id, datetime(y, 12, 31).date())
+                            else:
+                                # Prioritize spot batch if available
+                                platform = CHAIN_APIS.get(chain, {}).get("cg_platform", "ethereum")
+                                if parts[0] == "TOKEN":
+                                    spot_map = coingecko_get_spot_prices(platform, [contract])
+                                    price = spot_map.get(contract.lower())
+                                if not price:
+                                    price = coingecko_price_on_date_coin(coin_id, datetime.now().date())
 
-                    if not price and asset.upper() in ["USDC", "USDT", "DAI"]: price = 0.95
+                    if not price and any(x in asset.upper() for x in ["USDC", "USDT", "DAI"]): price = 0.95
                     if not price and asset.upper() in ["EURA", "AGEUR"]: price = 1.0
 
                     val_eur = qty * (price or 0.0)
