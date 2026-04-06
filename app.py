@@ -54,6 +54,9 @@ with st.sidebar:
     max_txs = st.number_input("Max transactions par chaîne", min_value=10, max_value=50000, value=2000, step=100)
 
     st.divider()
+    st.info("💡 **Conseil Multicomptes** : Récoltez et sanctuarisez vos adresses les unes après les autres. Le dossier final contiendra un fichier par compte.")
+
+    st.divider()
     if st.button("🗑️ Réinitialiser l'Interface"):
         st.session_state.clear()
         st.rerun()
@@ -270,14 +273,16 @@ if harvest_btn:
 if "transactions" in st.session_state and not st.session_state.transactions.empty:
     st.divider()
     st.subheader("💾 Étape Finale : Sanctuariser")
-    if st.button("Enregistrer les fichiers bruts pour " + str(target_year), use_container_width=True):
+    addr_short = address[:10] if address else "Unknown"
+    if st.button(f"Enregistrer les fichiers bruts pour {addr_short}... ({target_year})", use_container_width=True):
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        prefix = f"{addr_short}_{ts}"
 
-        st.session_state.portfolio.to_csv(os.path.join(year_dir, f"raw_portfolio_{ts}.csv"), index=False)
-        st.session_state.transactions.to_csv(os.path.join(year_dir, f"raw_transactions_{ts}.csv"), index=False)
-        st.session_state.tokens.to_csv(os.path.join(year_dir, f"raw_token_transfers_{ts}.csv"), index=False)
+        st.session_state.portfolio.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False)
+        st.session_state.transactions.to_csv(os.path.join(year_dir, f"raw_transactions_{prefix}.csv"), index=False)
+        st.session_state.tokens.to_csv(os.path.join(year_dir, f"raw_token_transfers_{prefix}.csv"), index=False)
 
         st.balloons()
         st.success(f"📂 Fichiers enregistrés dans : {year_dir}")
