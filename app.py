@@ -202,13 +202,17 @@ if harvest_btn:
                     tx_hash = t.get("hash")
 
                 fee = (gas_used * gas_price) / 1e18
-                # Extraction USD native V2 (si disponible dans stats)
-                val_usd = t.get("value_in_usd") or 0.0
+                # Extraction USD native V2 via historic_exchange_rate
+                rate_usd = float(t.get("historic_exchange_rate") or 0.0)
+                val_usd = val * rate_usd if rate_usd > 0 else (t.get("value_in_usd") or 0.0)
+                fee_usd = fee * rate_usd if rate_usd > 0 else 0.0
 
                 tx_all.append({
                     "Date": dt, "Chain": chain, "Txn hash": tx_hash, "Type": "Native/Internal",
                     "Method": method, "Block": block, "From": f_addr, "To": t_addr,
-                    "Value ETH": val, "Value ($)": val_usd, "Fee ETH": fee if f_addr == addr_c.lower() else 0.0
+                    "Value ETH": val, "Value ($)": val_usd, "Rate ($)": rate_usd,
+                    "Fee ETH": fee if f_addr == addr_c.lower() else 0.0,
+                    "Fee ($)": fee_usd if f_addr == addr_c.lower() else 0.0
                 })
             progress_tx.progress((idx + 1) / len(chains))
 
@@ -254,10 +258,13 @@ if harvest_btn:
 
                 # Extraction USD tokens V2
                 val_usd = t.get("value_in_usd") or 0.0
+                # Parfois Blockscout V2 met le cours dans le token
+                rate_usd = float(t.get("token", {}).get("exchange_rate") or 0.0)
 
                 tok_all.append({
                     "Date": dt, "Chain": chain, "Token": asset, "Token ID": tok_id,
-                    "Txn hash": tx_hash, "From": f_addr, "To": t_addr, "Value": val, "Value ($)": val_usd
+                    "Txn hash": tx_hash, "From": f_addr, "To": t_addr, "Value": val,
+                    "Value ($)": val_usd, "Rate ($)": rate_usd
                 })
             progress_tok.progress((idx + 1) / len(chains))
 
