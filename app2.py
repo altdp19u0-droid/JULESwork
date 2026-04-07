@@ -44,8 +44,12 @@ def merge_raw_data(year):
 
     # 1. Load Manual Fiat (app0)
     fiat_path = os.path.join(year_dir, f"manual_fiat_{year}.csv")
-    if os.path.exists(fiat_path):
-        df_fiat = pd.read_csv(fiat_path)
+    if os.path.exists(fiat_path) and os.path.getsize(fiat_path) > 0:
+        try:
+            df_fiat = pd.read_csv(fiat_path)
+        except Exception:
+            df_fiat = pd.DataFrame()
+
         for _, r in df_fiat.iterrows():
             all_rows.append({
                 "Date": r.get("Date"),
@@ -66,8 +70,11 @@ def merge_raw_data(year):
     files = os.listdir(year_dir)
     for f in files:
         f_path = os.path.join(year_dir, f)
-        if f.startswith("raw_transactions_"):
-            df = pd.read_csv(f_path)
+        if f.startswith("raw_transactions_") and os.path.getsize(f_path) > 0:
+            try:
+                df = pd.read_csv(f_path)
+            except Exception:
+                continue
             for _, r in df.iterrows():
                 f_addr = str(r.get("From", "")).lower()
                 t_addr = str(r.get("To", "")).lower()
@@ -97,8 +104,11 @@ def merge_raw_data(year):
                     "Imposable": False
                 })
 
-        if f.startswith("raw_token_transfers_"):
-            df = pd.read_csv(f_path)
+        if f.startswith("raw_token_transfers_") and os.path.getsize(f_path) > 0:
+            try:
+                df = pd.read_csv(f_path)
+            except Exception:
+                continue
             for _, r in df.iterrows():
                 f_addr = str(r.get("From", "")).lower()
                 t_addr = str(r.get("To", "")).lower()
@@ -140,14 +150,23 @@ def sync_data(year):
     qual_path = get_qualified_path(year)
     new_df = merge_raw_data(year)
 
-    if os.path.exists(qual_path):
-        old_df = pd.read_csv(qual_path)
-        old_df["Date"] = pd.to_datetime(old_df["Date"], utc=True)
+    if os.path.exists(qual_path) and os.path.getsize(qual_path) > 0:
+        try:
+            old_df = pd.read_csv(qual_path)
+            old_df["Date"] = pd.to_datetime(old_df["Date"], utc=True)
+        except Exception:
+            old_df = pd.DataFrame(columns=COLUMNS)
         # On fusionne en gardant les modifs manuelles de l'existant
         combined = pd.concat([new_df, old_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account"], keep="last")
-        st.session_state.journal_qualifie = combined.sort_values("Date", ascending=False)
+        if not combined.empty and "Date" in combined.columns:
+            st.session_state.journal_qualifie = combined.sort_values("Date", ascending=False)
+        else:
+            st.session_state.journal_qualifie = combined
     else:
-        st.session_state.journal_qualifie = new_df.sort_values("Date", ascending=False)
+        if not new_df.empty and "Date" in new_df.columns:
+            st.session_state.journal_qualifie = new_df.sort_values("Date", ascending=False)
+        else:
+            st.session_state.journal_qualifie = new_df
 
 # --- UI Sidebar ---
 with st.sidebar:
