@@ -21,16 +21,21 @@ def load_manual_data(year):
     if os.path.exists(fiat_path):
         df = pd.read_csv(fiat_path)
         df['Date'] = pd.to_datetime(df['Date']).dt.date
+        # migration schema: ajout Txn Hash si manquant
+        if "Txn Hash" not in df.columns:
+            df["Txn Hash"] = ""
         st.session_state.fiat_journal = df
     else:
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité"])
+        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash"])
 
     if os.path.exists(pos_path):
         df = pd.read_csv(pos_path)
         df['Date'] = pd.to_datetime(df['Date']).dt.date
+        if "Txn Hash" not in df.columns:
+            df["Txn Hash"] = ""
         st.session_state.positions_journal = df
     else:
-        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Adresse/Contrat"])
+        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Adresse/Contrat", "Txn Hash"])
 
 if "fiat_journal" not in st.session_state:
     load_manual_data(st.session_state.current_year)
@@ -47,8 +52,8 @@ with st.sidebar:
 
     st.divider()
     if st.button("🗑️ Vider la saisie en cours"):
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité"])
-        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Adresse/Contrat"])
+        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash"])
+        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Adresse/Contrat", "Txn Hash"])
         st.toast("Saisie vidée (en session uniquement).")
         st.rerun()
 
@@ -80,7 +85,9 @@ with t1:
         ])
         f_asset = c6.text_input("Asset concerné (Optionnel)", placeholder="ex: EUR, USDT, BTC")
 
-        f_qty = st.number_input("Quantité d'Asset reçue/vendue (Optionnel)", min_value=0.0, format="%.8f")
+        c_hash, c_qty_f = st.columns([2, 1])
+        f_hash = c_hash.text_input("Txn Hash (Blockchain)", placeholder="0x...")
+        f_qty = c_qty_f.number_input("Quantité Asset (Optionnel)", min_value=0.0, format="%.8f")
 
         submit_fiat = st.form_submit_button("➕ Ajouter au journal")
 
@@ -90,13 +97,15 @@ with t1:
             else:
                 new_row = {
                     "Date": f_date, "Compte/Label": f_label, "Plateforme": f_plat,
-                    "Montant EUR": f_amount, "Type": f_type, "Asset": f_asset.upper(), "Quantité": f_qty
+                    "Montant EUR": f_amount, "Type": f_type, "Asset": f_asset.upper(),
+                    "Quantité": f_qty, "Txn Hash": f_hash
                 }
                 st.session_state.fiat_journal = pd.concat([st.session_state.fiat_journal, pd.DataFrame([new_row])], ignore_index=True)
                 st.success("Mouvement ajouté.")
 
     st.divider()
     st.subheader("📊 Contrôle & Observation (Journal en cours)")
+    st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
     st.session_state.fiat_journal = st.data_editor(
         st.session_state.fiat_journal,
         use_container_width=True,
@@ -117,7 +126,9 @@ with t2:
         p_asset = c4.text_input("Asset", placeholder="ex: stETH, USDC")
         p_qty = c5.number_input("Quantité", min_value=0.0, format="%.8f")
 
-        p_addr = st.text_input("Adresse Contrat / Memo", placeholder="0x... ou commentaire")
+        c_addr, c_hash_p = st.columns(2)
+        p_addr = c_addr.text_input("Adresse Contrat / Memo", placeholder="0x... ou commentaire")
+        p_hash = c_hash_p.text_input("Txn Hash (Blockchain)", placeholder="0x...")
 
         submit_pos = st.form_submit_button("➕ Ajouter à la liste")
 
@@ -127,13 +138,15 @@ with t2:
             else:
                 new_row = {
                     "Date": p_date, "Type Position": p_type, "Protocole/Plateforme": p_plat,
-                    "Asset": p_asset.upper(), "Quantité": p_qty, "Adresse/Contrat": p_addr
+                    "Asset": p_asset.upper(), "Quantité": p_qty, "Adresse/Contrat": p_addr,
+                    "Txn Hash": p_hash
                 }
                 st.session_state.positions_journal = pd.concat([st.session_state.positions_journal, pd.DataFrame([new_row])], ignore_index=True)
                 st.success("Position enregistrée.")
 
     st.divider()
     st.subheader("📊 Contrôle & Observation (Positions en cours)")
+    st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
     st.session_state.positions_journal = st.data_editor(
         st.session_state.positions_journal,
         use_container_width=True,
