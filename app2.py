@@ -68,6 +68,13 @@ def merge_raw_data(year):
 
     # 2. Load Blockchain Txs (app.py)
     files = os.listdir(year_dir)
+
+    def resolve_raw_addr(addr_str):
+        if "(" in str(addr_str) and ")" in str(addr_str):
+            # Extract content between parentheses
+            return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
+        return str(addr_str).strip().lower()
+
     for f in files:
         f_path = os.path.join(year_dir, f)
 
@@ -86,8 +93,10 @@ def merge_raw_data(year):
             except Exception:
                 continue
             for _, r in df.iterrows():
-                f_addr = str(r.get("From", "")).lower()
-                t_addr = str(r.get("To", "")).lower()
+                f_addr_full = str(r.get("From", ""))
+                t_addr_full = str(r.get("To", ""))
+                f_addr = resolve_raw_addr(f_addr_full)
+                t_addr = resolve_raw_addr(t_addr_full)
 
                 # Priorité : Colonne Account > Adresse du fichier > Placeholder
                 acc_low = str(r.get("Account", "")).lower()
@@ -95,16 +104,19 @@ def merge_raw_data(year):
                     acc_low = file_addr if file_addr else "unknown_account"
 
                 # Priorité : Colonne Counterparty > Calcul
-                cp = str(r.get("Counterparty", "")).lower()
+                cp = str(r.get("Counterparty", ""))
                 if not cp or cp == "nan":
-                    cp = t_addr if f_addr == acc_low else f_addr
+                    cp = t_addr_full if f_addr == acc_low else f_addr_full
 
                 amount = float(r.get("Value ETH", 0.0))
                 # Direction relative
                 if f_addr == acc_low:
                     amount = -amount
 
-                status = "Spam" if cp in spam_list else "A vérifier"
+                # Check spam on raw address
+                cp_raw = resolve_raw_addr(cp)
+                status = "Spam" if cp_raw in spam_list else "A vérifier"
+
                 all_rows.append({
                     "Date": r.get("Date"),
                     "Account": acc_low,
@@ -126,8 +138,10 @@ def merge_raw_data(year):
             except Exception:
                 continue
             for _, r in df.iterrows():
-                f_addr = str(r.get("From", "")).lower()
-                t_addr = str(r.get("To", "")).lower()
+                f_addr_full = str(r.get("From", ""))
+                t_addr_full = str(r.get("To", ""))
+                f_addr = resolve_raw_addr(f_addr_full)
+                t_addr = resolve_raw_addr(t_addr_full)
 
                 # Résolution Account
                 acc_low = str(r.get("Account", "")).lower()
@@ -135,16 +149,18 @@ def merge_raw_data(year):
                     acc_low = file_addr if file_addr else "unknown_account"
 
                 # Priorité : Colonne Counterparty > Calcul
-                cp = str(r.get("Counterparty", "")).lower()
+                cp = str(r.get("Counterparty", ""))
                 if not cp or cp == "nan":
-                    cp = t_addr if f_addr == acc_low else f_addr
+                    cp = t_addr_full if f_addr == acc_low else f_addr_full
 
                 amount = float(r.get("Value", 0.0))
                 # Direction relative
                 if f_addr == acc_low:
                     amount = -amount
 
-                status = "Spam" if cp in spam_list else "A vérifier"
+                # Check spam on raw address
+                cp_raw = resolve_raw_addr(cp)
+                status = "Spam" if cp_raw in spam_list else "A vérifier"
 
                 all_rows.append({
                     "Date": r.get("Date"),
@@ -268,7 +284,9 @@ else:
         spam_list = load_spam_list()
         new_spams = edited_df[edited_df["Status"] == "Spam"]["Counterparty"].dropna().unique()
         for s in new_spams:
-            if str(s).startswith("0x"): spam_list.add(str(s).lower())
+            raw_s = resolve_raw_addr(s)
+            if str(raw_s).startswith("0x"):
+                spam_list.add(str(raw_s).lower())
         save_spam_list(spam_list)
 
         # Sauvegarde Journal

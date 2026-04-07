@@ -131,6 +131,15 @@ def extract_value(v):
         return v.get("total") or v.get("value") or "0"
     return str(v or "0")
 
+def format_addr(addr_obj):
+    if not isinstance(addr_obj, dict):
+        return str(addr_obj or "").lower()
+    h = str(addr_obj.get("hash", "")).lower()
+    name = addr_obj.get("name")
+    if name:
+        return f"{name} ({h})"
+    return h
+
 def fetch_portfolio_v2(api_v2, addr):
     url = f"{api_v2}/addresses/{addr}/token-balances"
     data = call_api(url)
@@ -203,8 +212,10 @@ if harvest_btn:
                     val = float(t.get("value", 0)) / 1e18
                     gas_used = int(t.get("gas_used", 0))
                     gas_price = int(t.get("gas_price", 0))
-                    f_addr = t.get("from", {}).get("hash", "").lower()
-                    t_addr = t.get("to", {}).get("hash", "").lower()
+                    f_raw = t.get("from", {}).get("hash", "").lower()
+                    t_raw = t.get("to", {}).get("hash", "").lower()
+                    f_addr = format_addr(t.get("from"))
+                    t_addr = format_addr(t.get("to"))
                     method = t.get("method", "")
                     block = t.get("block", "")
                     tx_hash = t.get("hash")
@@ -215,6 +226,7 @@ if harvest_btn:
                     gas_price = int(t.get("gasPrice", 0))
                     f_addr = t.get("from", "").lower()
                     t_addr = t.get("to", "").lower()
+                    f_raw, t_raw = f_addr, t_addr
                     method = "" # V1 API basique n'a pas method facilement
                     block = t.get("blockNumber", "")
                     tx_hash = t.get("hash")
@@ -263,8 +275,10 @@ if harvest_btn:
                     dec = int(tok.get("decimals") or 18)
                     raw_val = extract_value(t.get("total") or t.get("value", "0"))
                     val = float(raw_val) / (10**dec)
-                    f_addr = t.get("from", {}).get("hash", "").lower()
-                    t_addr = t.get("to", {}).get("hash", "").lower()
+                    f_raw = t.get("from", {}).get("hash", "").lower()
+                    t_raw = t.get("to", {}).get("hash", "").lower()
+                    f_addr = format_addr(t.get("from"))
+                    t_addr = format_addr(t.get("to"))
                     tx_hash = t.get("tx_hash") or t.get("hash") or t.get("transaction_hash")
                 else: # V1
                     dt = datetime.fromtimestamp(int(t.get("timeStamp", 0)), tz=tz.tzutc())
@@ -274,19 +288,21 @@ if harvest_btn:
                     val = float(t.get("value", 0)) / (10**dec)
                     f_addr = t.get("from", "").lower()
                     t_addr = t.get("to", "").lower()
+                    f_raw, t_raw = f_addr, t_addr
                     tx_hash = t.get("hash")
 
-                # Extraction USD tokens V2
+                # Extraction USD tokens V2 (Step 2: improved rate calculation)
                 val_usd = float(t.get("value_in_usd") or 0.0)
-                # Parfois Blockscout V2 met le cours dans le token
                 rate_usd = float(t.get("token", {}).get("exchange_rate") or 0.0)
+                if rate_usd == 0 and val_usd > 0 and val > 0:
+                    rate_usd = val_usd / val
 
                 tok_all.append({
                     "Date": dt, "Chain": chain, "Token": asset, "Token ID": tok_id,
                     "Tx Hash": tx_hash, "From": f_addr, "To": t_addr, "Value": float(val),
                     "Value ($)": val_usd, "Rate ($)": rate_usd,
                     "Account": addr_c.lower(),
-                    "Counterparty": t_addr if f_addr == addr_c.lower() else f_addr
+                    "Counterparty": t_addr if f_raw == addr_c.lower() else f_addr
                 })
             progress_tok.progress((idx + 1) / len(chains))
 

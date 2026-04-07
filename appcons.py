@@ -52,11 +52,17 @@ with st.sidebar:
         # 2. Counterparty
         if "Counterparty" not in df.columns:
             if "From" in df.columns and "To" in df.columns:
+                def resolve_raw_addr(addr_str):
+                    if "(" in str(addr_str) and ")" in str(addr_str):
+                        return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
+                    return str(addr_str).strip().lower()
+
                 def get_cp(r):
                     acc = str(r.get("Account", "")).lower()
-                    f_addr = str(r.get("From", "")).lower()
-                    t_addr = str(r.get("To", "")).lower()
-                    return t_addr if f_addr == acc else f_addr
+                    f_full = str(r.get("From", ""))
+                    t_full = str(r.get("To", ""))
+                    f_addr = resolve_raw_addr(f_full)
+                    return t_full if f_addr == acc else f_full
                 df["Counterparty"] = df.apply(get_cp, axis=1)
             else:
                 df["Counterparty"] = "n/a"
