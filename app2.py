@@ -70,6 +70,16 @@ def merge_raw_data(year):
     files = os.listdir(year_dir)
     for f in files:
         f_path = os.path.join(year_dir, f)
+
+        # Extraction de l'adresse du propriétaire depuis le nom du fichier si possible
+        # Format attendu : raw_transactions_0xAddress_Timestamp.csv
+        file_addr = ""
+        parts = f.split("_")
+        for p in parts:
+            if p.startswith("0x") and len(p) >= 40:
+                file_addr = p.lower()
+                break
+
         if f.startswith("raw_transactions_") and os.path.getsize(f_path) > 0:
             try:
                 df = pd.read_csv(f_path)
@@ -78,7 +88,11 @@ def merge_raw_data(year):
             for _, r in df.iterrows():
                 f_addr = str(r.get("From", "")).lower()
                 t_addr = str(r.get("To", "")).lower()
-                acc_low = str(r.get("Account", "0x...")).lower()
+
+                # Priorité : Colonne Account > Adresse du fichier > Placeholder
+                acc_low = str(r.get("Account", "")).lower()
+                if not acc_low or acc_low == "nan" or acc_low == "0x...":
+                    acc_low = file_addr if file_addr else "unknown_account"
 
                 amount = float(r.get("Value ETH", 0.0))
                 # Direction relative
@@ -95,7 +109,7 @@ def merge_raw_data(year):
                     "Counterparty": cp,
                     "Asset": r.get("Chain", "ETH"), # Simplified native asset detection
                     "Amount": amount,
-                    "Value ($)": r.get("Value ($)", 0.0),
+                    "Value ($)": float(r.get("Value ($)") or 0.0),
                     "Network": r.get("Chain"),
                     "Tx Hash": r.get("Txn hash"),
                     "Source Type": "Native",
@@ -112,23 +126,29 @@ def merge_raw_data(year):
             for _, r in df.iterrows():
                 f_addr = str(r.get("From", "")).lower()
                 t_addr = str(r.get("To", "")).lower()
-                # Detection Direction Relative
-                acc_low = str(r.get("Account", "0x...")).lower()
+
+                # Résolution Account
+                acc_low = str(r.get("Account", "")).lower()
+                if not acc_low or acc_low == "nan" or acc_low == "0x...":
+                    acc_low = file_addr if file_addr else "unknown_account"
+
                 amount = float(r.get("Value", 0.0))
+                # Direction relative
                 if f_addr == acc_low:
                     amount = -amount
                     cp = t_addr
                 else:
                     cp = f_addr
+
                 status = "Spam" if cp in spam_list else "A vérifier"
 
                 all_rows.append({
                     "Date": r.get("Date"),
-                    "Account": r.get("Account"),
+                    "Account": acc_low,
                     "Counterparty": cp,
                     "Asset": r.get("Token"),
                     "Amount": amount,
-                    "Value ($)": r.get("Value ($)", 0.0),
+                    "Value ($)": float(r.get("Value ($)") or 0.0),
                     "Network": r.get("Chain"),
                     "Tx Hash": r.get("Txn hash"),
                     "Source Type": "Token",

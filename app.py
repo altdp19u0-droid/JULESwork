@@ -307,7 +307,7 @@ if has_data:
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        prefix = f"{addr_short}_{ts}"
+        prefix = f"{address}_{ts}"
 
         st.session_state.portfolio.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False)
         st.session_state.transactions.to_csv(os.path.join(year_dir, f"raw_transactions_{prefix}.csv"), index=False)
