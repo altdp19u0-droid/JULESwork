@@ -96,6 +96,11 @@ if not df.empty:
         st.caption(f"Résultats filtrés : {len(df_display)} lignes.")
 
     # Affichage avec Data Editor (qui permet le copier-coller natif)
+    # Type safety: force string for all non-numeric columns to avoid Streamlit FLOAT mismatch
+    for col in df_display.columns:
+        if df_display[col].dtype == object:
+            df_display[col] = df_display[col].fillna("").astype(str)
+
     st.data_editor(
         df_display,
         use_container_width=True,

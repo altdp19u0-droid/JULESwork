@@ -21,29 +21,48 @@ def load_manual_data(year):
     if os.path.exists(fiat_path):
         df = pd.read_csv(fiat_path)
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
-        # migration schema: ajout Txn Hash et Adresse/Compte si manquants
-        if "Txn Hash" not in df.columns:
-            df["Txn Hash"] = ""
-        if "Account" not in df.columns:
-            df["Account"] = df["Compte/Label"] if "Compte/Label" in df.columns else ""
-        if "Counterparty" not in df.columns:
-            df["Counterparty"] = df["Plateforme"] if "Plateforme" in df.columns else ""
+
+        # migration schema & type safety
+        text_cols = ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Txn Hash"]
+        for col in text_cols:
+            if col not in df.columns:
+                df[col] = ""
+            df[col] = df[col].fillna("").astype(str)
+
+        # Legacy resolution for Account/Counterparty if they were missing but others existed
+        if df["Account"].replace("", pd.NA).isnull().all() and "Compte/Label" in df.columns:
+             df["Account"] = df["Compte/Label"].fillna("").astype(str)
+        if df["Counterparty"].replace("", pd.NA).isnull().all() and "Plateforme" in df.columns:
+             df["Counterparty"] = df["Plateforme"].fillna("").astype(str)
+
         st.session_state.fiat_journal = df
     else:
         st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash"])
+        for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Txn Hash"]:
+            st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
 
     if os.path.exists(pos_path):
         df = pd.read_csv(pos_path)
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
-        if "Txn Hash" not in df.columns:
-            df["Txn Hash"] = ""
-        if "Account" not in df.columns:
-            df["Account"] = df["Adresse/Contrat"] if "Adresse/Contrat" in df.columns else ""
-        if "Counterparty" not in df.columns:
-            df["Counterparty"] = df["Protocole/Plateforme"] if "Protocole/Plateforme" in df.columns else ""
+
+        # migration schema & type safety
+        text_cols = ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Txn Hash"]
+        for col in text_cols:
+            if col not in df.columns:
+                df[col] = ""
+            df[col] = df[col].fillna("").astype(str)
+
+        # Legacy resolution
+        if df["Account"].replace("", pd.NA).isnull().all() and "Adresse/Contrat" in df.columns:
+            df["Account"] = df["Adresse/Contrat"].fillna("").astype(str)
+        if df["Counterparty"].replace("", pd.NA).isnull().all() and "Protocole/Plateforme" in df.columns:
+            df["Counterparty"] = df["Protocole/Plateforme"].fillna("").astype(str)
+
         st.session_state.positions_journal = df
     else:
         st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Txn Hash"])
+        for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Txn Hash"]:
+            st.session_state.positions_journal[col] = st.session_state.positions_journal[col].astype(str)
 
 if "fiat_journal" not in st.session_state:
     load_manual_data(st.session_state.current_year)
@@ -60,8 +79,15 @@ with st.sidebar:
 
     st.divider()
     if st.button("🗑️ Vider la saisie en cours"):
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash", "Adresse/Compte"])
-        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Adresse/Contrat", "Txn Hash"])
+        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash"])
+        # Ensure correct types even when empty for the editor
+        for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Txn Hash"]:
+            st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
+
+        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Txn Hash"])
+        for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Txn Hash"]:
+            st.session_state.positions_journal[col] = st.session_state.positions_journal[col].astype(str)
+
         st.toast("Saisie vidée (en session uniquement).")
         st.rerun()
 
@@ -111,11 +137,20 @@ with t1:
                     "Quantité": f_qty, "Txn Hash": f_hash
                 }
                 st.session_state.fiat_journal = pd.concat([st.session_state.fiat_journal, pd.DataFrame([new_row])], ignore_index=True)
+                # Ensure types are maintained
+                for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Txn Hash"]:
+                    st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].fillna("").astype(str)
                 st.success("Mouvement ajouté.")
 
     st.divider()
     st.subheader("📊 Contrôle & Observation (Journal en cours)")
     st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
+
+    # Type safety: force string type for text columns to avoid Streamlit FLOAT mismatch crash
+    for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Txn Hash"]:
+        if col in st.session_state.fiat_journal.columns:
+            st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].fillna("").astype(str)
+
     st.session_state.fiat_journal = st.data_editor(
         st.session_state.fiat_journal,
         column_config={
@@ -165,11 +200,20 @@ with t2:
                     "Txn Hash": p_hash
                 }
                 st.session_state.positions_journal = pd.concat([st.session_state.positions_journal, pd.DataFrame([new_row])], ignore_index=True)
+                # Ensure types are maintained
+                for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Txn Hash"]:
+                    st.session_state.positions_journal[col] = st.session_state.positions_journal[col].fillna("").astype(str)
                 st.success("Position enregistrée.")
 
     st.divider()
     st.subheader("📊 Contrôle & Observation (Positions en cours)")
     st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
+
+    # Type safety
+    for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Txn Hash"]:
+        if col in st.session_state.positions_journal.columns:
+            st.session_state.positions_journal[col] = st.session_state.positions_journal[col].fillna("").astype(str)
+
     st.session_state.positions_journal = st.data_editor(
         st.session_state.positions_journal,
         column_config={
