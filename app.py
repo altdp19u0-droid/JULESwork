@@ -226,7 +226,7 @@ if harvest_btn:
                 fee_usd = fee * rate_usd if rate_usd > 0 else 0.0
 
                 tx_all.append({
-                    "Date": dt, "Chain": chain, "Txn hash": tx_hash, "Type": "Native/Internal",
+                    "Date": dt, "Chain": chain, "Tx Hash": tx_hash, "Type": "Native/Internal",
                     "Method": method, "Block": block, "From": f_addr, "To": t_addr,
                     "Value ETH": val, "Value ($)": val_usd, "Rate ($)": rate_usd,
                     "Fee ETH": fee if f_addr == addr_c.lower() else 0.0,
@@ -265,7 +265,7 @@ if harvest_btn:
                     val = float(raw_val) / (10**dec)
                     f_addr = t.get("from", {}).get("hash", "").lower()
                     t_addr = t.get("to", {}).get("hash", "").lower()
-                    tx_hash = t.get("tx_hash")
+                    tx_hash = t.get("tx_hash") or t.get("hash") or t.get("transaction_hash")
                 else: # V1
                     dt = datetime.fromtimestamp(int(t.get("timeStamp", 0)), tz=tz.tzutc())
                     asset = t.get("tokenSymbol", "TOKEN")
@@ -283,7 +283,7 @@ if harvest_btn:
 
                 tok_all.append({
                     "Date": dt, "Chain": chain, "Token": asset, "Token ID": tok_id,
-                    "Txn hash": tx_hash, "From": f_addr, "To": t_addr, "Value": float(val),
+                    "Tx Hash": tx_hash, "From": f_addr, "To": t_addr, "Value": float(val),
                     "Value ($)": val_usd, "Rate ($)": rate_usd,
                     "Account": addr_c.lower(),
                     "Counterparty": t_addr if f_addr == addr_c.lower() else f_addr

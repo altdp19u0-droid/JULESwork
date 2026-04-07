@@ -23,7 +23,7 @@ def load_manual_data(year):
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
 
         # migration schema & type safety
-        text_cols = ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Txn Hash"]
+        text_cols = ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]
         for col in text_cols:
             if col not in df.columns:
                 df[col] = ""
@@ -37,8 +37,8 @@ def load_manual_data(year):
 
         st.session_state.fiat_journal = df
     else:
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash"])
-        for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Txn Hash"]:
+        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash"])
+        for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
             st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
 
     if os.path.exists(pos_path):
@@ -46,7 +46,7 @@ def load_manual_data(year):
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
 
         # migration schema & type safety
-        text_cols = ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Txn Hash"]
+        text_cols = ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]
         for col in text_cols:
             if col not in df.columns:
                 df[col] = ""
@@ -60,8 +60,8 @@ def load_manual_data(year):
 
         st.session_state.positions_journal = df
     else:
-        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Txn Hash"])
-        for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Txn Hash"]:
+        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Tx Hash"])
+        for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
             st.session_state.positions_journal[col] = st.session_state.positions_journal[col].astype(str)
 
 if "fiat_journal" not in st.session_state:
@@ -79,13 +79,13 @@ with st.sidebar:
 
     st.divider()
     if st.button("🗑️ Vider la saisie en cours"):
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash"])
+        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash"])
         # Ensure correct types even when empty for the editor
-        for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Txn Hash"]:
+        for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
             st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
 
-        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Txn Hash"])
-        for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Txn Hash"]:
+        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Tx Hash"])
+        for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
             st.session_state.positions_journal[col] = st.session_state.positions_journal[col].astype(str)
 
         st.toast("Saisie vidée (en session uniquement).")
@@ -120,7 +120,7 @@ with t1:
         f_asset = c6.text_input("Asset concerné (Optionnel)", placeholder="ex: EUR, USDT, BTC")
 
         c_hash, c_addr_f, c_qty_f = st.columns([1.5, 1.5, 1])
-        f_hash = c_hash.text_input("Txn Hash (Blockchain)", placeholder="0x...")
+        f_hash = c_hash.text_input("Tx Hash (Blockchain)", placeholder="0x...")
         f_addr = c_addr_f.text_input("Adresse/Compte Blockchain", placeholder="0x...")
         f_qty = c_qty_f.number_input("Quantité Asset", min_value=0.0, format="%.8f")
 
@@ -134,11 +134,11 @@ with t1:
                     "Date": f_date, "Account": f_addr if f_addr else f_label, "Counterparty": f_plat,
                     "Compte/Label": f_label, "Plateforme": f_plat,
                     "Montant EUR": f_amount, "Type": f_type, "Asset": f_asset.upper(),
-                    "Quantité": f_qty, "Txn Hash": f_hash
+                    "Quantité": f_qty, "Tx Hash": f_hash
                 }
                 st.session_state.fiat_journal = pd.concat([st.session_state.fiat_journal, pd.DataFrame([new_row])], ignore_index=True)
                 # Ensure types are maintained
-                for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Txn Hash"]:
+                for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
                     st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].fillna("").astype(str)
                 st.success("Mouvement ajouté.")
 
@@ -147,7 +147,7 @@ with t1:
     st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
 
     # Type safety: force string type for text columns to avoid Streamlit FLOAT mismatch crash
-    for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Txn Hash"]:
+    for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
         if col in st.session_state.fiat_journal.columns:
             st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].fillna("").astype(str)
 
@@ -163,7 +163,7 @@ with t1:
             "Type": st.column_config.TextColumn("Type"),
             "Montant EUR": st.column_config.NumberColumn("Montant EUR", format="%.2f"),
             "Quantité": st.column_config.NumberColumn("Quantité", format="%.8f"),
-            "Txn Hash": st.column_config.TextColumn("Txn Hash"),
+            "Tx Hash": st.column_config.TextColumn("Tx Hash"),
         },
         use_container_width=True,
         num_rows="dynamic",
@@ -185,7 +185,7 @@ with t2:
 
         c_addr, c_hash_p = st.columns(2)
         p_addr = c_addr.text_input("Adresse Contrat / Memo", placeholder="0x... ou commentaire")
-        p_hash = c_hash_p.text_input("Txn Hash (Blockchain)", placeholder="0x...")
+        p_hash = c_hash_p.text_input("Tx Hash (Blockchain)", placeholder="0x...")
 
         submit_pos = st.form_submit_button("➕ Ajouter à la liste")
 
@@ -197,11 +197,11 @@ with t2:
                     "Date": p_date, "Account": p_addr, "Counterparty": p_plat,
                     "Type Position": p_type, "Protocole/Plateforme": p_plat,
                     "Asset": p_asset.upper(), "Quantité": p_qty,
-                    "Txn Hash": p_hash
+                    "Tx Hash": p_hash
                 }
                 st.session_state.positions_journal = pd.concat([st.session_state.positions_journal, pd.DataFrame([new_row])], ignore_index=True)
                 # Ensure types are maintained
-                for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Txn Hash"]:
+                for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
                     st.session_state.positions_journal[col] = st.session_state.positions_journal[col].fillna("").astype(str)
                 st.success("Position enregistrée.")
 
@@ -210,7 +210,7 @@ with t2:
     st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
 
     # Type safety
-    for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Txn Hash"]:
+    for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
         if col in st.session_state.positions_journal.columns:
             st.session_state.positions_journal[col] = st.session_state.positions_journal[col].fillna("").astype(str)
 
@@ -224,7 +224,7 @@ with t2:
             "Protocole/Plateforme": st.column_config.TextColumn("Protocole/Plateforme"),
             "Asset": st.column_config.TextColumn("Asset"), # Force Text for symbols like stETH
             "Quantité": st.column_config.NumberColumn("Quantité", format="%.8f"),
-            "Txn Hash": st.column_config.TextColumn("Txn Hash"),
+            "Tx Hash": st.column_config.TextColumn("Tx Hash"),
         },
         use_container_width=True,
         num_rows="dynamic",
