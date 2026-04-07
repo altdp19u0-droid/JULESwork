@@ -118,6 +118,18 @@ with t1:
     st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
     st.session_state.fiat_journal = st.data_editor(
         st.session_state.fiat_journal,
+        column_config={
+            "Date": st.column_config.DateColumn("Date", required=True),
+            "Account": st.column_config.TextColumn("Account"),
+            "Counterparty": st.column_config.TextColumn("Counterparty"),
+            "Compte/Label": st.column_config.TextColumn("Compte/Label"),
+            "Plateforme": st.column_config.TextColumn("Plateforme"),
+            "Asset": st.column_config.TextColumn("Asset"), # Force Text for symbols like BTC, ETH
+            "Type": st.column_config.TextColumn("Type"),
+            "Montant EUR": st.column_config.NumberColumn("Montant EUR", format="%.2f"),
+            "Quantité": st.column_config.NumberColumn("Quantité", format="%.8f"),
+            "Txn Hash": st.column_config.TextColumn("Txn Hash"),
+        },
         use_container_width=True,
         num_rows="dynamic",
         key="fiat_editor"
@@ -160,6 +172,16 @@ with t2:
     st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
     st.session_state.positions_journal = st.data_editor(
         st.session_state.positions_journal,
+        column_config={
+            "Date": st.column_config.DateColumn("Date", required=True),
+            "Account": st.column_config.TextColumn("Account"),
+            "Counterparty": st.column_config.TextColumn("Counterparty"),
+            "Type Position": st.column_config.TextColumn("Type Position"),
+            "Protocole/Plateforme": st.column_config.TextColumn("Protocole/Plateforme"),
+            "Asset": st.column_config.TextColumn("Asset"), # Force Text for symbols like stETH
+            "Quantité": st.column_config.NumberColumn("Quantité", format="%.8f"),
+            "Txn Hash": st.column_config.TextColumn("Txn Hash"),
+        },
         use_container_width=True,
         num_rows="dynamic",
         key="pos_editor"
