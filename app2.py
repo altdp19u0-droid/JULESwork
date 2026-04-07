@@ -139,7 +139,7 @@ def merge_raw_data(year):
 
     df_final = pd.DataFrame(all_rows)
     if not df_final.empty:
-        df_final["Date"] = pd.to_datetime(df_final["Date"], utc=True)
+        df_final["Date"] = pd.to_datetime(df_final["Date"], utc=True, errors="coerce", format="ISO8601")
         # Deduplication massive sur Hash + Asset + Amount (pour éviter doublons IN/OUT d'un même scan)
         df_final = df_final.drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account"], keep="first")
 
@@ -153,7 +153,7 @@ def sync_data(year):
     if os.path.exists(qual_path) and os.path.getsize(qual_path) > 0:
         try:
             old_df = pd.read_csv(qual_path)
-            old_df["Date"] = pd.to_datetime(old_df["Date"], utc=True)
+            old_df["Date"] = pd.to_datetime(old_df["Date"], utc=True, errors="coerce", format="ISO8601")
         except Exception:
             old_df = pd.DataFrame(columns=COLUMNS)
         # On fusionne en gardant les modifs manuelles de l'existant

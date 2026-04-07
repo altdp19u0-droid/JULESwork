@@ -20,7 +20,7 @@ def load_manual_data(year):
 
     if os.path.exists(fiat_path):
         df = pd.read_csv(fiat_path)
-        df['Date'] = pd.to_datetime(df['Date']).dt.date
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
         # migration schema: ajout Txn Hash et Adresse/Compte si manquants
         if "Txn Hash" not in df.columns:
             df["Txn Hash"] = ""
@@ -32,7 +32,7 @@ def load_manual_data(year):
 
     if os.path.exists(pos_path):
         df = pd.read_csv(pos_path)
-        df['Date'] = pd.to_datetime(df['Date']).dt.date
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
         if "Txn Hash" not in df.columns:
             df["Txn Hash"] = ""
         st.session_state.positions_journal = df
