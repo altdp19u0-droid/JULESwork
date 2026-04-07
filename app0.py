@@ -24,20 +24,26 @@ def load_manual_data(year):
         # migration schema: ajout Txn Hash et Adresse/Compte si manquants
         if "Txn Hash" not in df.columns:
             df["Txn Hash"] = ""
-        if "Adresse/Compte" not in df.columns:
-            df["Adresse/Compte"] = ""
+        if "Account" not in df.columns:
+            df["Account"] = df["Compte/Label"] if "Compte/Label" in df.columns else ""
+        if "Counterparty" not in df.columns:
+            df["Counterparty"] = df["Plateforme"] if "Plateforme" in df.columns else ""
         st.session_state.fiat_journal = df
     else:
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash", "Adresse/Compte"])
+        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash"])
 
     if os.path.exists(pos_path):
         df = pd.read_csv(pos_path)
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
         if "Txn Hash" not in df.columns:
             df["Txn Hash"] = ""
+        if "Account" not in df.columns:
+            df["Account"] = df["Adresse/Contrat"] if "Adresse/Contrat" in df.columns else ""
+        if "Counterparty" not in df.columns:
+            df["Counterparty"] = df["Protocole/Plateforme"] if "Protocole/Plateforme" in df.columns else ""
         st.session_state.positions_journal = df
     else:
-        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Adresse/Contrat", "Txn Hash"])
+        st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Txn Hash"])
 
 if "fiat_journal" not in st.session_state:
     load_manual_data(st.session_state.current_year)
@@ -99,9 +105,10 @@ with t1:
                 st.error(f"❌ La date doit impérativement être en {target_year}.")
             else:
                 new_row = {
-                    "Date": f_date, "Compte/Label": f_label, "Plateforme": f_plat,
+                    "Date": f_date, "Account": f_addr if f_addr else f_label, "Counterparty": f_plat,
+                    "Compte/Label": f_label, "Plateforme": f_plat,
                     "Montant EUR": f_amount, "Type": f_type, "Asset": f_asset.upper(),
-                    "Quantité": f_qty, "Txn Hash": f_hash, "Adresse/Compte": f_addr
+                    "Quantité": f_qty, "Txn Hash": f_hash
                 }
                 st.session_state.fiat_journal = pd.concat([st.session_state.fiat_journal, pd.DataFrame([new_row])], ignore_index=True)
                 st.success("Mouvement ajouté.")
@@ -140,8 +147,9 @@ with t2:
                 st.error(f"❌ La date doit impérativement être en {target_year}.")
             else:
                 new_row = {
-                    "Date": p_date, "Type Position": p_type, "Protocole/Plateforme": p_plat,
-                    "Asset": p_asset.upper(), "Quantité": p_qty, "Adresse/Contrat": p_addr,
+                    "Date": p_date, "Account": p_addr, "Counterparty": p_plat,
+                    "Type Position": p_type, "Protocole/Plateforme": p_plat,
+                    "Asset": p_asset.upper(), "Quantité": p_qty,
                     "Txn Hash": p_hash
                 }
                 st.session_state.positions_journal = pd.concat([st.session_state.positions_journal, pd.DataFrame([new_row])], ignore_index=True)

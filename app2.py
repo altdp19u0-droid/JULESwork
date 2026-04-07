@@ -53,10 +53,10 @@ def merge_raw_data(year):
         for _, r in df_fiat.iterrows():
             all_rows.append({
                 "Date": r.get("Date"),
-                "Account": r.get("Compte/Label", "Manual"),
-                "Counterparty": r.get("Plateforme", "Bank"),
+                "Account": r.get("Account", r.get("Compte/Label", "Manual")),
+                "Counterparty": r.get("Counterparty", r.get("Plateforme", "Bank")),
                 "Asset": r.get("Asset", "EUR"),
-                "Amount": r.get("Montant EUR", 0.0) if "Vente" in str(r.get("Type")) else -r.get("Montant EUR", 0.0),
+                "Amount": float(r.get("Montant EUR", 0.0)) if "Vente" in str(r.get("Type")) else -float(r.get("Montant EUR", 0.0)),
                 "Value ($)": 0.0, # Will be handled by app3 or based on EUR rate
                 "Network": "Fiat",
                 "Tx Hash": r.get("Txn Hash", ""),
@@ -94,13 +94,15 @@ def merge_raw_data(year):
                 if not acc_low or acc_low == "nan" or acc_low == "0x...":
                     acc_low = file_addr if file_addr else "unknown_account"
 
+                # Priorité : Colonne Counterparty > Calcul
+                cp = str(r.get("Counterparty", "")).lower()
+                if not cp or cp == "nan":
+                    cp = t_addr if f_addr == acc_low else f_addr
+
                 amount = float(r.get("Value ETH", 0.0))
                 # Direction relative
                 if f_addr == acc_low:
                     amount = -amount
-                    cp = t_addr
-                else:
-                    cp = f_addr
 
                 status = "Spam" if cp in spam_list else "A vérifier"
                 all_rows.append({
@@ -132,13 +134,15 @@ def merge_raw_data(year):
                 if not acc_low or acc_low == "nan" or acc_low == "0x...":
                     acc_low = file_addr if file_addr else "unknown_account"
 
+                # Priorité : Colonne Counterparty > Calcul
+                cp = str(r.get("Counterparty", "")).lower()
+                if not cp or cp == "nan":
+                    cp = t_addr if f_addr == acc_low else f_addr
+
                 amount = float(r.get("Value", 0.0))
                 # Direction relative
                 if f_addr == acc_low:
                     amount = -amount
-                    cp = t_addr
-                else:
-                    cp = f_addr
 
                 status = "Spam" if cp in spam_list else "A vérifier"
 
