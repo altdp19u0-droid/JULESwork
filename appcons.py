@@ -37,6 +37,30 @@ with st.sidebar:
     # Load data for column selection
     try:
         df = pd.read_csv(f_path)
+
+        # Résolution Account & Counterparty si manquantes (sans modifier le fichier source)
+        # 1. Account
+        if "Account" not in df.columns:
+            file_addr = ""
+            parts = target_file.split("_")
+            for p in parts:
+                if p.startswith("0x") and len(p) >= 40:
+                    file_addr = p.lower()
+                    break
+            df["Account"] = file_addr if file_addr else "unknown"
+
+        # 2. Counterparty
+        if "Counterparty" not in df.columns:
+            if "From" in df.columns and "To" in df.columns:
+                def get_cp(r):
+                    acc = str(r.get("Account", "")).lower()
+                    f_addr = str(r.get("From", "")).lower()
+                    t_addr = str(r.get("To", "")).lower()
+                    return t_addr if f_addr == acc else f_addr
+                df["Counterparty"] = df.apply(get_cp, axis=1)
+            else:
+                df["Counterparty"] = "n/a"
+
         cols = list(df.columns)
 
         sort_col = st.selectbox("Trier par", cols, index=0 if "Date" not in cols else cols.index("Date"))
@@ -56,6 +80,13 @@ st.subheader(f"📄 Contenu : {target_file}")
 if not df.empty:
     ascending = (sort_order == "Croissant (Asc)")
     df_display = df.sort_values(by=sort_col, ascending=ascending)
+
+    # Reorder columns for better visibility (Date, Account, Counterparty first)
+    cols = list(df_display.columns)
+    pref = ["Date", "Account", "Counterparty"]
+    existing_pref = [c for c in pref if c in cols]
+    others = [c for c in cols if c not in existing_pref]
+    df_display = df_display[existing_pref + others]
 
     # UI pour filtrage rapide (Optionnel mais utile)
     search = st.text_input("🔍 Recherche rapide dans tout le tableau", "")
