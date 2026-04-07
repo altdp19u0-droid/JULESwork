@@ -20,6 +20,12 @@ COLUMNS = [
 ]
 
 # --- Helpers ---
+def resolve_raw_addr(addr_str):
+    if "(" in str(addr_str) and ")" in str(addr_str):
+        # Extract content between parentheses
+        return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
+    return str(addr_str).strip().lower()
+
 def load_spam_list():
     if os.path.exists(SPAM_FILE):
         with open(SPAM_FILE, "r") as f:
@@ -68,12 +74,6 @@ def merge_raw_data(year):
 
     # 2. Load Blockchain Txs (app.py)
     files = os.listdir(year_dir)
-
-    def resolve_raw_addr(addr_str):
-        if "(" in str(addr_str) and ")" in str(addr_str):
-            # Extract content between parentheses
-            return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
-        return str(addr_str).strip().lower()
 
     for f in files:
         f_path = os.path.join(year_dir, f)

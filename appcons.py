@@ -9,6 +9,11 @@ st.title("🔍 Explorateur de Données Sanctuarisées")
 
 EXPORT_BASE_DIR = "sanctuarisation"
 
+def resolve_raw_addr(addr_str):
+    if "(" in str(addr_str) and ")" in str(addr_str):
+        return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
+    return str(addr_str).strip().lower()
+
 # --- Sidebar ---
 with st.sidebar:
     st.header("📂 Sélection du Fichier")
@@ -52,11 +57,6 @@ with st.sidebar:
         # 2. Counterparty
         if "Counterparty" not in df.columns:
             if "From" in df.columns and "To" in df.columns:
-                def resolve_raw_addr(addr_str):
-                    if "(" in str(addr_str) and ")" in str(addr_str):
-                        return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
-                    return str(addr_str).strip().lower()
-
                 def get_cp(r):
                     acc = str(r.get("Account", "")).lower()
                     f_full = str(r.get("From", ""))
