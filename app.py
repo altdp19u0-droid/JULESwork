@@ -137,7 +137,6 @@ def fetch_portfolio_v2(api_v2, addr):
     return data if data else []
 
 # --- Main App Logic ---
-w3 = Web3()
 harvest_btn = st.button("🚀 Lancer la Récolte Totale (Step 1 : Brutes)", use_container_width=True)
 
 # Détection de présence de données pour l'affichage permanent
@@ -155,10 +154,10 @@ if has_data:
     st.dataframe(st.session_state.tokens, use_container_width=True)
 
 if harvest_btn:
-    if not address or not w3.is_address(address):
+    if not address or not Web3.is_address(address):
         st.error("❌ Adresse invalide.")
     else:
-        addr_c = w3.to_checksum_address(address)
+        addr_c = Web3.to_checksum_address(address)
         st.info(f"🔍 Analyse de l'adresse : {addr_c}")
 
         # 1. Harvest Portfolio (Balances Actuelles)
@@ -176,8 +175,8 @@ if harvest_btn:
                     "Chain": chain,
                     "Asset": token.get("symbol", "NATIVE" if not token else "TOKEN"),
                     "Quantity": float(b.get("value", 0)) / (10**int(token.get("decimals", 18) or 18)),
-                    "Price ($)": b.get("token_price"),
-                    "Value ($)": b.get("value_in_usd"), # Blockscout donne souvent USD
+                    "Price ($)": float(b.get("token_price") or 0.0),
+                    "Value ($)": float(b.get("value_in_usd") or 0.0), # Blockscout donne souvent USD
                     "Contract": token.get("address")
                 })
         df_portfolio = pd.DataFrame(portfolio_all)
@@ -223,7 +222,7 @@ if harvest_btn:
                 fee = (gas_used * gas_price) / 1e18
                 # Extraction USD native V2 via historic_exchange_rate
                 rate_usd = float(t.get("historic_exchange_rate") or 0.0)
-                val_usd = val * rate_usd if rate_usd > 0 else (t.get("value_in_usd") or 0.0)
+                val_usd = val * rate_usd if rate_usd > 0 else float(t.get("value_in_usd") or 0.0)
                 fee_usd = fee * rate_usd if rate_usd > 0 else 0.0
 
                 tx_all.append({
@@ -276,13 +275,13 @@ if harvest_btn:
                     tx_hash = t.get("hash")
 
                 # Extraction USD tokens V2
-                val_usd = t.get("value_in_usd") or 0.0
+                val_usd = float(t.get("value_in_usd") or 0.0)
                 # Parfois Blockscout V2 met le cours dans le token
                 rate_usd = float(t.get("token", {}).get("exchange_rate") or 0.0)
 
                 tok_all.append({
                     "Date": dt, "Chain": chain, "Token": asset, "Token ID": tok_id,
-                    "Txn hash": tx_hash, "From": f_addr, "To": t_addr, "Value": val,
+                    "Txn hash": tx_hash, "From": f_addr, "To": t_addr, "Value": float(val),
                     "Value ($)": val_usd, "Rate ($)": rate_usd
                 })
             progress_tok.progress((idx + 1) / len(chains))

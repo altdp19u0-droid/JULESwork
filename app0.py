@@ -21,12 +21,14 @@ def load_manual_data(year):
     if os.path.exists(fiat_path):
         df = pd.read_csv(fiat_path)
         df['Date'] = pd.to_datetime(df['Date']).dt.date
-        # migration schema: ajout Txn Hash si manquant
+        # migration schema: ajout Txn Hash et Adresse/Compte si manquants
         if "Txn Hash" not in df.columns:
             df["Txn Hash"] = ""
+        if "Adresse/Compte" not in df.columns:
+            df["Adresse/Compte"] = ""
         st.session_state.fiat_journal = df
     else:
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash"])
+        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash", "Adresse/Compte"])
 
     if os.path.exists(pos_path):
         df = pd.read_csv(pos_path)
@@ -52,7 +54,7 @@ with st.sidebar:
 
     st.divider()
     if st.button("🗑️ Vider la saisie en cours"):
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash"])
+        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Txn Hash", "Adresse/Compte"])
         st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Adresse/Contrat", "Txn Hash"])
         st.toast("Saisie vidée (en session uniquement).")
         st.rerun()
@@ -85,9 +87,10 @@ with t1:
         ])
         f_asset = c6.text_input("Asset concerné (Optionnel)", placeholder="ex: EUR, USDT, BTC")
 
-        c_hash, c_qty_f = st.columns([2, 1])
+        c_hash, c_addr_f, c_qty_f = st.columns([1.5, 1.5, 1])
         f_hash = c_hash.text_input("Txn Hash (Blockchain)", placeholder="0x...")
-        f_qty = c_qty_f.number_input("Quantité Asset (Optionnel)", min_value=0.0, format="%.8f")
+        f_addr = c_addr_f.text_input("Adresse/Compte Blockchain", placeholder="0x...")
+        f_qty = c_qty_f.number_input("Quantité Asset", min_value=0.0, format="%.8f")
 
         submit_fiat = st.form_submit_button("➕ Ajouter au journal")
 
@@ -98,7 +101,7 @@ with t1:
                 new_row = {
                     "Date": f_date, "Compte/Label": f_label, "Plateforme": f_plat,
                     "Montant EUR": f_amount, "Type": f_type, "Asset": f_asset.upper(),
-                    "Quantité": f_qty, "Txn Hash": f_hash
+                    "Quantité": f_qty, "Txn Hash": f_hash, "Adresse/Compte": f_addr
                 }
                 st.session_state.fiat_journal = pd.concat([st.session_state.fiat_journal, pd.DataFrame([new_row])], ignore_index=True)
                 st.success("Mouvement ajouté.")
