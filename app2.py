@@ -256,53 +256,63 @@ with st.sidebar:
             # Les filtres seront appliqués à l'affichage (voir Main App)
             st.rerun()
 
-    with st.expander("🛡️ Gestion de la Blacklist"):
+    with st.expander("🛡️ Anti-Spam & Actions de Masse"):
         spam_list = load_spam_list()
-        st.write(f"Total : **{len(spam_list)}** éléments bannis.")
+        st.write(f"Total Blacklist : **{len(spam_list)}**")
 
-        # 1. Ajout
+        if "journal_qualifie" in st.session_state and not st.session_state.journal_qualifie.empty:
+            df = st.session_state.journal_qualifie
+
+            # --- 1. SELECTION ---
+            st.subheader("📦 Sélection")
+            assets_to_mvt = st.multiselect("Assets concernés", options=sorted([str(x) for x in df["Asset"].dropna().unique()]))
+            cp_to_mvt = st.multiselect("Contreparties (adresses)", options=sorted([str(x) for x in df["Counterparty"].dropna().unique()]))
+
+            # --- 2. ACTION ---
+            st.subheader("⚡ Action")
+            target_status = st.selectbox("Nouveau Statut", ["À vérifier", "Valide", "Spam"])
+
+            if st.button("🚀 Appliquer à la sélection"):
+                if not assets_to_mvt and not cp_to_mvt:
+                    st.warning("Choisissez au moins un asset ou une adresse.")
+                else:
+                    # Préparation des listes
+                    sel_low = [x.lower() for x in (assets_to_mvt + cp_to_mvt)]
+
+                    # Mise à jour de la Blacklist
+                    if target_status == "Spam":
+                        for item in sel_low:
+                            if item: spam_list.add(item)
+                    else:
+                        for item in sel_low:
+                            if item in spam_list: spam_list.remove(item)
+                    save_spam_list(spam_list)
+
+                    # Mise à jour du Journal en mémoire
+                    mask_asset = df["Asset"].fillna("").str.lower().isin(sel_low)
+                    mask_cp = df["Counterparty"].fillna("").str.lower().apply(resolve_raw_addr).isin(sel_low)
+                    df.loc[mask_asset | mask_cp, "Status"] = target_status
+
+                    st.success(f"Action effectuée sur la sélection. Journal et Blacklist mis à jour.")
+                    st.rerun()
+
+        # --- 3. GESTION INDIVIDUELLE ---
         st.divider()
-        new_spam = st.text_input("Bannir une adresse ou un asset", placeholder="ex: ELON, 0x...", key="input_new_spam")
+        st.subheader("🔎 Gestion Blacklist Globale")
+        new_spam = st.text_input("Ajout direct (nom ou 0x...)", placeholder="ex: ELON", key="input_new_spam")
         if st.button("🚫 Bannir définitivement"):
             if new_spam:
                 spam_list.add(new_spam.strip().lower())
                 save_spam_list(spam_list)
-                st.success(f"'{new_spam}' banni.")
-                # Mise à jour immédiate si data chargée
-                if "journal_qualifie" in st.session_state:
-                    df = st.session_state.journal_qualifie
-                    mask_cp = df["Counterparty"].fillna("").str.lower().apply(resolve_raw_addr).isin(spam_list)
-                    mask_asset = df["Asset"].fillna("").str.lower().isin(spam_list)
-                    df.loc[mask_cp | mask_asset, "Status"] = "Spam"
+                st.success(f"'{new_spam}' ajouté.")
                 st.rerun()
 
-        # 2. Consultation et Retrait
         if spam_list:
-            st.divider()
-            st.write("🔎 Consulter / Annuler")
-            to_remove = st.multiselect("Sélectionner pour retirer", options=sorted(list(spam_list)))
-
-            if to_remove:
-                new_status = st.selectbox("Remplacer 'Spam' par", ["À vérifier", "Valide"])
-                if st.button("✅ Retirer et Réinitialiser"):
-                    for item in to_remove:
-                        spam_list.remove(item)
-                    save_spam_list(spam_list)
-
-                    # Mise à jour immédiate du journal chargé
-                    if "journal_qualifie" in st.session_state:
-                        df = st.session_state.journal_qualifie
-                        # On réinitialise les lignes qui matchaient l'élément retiré
-                        # (Si elles étaient marquées Spam)
-                        to_remove_low = [x.lower() for x in to_remove]
-                        mask_match = (
-                            df["Counterparty"].fillna("").str.lower().apply(resolve_raw_addr).isin(to_remove_low) |
-                            df["Asset"].fillna("").str.lower().isin(to_remove_low)
-                        )
-                        df.loc[mask_match & (df["Status"] == "Spam"), "Status"] = new_status
-
-                    st.success(f"{len(to_remove)} élément(s) retiré(s) et journal mis à jour.")
-                    st.rerun()
+            to_remove = st.multiselect("Retirer manuellement", options=sorted(list(spam_list)))
+            if st.button("✅ Supprimer de la liste noire"):
+                for item in to_remove: spam_list.remove(item)
+                save_spam_list(spam_list)
+                st.rerun()
 
 # --- Main App ---
 st.subheader(f"📋 Journal de Qualification {target_year}")
