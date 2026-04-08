@@ -34,6 +34,11 @@ def load_data(year):
             # Standardisation Date
             if 'Date' in df.columns:
                 df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
+
+            # FILTRAGE ANTI-SPAM GLOBAL (uniquement pour le journal qualifié)
+            if key == 'journal' and 'Status' in df.columns:
+                df = df[df['Status'] != 'Spam']
+
             data[key] = df
         else:
             data[key] = pd.DataFrame()
