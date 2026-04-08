@@ -222,6 +222,19 @@ with st.sidebar:
             st.session_state.journal_qualifie = df
             st.rerun()
 
+    st.divider()
+    st.header("📊 Tri du Journal")
+    if "journal_qualifie" in st.session_state and not st.session_state.journal_qualifie.empty:
+        sort_cols = list(st.session_state.journal_qualifie.columns)
+        default_sort = sort_cols.index("Date") if "Date" in sort_cols else 0
+        sort_by = st.selectbox("Trier par colonne", sort_cols, index=default_sort)
+        sort_order = st.radio("Ordre de tri", ["Décroissant", "Croissant"], index=0)
+        if st.button("🔃 Appliquer le Tri"):
+            df = st.session_state.journal_qualifie
+            df = df.sort_values(by=sort_by, ascending=(sort_order == "Croissant"))
+            st.session_state.journal_qualifie = df
+            st.rerun()
+
     with st.expander("🛡️ Gestion de la Blacklist"):
         st.write("Bannir une adresse ou un nom d'asset (ex: ELON, Visit-X.com)")
         new_spam = st.text_input("Saisir l'élément", key="input_new_spam")
