@@ -253,21 +253,40 @@ with st.sidebar:
             st.rerun()
 
     with st.expander("🛡️ Gestion de la Blacklist"):
-        st.write("Bannir une adresse ou un nom d'asset (ex: ELON, Visit-X.com)")
-        new_spam = st.text_input("Saisir l'élément", key="input_new_spam")
+        spam_list = load_spam_list()
+        st.write(f"Total : **{len(spam_list)}** éléments bannis.")
+
+        # 1. Ajout
+        st.divider()
+        new_spam = st.text_input("Bannir une adresse ou un asset", placeholder="ex: ELON, 0x...", key="input_new_spam")
         if st.button("🚫 Bannir définitivement"):
             if new_spam:
-                spam_list = load_spam_list()
                 spam_list.add(new_spam.strip().lower())
                 save_spam_list(spam_list)
                 st.success(f"'{new_spam}' banni.")
+                # Mise à jour immédiate si data chargée
                 if "journal_qualifie" in st.session_state:
                     df = st.session_state.journal_qualifie
                     mask_cp = df["Counterparty"].fillna("").str.lower().apply(resolve_raw_addr).isin(spam_list)
                     mask_asset = df["Asset"].fillna("").str.lower().isin(spam_list)
                     df.loc[mask_cp | mask_asset, "Status"] = "Spam"
-                    st.session_state.journal_qualifie = df
                 st.rerun()
+
+        # 2. Consultation et Retrait
+        if spam_list:
+            st.divider()
+            st.write("🔎 Consulter / Annuler")
+            to_remove = st.multiselect("Sélectionner pour retirer", options=sorted(list(spam_list)))
+            if st.button("✅ Retirer de la Blacklist"):
+                if to_remove:
+                    for item in to_remove:
+                        spam_list.remove(item)
+                    save_spam_list(spam_list)
+                    st.success(f"{len(to_remove)} élément(s) retiré(s).")
+                    # Note: on ne change pas automatiquement le statut dans le journal
+                    # pour éviter d'écraser des qualifications manuelles.
+                    # L'utilisateur devra refaire un 'Actualiser' si besoin.
+                    st.rerun()
 
 # --- Main App ---
 st.subheader(f"📋 Journal de Qualification {target_year}")
