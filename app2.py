@@ -233,9 +233,13 @@ with st.sidebar:
         df_for_filters = st.session_state.journal_qualifie
 
         # Filtres Multiples
-        f_asset = st.multiselect("Filtrer par Asset", options=sorted(df_for_filters["Asset"].unique()))
-        f_acc = st.multiselect("Filtrer par Compte (Account)", options=sorted(df_for_filters["Account"].unique()))
-        f_status = st.multiselect("Filtrer par Statut", options=sorted(df_for_filters["Status"].unique()), default=[])
+        # On force en string et on retire les nan/None pour éviter le TypeError dans sorted()
+        def get_safe_options(df, col):
+            return sorted([str(x) for x in df[col].dropna().unique()])
+
+        f_asset = st.multiselect("Filtrer par Asset", options=get_safe_options(df_for_filters, "Asset"))
+        f_acc = st.multiselect("Filtrer par Compte (Account)", options=get_safe_options(df_for_filters, "Account"))
+        f_status = st.multiselect("Filtrer par Statut", options=get_safe_options(df_for_filters, "Status"), default=[])
 
         st.divider()
         st.header("🔃 Tri du Journal")
