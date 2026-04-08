@@ -79,7 +79,6 @@ def merge_raw_data(year):
         f_path = os.path.join(year_dir, f)
 
         # Extraction de l'adresse du propriétaire depuis le nom du fichier si possible
-        # Format attendu : raw_transactions_0xAddress_Timestamp.csv
         file_addr = ""
         parts = f.split("_")
         for p in parts:
@@ -98,30 +97,28 @@ def merge_raw_data(year):
                 f_addr = resolve_raw_addr(f_addr_full)
                 t_addr = resolve_raw_addr(t_addr_full)
 
-                # Priorité : Colonne Account > Adresse du fichier > Placeholder
                 acc_low = str(r.get("Account", "")).lower()
                 if not acc_low or acc_low == "nan" or acc_low == "0x...":
                     acc_low = file_addr if file_addr else "unknown_account"
 
-                # Priorité : Colonne Counterparty > Calcul
                 cp = str(r.get("Counterparty", ""))
                 if not cp or cp == "nan":
                     cp = t_addr_full if f_addr == acc_low else f_addr_full
 
                 amount = float(r.get("Value ETH", 0.0))
-                # Direction relative
                 if f_addr == acc_low:
                     amount = -amount
 
-                # Check spam on raw address
+                # Check spam on raw address OR Asset name
                 cp_raw = resolve_raw_addr(cp)
-                status = "Spam" if cp_raw in spam_list else "A vérifier"
+                asset_name = str(r.get("Chain", "ETH")).lower()
+                status = "Spam" if (cp_raw in spam_list or asset_name in spam_list) else "A vérifier"
 
                 all_rows.append({
                     "Date": r.get("Date"),
                     "Account": acc_low,
                     "Counterparty": cp,
-                    "Asset": r.get("Chain", "ETH"), # Simplified native asset detection
+                    "Asset": r.get("Chain", "ETH"),
                     "Amount": amount,
                     "Value ($)": float(r.get("Value ($)") or 0.0),
                     "Network": r.get("Chain"),
@@ -143,24 +140,22 @@ def merge_raw_data(year):
                 f_addr = resolve_raw_addr(f_addr_full)
                 t_addr = resolve_raw_addr(t_addr_full)
 
-                # Résolution Account
                 acc_low = str(r.get("Account", "")).lower()
                 if not acc_low or acc_low == "nan" or acc_low == "0x...":
                     acc_low = file_addr if file_addr else "unknown_account"
 
-                # Priorité : Colonne Counterparty > Calcul
                 cp = str(r.get("Counterparty", ""))
                 if not cp or cp == "nan":
                     cp = t_addr_full if f_addr == acc_low else f_addr_full
 
                 amount = float(r.get("Value", 0.0))
-                # Direction relative
                 if f_addr == acc_low:
                     amount = -amount
 
-                # Check spam on raw address
+                # Check spam on raw address OR Asset name
                 cp_raw = resolve_raw_addr(cp)
-                status = "Spam" if cp_raw in spam_list else "A vérifier"
+                asset_name = str(r.get("Token", "TOKEN")).lower()
+                status = "Spam" if (cp_raw in spam_list or asset_name in spam_list) else "A vérifier"
 
                 all_rows.append({
                     "Date": r.get("Date"),
@@ -180,7 +175,6 @@ def merge_raw_data(year):
     df_final = pd.DataFrame(all_rows)
     if not df_final.empty:
         df_final["Date"] = pd.to_datetime(df_final["Date"], utc=True, errors="coerce", format="ISO8601")
-        # Deduplication massive sur Hash + Asset + Amount (pour éviter doublons IN/OUT d'un même scan)
         df_final = df_final.drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account"], keep="first")
 
     return df_final
@@ -196,7 +190,6 @@ def sync_data(year):
             old_df["Date"] = pd.to_datetime(old_df["Date"], utc=True, errors="coerce", format="ISO8601")
         except Exception:
             old_df = pd.DataFrame(columns=COLUMNS)
-        # On fusionne en gardant les modifs manuelles de l'existant
         combined = pd.concat([new_df, old_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account"], keep="last")
         if not combined.empty and "Date" in combined.columns:
             st.session_state.journal_qualifie = combined.sort_values("Date", ascending=False)
@@ -222,9 +215,29 @@ with st.sidebar:
         if "journal_qualifie" in st.session_state:
             spam_list = load_spam_list()
             df = st.session_state.journal_qualifie
-            df.loc[df["Counterparty"].str.lower().isin(spam_list), "Status"] = "Spam"
+            # Nettoyage par adresse (Contrepartie) OU par nom d'Asset
+            mask_cp = df["Counterparty"].fillna("").str.lower().apply(resolve_raw_addr).isin(spam_list)
+            mask_asset = df["Asset"].fillna("").str.lower().isin(spam_list)
+            df.loc[mask_cp | mask_asset, "Status"] = "Spam"
             st.session_state.journal_qualifie = df
             st.rerun()
+
+    with st.expander("🛡️ Gestion de la Blacklist"):
+        st.write("Bannir une adresse ou un nom d'asset (ex: ELON, Visit-X.com)")
+        new_spam = st.text_input("Saisir l'élément", key="input_new_spam")
+        if st.button("🚫 Bannir définitivement"):
+            if new_spam:
+                spam_list = load_spam_list()
+                spam_list.add(new_spam.strip().lower())
+                save_spam_list(spam_list)
+                st.success(f"'{new_spam}' banni.")
+                if "journal_qualifie" in st.session_state:
+                    df = st.session_state.journal_qualifie
+                    mask_cp = df["Counterparty"].fillna("").str.lower().apply(resolve_raw_addr).isin(spam_list)
+                    mask_asset = df["Asset"].fillna("").str.lower().isin(spam_list)
+                    df.loc[mask_cp | mask_asset, "Status"] = "Spam"
+                    st.session_state.journal_qualifie = df
+                st.rerun()
 
 # --- Main App ---
 if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
@@ -235,13 +248,11 @@ st.subheader(f"📋 Journal de Qualification {target_year}")
 if st.session_state.journal_qualifie.empty:
     st.warning("Aucune donnée trouvée. Utilisez 'Actualiser & Fusionner' dans le sidebar.")
 else:
-    # 1. Barre d'outils (Détection Doublons / Virements Internes)
+    # 1. Barre d'outils
     col_t1, col_t2, col_save = st.columns([1, 1, 1])
 
     if col_t1.button("🔍 Détecter Transferts Internes"):
         df = st.session_state.journal_qualifie
-        # Logique: même Hash, même Asset, Montants opposés (ou proches)
-        # Pour les transferts internes, le Hash est le même.
         hashes = df[df["Tx Hash"].duplicated(keep=False)]["Tx Hash"].unique()
         count = 0
         for h in hashes:
@@ -257,6 +268,11 @@ else:
     # 2. Data Editor
     categories = ["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense Staking", "Airdrop", "Frais", "Perte/Vol", "Autre"]
     statuses = ["A vérifier", "Valide", "Spam"]
+
+    # Type safety
+    for col in ["Account", "Counterparty", "Asset", "Tx Hash", "Source Type", "Category", "Status"]:
+        if col in st.session_state.journal_qualifie.columns:
+            st.session_state.journal_qualifie[col] = st.session_state.journal_qualifie[col].fillna("").astype(str)
 
     edited_df = st.data_editor(
         st.session_state.journal_qualifie,
@@ -280,16 +296,20 @@ else:
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
 
-        # Sauvegarde Global Spam
         spam_list = load_spam_list()
         new_spams = edited_df[edited_df["Status"] == "Spam"]["Counterparty"].dropna().unique()
         for s in new_spams:
             raw_s = resolve_raw_addr(s)
             if str(raw_s).startswith("0x"):
                 spam_list.add(str(raw_s).lower())
+
+        # Add assets marked as Spam to the list
+        new_spam_assets = edited_df[edited_df["Status"] == "Spam"]["Asset"].dropna().unique()
+        for a in new_spam_assets:
+            spam_list.add(str(a).lower())
+
         save_spam_list(spam_list)
 
-        # Sauvegarde Journal
         edited_df.to_csv(get_qualified_path(target_year), index=False)
         st.balloons()
         st.success(f"Journal qualifié enregistré dans {year_dir}")
