@@ -281,15 +281,27 @@ with st.sidebar:
             st.divider()
             st.write("🔎 Consulter / Annuler")
             to_remove = st.multiselect("Sélectionner pour retirer", options=sorted(list(spam_list)))
-            if st.button("✅ Retirer de la Blacklist"):
-                if to_remove:
+
+            if to_remove:
+                new_status = st.selectbox("Remplacer 'Spam' par", ["À vérifier", "Valide"])
+                if st.button("✅ Retirer et Réinitialiser"):
                     for item in to_remove:
                         spam_list.remove(item)
                     save_spam_list(spam_list)
-                    st.success(f"{len(to_remove)} élément(s) retiré(s).")
-                    # Note: on ne change pas automatiquement le statut dans le journal
-                    # pour éviter d'écraser des qualifications manuelles.
-                    # L'utilisateur devra refaire un 'Actualiser' si besoin.
+
+                    # Mise à jour immédiate du journal chargé
+                    if "journal_qualifie" in st.session_state:
+                        df = st.session_state.journal_qualifie
+                        # On réinitialise les lignes qui matchaient l'élément retiré
+                        # (Si elles étaient marquées Spam)
+                        to_remove_low = [x.lower() for x in to_remove]
+                        mask_match = (
+                            df["Counterparty"].fillna("").str.lower().apply(resolve_raw_addr).isin(to_remove_low) |
+                            df["Asset"].fillna("").str.lower().isin(to_remove_low)
+                        )
+                        df.loc[mask_match & (df["Status"] == "Spam"), "Status"] = new_status
+
+                    st.success(f"{len(to_remove)} élément(s) retiré(s) et journal mis à jour.")
                     st.rerun()
 
 # --- Main App ---
@@ -377,19 +389,8 @@ else:
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
 
-        spam_list = load_spam_list()
-        new_spams = edited_df[edited_df["Status"] == "Spam"]["Counterparty"].dropna().unique()
-        for s in new_spams:
-            raw_s = resolve_raw_addr(s)
-            if str(raw_s).startswith("0x"):
-                spam_list.add(str(raw_s).lower())
-
-        # Add assets marked as Spam to the list
-        new_spam_assets = edited_df[edited_df["Status"] == "Spam"]["Asset"].dropna().unique()
-        for a in new_spam_assets:
-            spam_list.add(str(a).lower())
-
-        save_spam_list(spam_list)
+        # SUPPRESSION de la propagation automatique asset/adresse vers la blacklist globale.
+        # Seul un bannissement via la Sidebar est définitif pour le futur.
 
         st.session_state.journal_qualifie.to_csv(get_qualified_path(target_year), index=False)
         st.balloons()
