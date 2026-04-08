@@ -206,6 +206,11 @@ with st.sidebar:
     st.header("⚙️ Paramètres")
     target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=datetime.now().year)
 
+    # Initialisation data si nécessaire
+    if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
+        sync_data(target_year)
+        st.session_state.last_year = target_year
+
     st.divider()
     if st.button("🔄 Actualiser & Fusionner les Brutes"):
         sync_data(target_year)
@@ -223,16 +228,28 @@ with st.sidebar:
             st.rerun()
 
     st.divider()
-    st.header("📊 Tri du Journal")
+    st.header("📊 Filtres & Regroupement")
     if "journal_qualifie" in st.session_state and not st.session_state.journal_qualifie.empty:
-        sort_cols = list(st.session_state.journal_qualifie.columns)
+        df_for_filters = st.session_state.journal_qualifie
+
+        # Filtres Multiples
+        f_asset = st.multiselect("Filtrer par Asset", options=sorted(df_for_filters["Asset"].unique()))
+        f_acc = st.multiselect("Filtrer par Compte (Account)", options=sorted(df_for_filters["Account"].unique()))
+        f_status = st.multiselect("Filtrer par Statut", options=sorted(df_for_filters["Status"].unique()), default=[])
+
+        st.divider()
+        st.header("🔃 Tri du Journal")
+        sort_cols = list(df_for_filters.columns)
         default_sort = sort_cols.index("Date") if "Date" in sort_cols else 0
-        sort_by = st.selectbox("Trier par colonne", sort_cols, index=default_sort)
-        sort_order = st.radio("Ordre de tri", ["Décroissant", "Croissant"], index=0)
-        if st.button("🔃 Appliquer le Tri"):
+        sort_by = st.selectbox("Trier par", sort_cols, index=default_sort)
+        sort_order = st.radio("Sens du tri", ["Décroissant (Z-A)", "Croissant (A-Z)"], index=0)
+
+        if st.button("⚡ Appliquer Filtres & Tri"):
+            # Le tri est appliqué à la session state
             df = st.session_state.journal_qualifie
-            df = df.sort_values(by=sort_by, ascending=(sort_order == "Croissant"))
+            df = df.sort_values(by=sort_by, ascending=(sort_order == "Croissant (A-Z)"))
             st.session_state.journal_qualifie = df
+            # Les filtres seront appliqués à l'affichage (voir Main App)
             st.rerun()
 
     with st.expander("🛡️ Gestion de la Blacklist"):
@@ -253,14 +270,20 @@ with st.sidebar:
                 st.rerun()
 
 # --- Main App ---
-if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
-    sync_data(target_year)
-    st.session_state.last_year = target_year
-
 st.subheader(f"📋 Journal de Qualification {target_year}")
-if st.session_state.journal_qualifie.empty:
+if "journal_qualifie" not in st.session_state or st.session_state.journal_qualifie.empty:
     st.warning("Aucune donnée trouvée. Utilisez 'Actualiser & Fusionner' dans le sidebar.")
 else:
+    # Application des filtres d'affichage (sans modifier la session state)
+    df_display = st.session_state.journal_qualifie.copy()
+
+    if f_asset:
+        df_display = df_display[df_display["Asset"].isin(f_asset)]
+    if f_acc:
+        df_display = df_display[df_display["Account"].isin(f_acc)]
+    if f_status:
+        df_display = df_display[df_display["Status"].isin(f_status)]
+
     # 1. Barre d'outils
     col_t1, col_t2, col_save = st.columns([1, 1, 1])
 
@@ -288,7 +311,7 @@ else:
             st.session_state.journal_qualifie[col] = st.session_state.journal_qualifie[col].fillna("").astype(str)
 
     edited_df = st.data_editor(
-        st.session_state.journal_qualifie,
+        df_display,
         column_config={
             "Category": st.column_config.SelectboxColumn("Catégorie", options=categories, required=True),
             "Status": st.column_config.SelectboxColumn("Statut", options=statuses, required=True),
@@ -305,7 +328,29 @@ else:
 
     # 3. Save Logic
     if st.button(f"💾 Sanctuariser la Sélection {target_year}", type="primary", use_container_width=True):
-        st.session_state.journal_qualifie = edited_df
+        # On fusionne les modifications du data_editor (filtré) dans la session_state (complète)
+        # Pour simplifier, si on est en mode filtré, on prévient l'utilisateur
+        if f_asset or f_acc or f_status:
+            st.warning("⚠️ Attention: Vous êtes en mode filtré. Seules les lignes visibles seront mises à jour dans la session state.")
+
+        # Mise à jour de la session state avec les lignes éditées
+        full_df = st.session_state.journal_qualifie.copy()
+        # On utilise le Tx Hash + Asset + Amount + Account comme clé de fusion
+        # (C'est notre subset de dédoublonnage)
+        # On remplace les lignes de full_df par celles de edited_df
+        # Pour faire simple ici, on écrase tout le journal par edited_df si non filtré
+        if not (f_asset or f_acc or f_status):
+            st.session_state.journal_qualifie = edited_df
+        else:
+            # Fusion complexe si filtré : on retire les anciennes lignes filtrées et on ajoute les nouvelles
+            mask_filtered = pd.Series(True, index=full_df.index)
+            if f_asset: mask_filtered &= full_df["Asset"].isin(f_asset)
+            if f_acc: mask_filtered &= full_df["Account"].isin(f_acc)
+            if f_status: mask_filtered &= full_df["Status"].isin(f_status)
+
+            non_filtered_df = full_df[~mask_filtered]
+            st.session_state.journal_qualifie = pd.concat([non_filtered_df, edited_df]).sort_values("Date", ascending=False)
+
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
 
@@ -323,7 +368,7 @@ else:
 
         save_spam_list(spam_list)
 
-        edited_df.to_csv(get_qualified_path(target_year), index=False)
+        st.session_state.journal_qualifie.to_csv(get_qualified_path(target_year), index=False)
         st.balloons()
         st.success(f"Journal qualifié enregistré dans {year_dir}")
 

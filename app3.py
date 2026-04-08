@@ -207,12 +207,19 @@ with tab_bilan:
         st.table(df_bilan)
 
         total_pv = df_bilan['Plus-Value Brute'].sum()
+        total_cessions = df_bilan['Prix Cession'].sum()
 
         col_b1, col_b2, col_b3 = st.columns(3)
         col_b1.metric("Plus-Value Totale Brute", f"{total_pv:,.2f} €")
 
-        pv_nette = max(0, total_pv - abattement) if total_pv > 0 else total_pv
-        col_b2.metric("Plus-Value Nette (après abattement)", f"{pv_nette:,.2f} €")
+        # Logique fiscale : exonération si total des prix de cession <= abattement (305€)
+        if total_cessions <= abattement:
+            pv_nette = 0.0
+            st.warning(f"💡 Exonération appliquée : Le total des cessions ({total_cessions:.2f}€) est inférieur au seuil de {abattement}€.")
+        else:
+            pv_nette = total_pv
+
+        col_b2.metric("Plus-Value Nette Imposable", f"{pv_nette:,.2f} €")
 
         impot = pv_nette * flat_tax_rate if pv_nette > 0 else 0.0
         col_b3.metric(f"Impôt Estimé ({int(flat_tax_rate*100)}%)", f"{impot:,.2f} €", delta_color="inverse")
