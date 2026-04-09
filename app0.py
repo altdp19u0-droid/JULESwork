@@ -17,6 +17,7 @@ def load_manual_data(year):
     year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
     fiat_path = os.path.join(year_dir, f"manual_fiat_{year}.csv")
     pos_path = os.path.join(year_dir, f"manual_positions_{year}.csv")
+    swap_path = os.path.join(year_dir, f"manual_swaps_{year}.csv")
 
     if os.path.exists(fiat_path):
         df = pd.read_csv(fiat_path)
@@ -64,6 +65,20 @@ def load_manual_data(year):
         for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
             st.session_state.positions_journal[col] = st.session_state.positions_journal[col].astype(str)
 
+    if os.path.exists(swap_path):
+        df = pd.read_csv(swap_path)
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
+        text_cols = ["Account", "Counterparty", "Asset", "Type", "Tx Hash", "Source Type"]
+        for col in text_cols:
+            if col not in df.columns: df[col] = ""
+            df[col] = df[col].fillna("").astype(str)
+        st.session_state.swaps_journal = df
+    else:
+        cols = ["Date", "Account", "Counterparty", "Asset", "Amount", "Type", "Tx Hash", "Source Type"]
+        st.session_state.swaps_journal = pd.DataFrame(columns=cols)
+        for col in ["Account", "Counterparty", "Asset", "Type", "Tx Hash", "Source Type"]:
+            st.session_state.swaps_journal[col] = st.session_state.swaps_journal[col].astype(str)
+
 if "fiat_journal" not in st.session_state:
     load_manual_data(st.session_state.current_year)
 
@@ -80,13 +95,16 @@ with st.sidebar:
     st.divider()
     if st.button("🗑️ Vider la saisie en cours"):
         st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash"])
-        # Ensure correct types even when empty for the editor
         for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
             st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
 
         st.session_state.positions_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Quantité", "Tx Hash"])
         for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
             st.session_state.positions_journal[col] = st.session_state.positions_journal[col].astype(str)
+
+        st.session_state.swaps_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Asset", "Amount", "Type", "Tx Hash", "Source Type"])
+        for col in ["Account", "Counterparty", "Asset", "Type", "Tx Hash", "Source Type"]:
+            st.session_state.swaps_journal[col] = st.session_state.swaps_journal[col].astype(str)
 
         st.toast("Saisie vidée (en session uniquement).")
         st.rerun()
@@ -97,7 +115,7 @@ with st.sidebar:
         st.rerun()
 
 # --- Tabs ---
-t1, t2 = st.tabs(["💶 Mouvements Fiat (Banque <> Crypto)", "🔒 Positions, Vaults & Staking"])
+t1, t2, t3 = st.tabs(["💶 Mouvements Fiat", "🔒 Positions", "🔄 Échanges & Autovirements"])
 
 with t1:
     st.subheader(f"📝 Saisie des flux monétaires ({target_year})")
@@ -222,13 +240,85 @@ with t2:
             "Counterparty": st.column_config.TextColumn("Counterparty"),
             "Type Position": st.column_config.TextColumn("Type Position"),
             "Protocole/Plateforme": st.column_config.TextColumn("Protocole/Plateforme"),
-            "Asset": st.column_config.TextColumn("Asset"), # Force Text for symbols like stETH
+            "Asset": st.column_config.TextColumn("Asset"),
             "Quantité": st.column_config.NumberColumn("Quantité", format="%.8f"),
             "Tx Hash": st.column_config.TextColumn("Tx Hash"),
         },
         use_container_width=True,
         num_rows="dynamic",
         key="pos_editor"
+    )
+
+with t3:
+    st.subheader(f"🔄 Saisie des Échanges et Transferts ({target_year})")
+
+    col_s1, col_s2 = st.columns(2)
+
+    with col_s1:
+        st.write("**🔁 Swap Crypto-to-Crypto**")
+        with st.form("swap_form", clear_on_submit=True):
+            s_date = st.date_input("Date du swap", default_date)
+            s_acc = st.text_input("Compte (ex: Binance, Wallet A)", placeholder="Compte propriétaire")
+            c_s1, c_s2 = st.columns(2)
+            s_asset_out = c_s1.text_input("Asset Vendu", placeholder="ex: BTC")
+            s_qty_out = c_s2.number_input("Quantité Vendue", min_value=0.0, format="%.8f")
+            c_s3, c_s4 = st.columns(2)
+            s_asset_in = c_s3.text_input("Asset Reçu", placeholder="ex: USDC")
+            s_qty_in = c_s4.number_input("Quantité Reçue", min_value=0.0, format="%.8f")
+            s_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...")
+
+            if st.form_submit_button("➕ Ajouter le Swap"):
+                if s_date.year != target_year:
+                    st.error("Année incorrecte.")
+                else:
+                    # Ligne Sortie
+                    row_out = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_out.upper(), "Amount": -s_qty_out, "Type": "Swap Out", "Tx Hash": s_hash, "Source Type": "Manual Swap"}
+                    # Ligne Entrée
+                    row_in = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_in.upper(), "Amount": s_qty_in, "Type": "Swap In", "Tx Hash": s_hash, "Source Type": "Manual Swap"}
+                    st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_out, row_in])], ignore_index=True)
+                    st.success("Swap ajouté (2 lignes créées).")
+
+    with col_s2:
+        st.write("**🚚 Transfert Interne**")
+        with st.form("transfer_form", clear_on_submit=True):
+            t_date = st.date_input("Date du transfert", default_date)
+            t_asset = st.text_input("Asset", placeholder="ex: ETH")
+            t_qty = st.number_input("Quantité", min_value=0.0, format="%.8f")
+            c_t1, c_t2 = st.columns(2)
+            t_acc_src = c_t1.text_input("Compte Source", placeholder="ex: Wallet A")
+            t_acc_dst = c_t2.text_input("Compte Destination", placeholder="ex: Wallet B")
+            t_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...")
+
+            if st.form_submit_button("➕ Ajouter le Transfert"):
+                if t_date.year != target_year:
+                    st.error("Année incorrecte.")
+                else:
+                    # Ligne Sortie Source
+                    row_src = {"Date": t_date, "Account": t_acc_src, "Counterparty": t_acc_dst, "Asset": t_asset.upper(), "Amount": -t_qty, "Type": "Transfert Interne Out", "Tx Hash": t_hash, "Source Type": "Manual Transfer"}
+                    # Ligne Entrée Destination
+                    row_dst = {"Date": t_date, "Account": t_acc_dst, "Counterparty": t_acc_src, "Asset": t_asset.upper(), "Amount": t_qty, "Type": "Transfert Interne In", "Tx Hash": t_hash, "Source Type": "Manual Transfer"}
+                    st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_src, row_dst])], ignore_index=True)
+                    st.success("Transfert ajouté (2 lignes créées).")
+
+    st.divider()
+    st.subheader("📊 Journal des Échanges & Autovirements")
+    for col in ["Account", "Counterparty", "Asset", "Type", "Tx Hash", "Source Type"]:
+        st.session_state.swaps_journal[col] = st.session_state.swaps_journal[col].fillna("").astype(str)
+
+    st.session_state.swaps_journal = st.data_editor(
+        st.session_state.swaps_journal,
+        column_config={
+            "Date": st.column_config.DateColumn("Date", required=True),
+            "Account": st.column_config.TextColumn("Compte"),
+            "Counterparty": st.column_config.TextColumn("Contrepartie"),
+            "Asset": st.column_config.TextColumn("Asset"),
+            "Amount": st.column_config.NumberColumn("Montant", format="%.8f"),
+            "Type": st.column_config.TextColumn("Type"),
+            "Tx Hash": st.column_config.TextColumn("Tx Hash"),
+        },
+        use_container_width=True,
+        num_rows="dynamic",
+        key="swaps_editor"
     )
 
 # --- Sanctuarisation ---
@@ -242,22 +332,19 @@ with col_save1:
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
 
-        # Incremental approach: we save the current consolidated state
-        # (which was loaded at start and modified in session)
         fiat_path = os.path.join(year_dir, f"manual_fiat_{target_year}.csv")
         pos_path = os.path.join(year_dir, f"manual_positions_{target_year}.csv")
+        swap_path = os.path.join(year_dir, f"manual_swaps_{target_year}.csv")
 
-        if not st.session_state.fiat_journal.empty:
-            st.session_state.fiat_journal.to_csv(fiat_path, index=False)
-        if not st.session_state.positions_journal.empty:
-            st.session_state.positions_journal.to_csv(pos_path, index=False)
+        if not st.session_state.fiat_journal.empty: st.session_state.fiat_journal.to_csv(fiat_path, index=False)
+        if not st.session_state.positions_journal.empty: st.session_state.positions_journal.to_csv(pos_path, index=False)
+        if not st.session_state.swaps_journal.empty: st.session_state.swaps_journal.to_csv(swap_path, index=False)
 
-        # Also keep a timestamped backup for safety
+        # Backups
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if not st.session_state.fiat_journal.empty:
-            st.session_state.fiat_journal.to_csv(os.path.join(year_dir, f"backup_fiat_{ts}.csv"), index=False)
-        if not st.session_state.positions_journal.empty:
-            st.session_state.positions_journal.to_csv(os.path.join(year_dir, f"backup_positions_{ts}.csv"), index=False)
+        if not st.session_state.fiat_journal.empty: st.session_state.fiat_journal.to_csv(os.path.join(year_dir, f"backup_fiat_{ts}.csv"), index=False)
+        if not st.session_state.positions_journal.empty: st.session_state.positions_journal.to_csv(os.path.join(year_dir, f"backup_positions_{ts}.csv"), index=False)
+        if not st.session_state.swaps_journal.empty: st.session_state.swaps_journal.to_csv(os.path.join(year_dir, f"backup_swaps_{ts}.csv"), index=False)
 
         st.balloons()
         st.success(f"📂 Registres mis à jour et sauvegardés dans : {year_dir}")

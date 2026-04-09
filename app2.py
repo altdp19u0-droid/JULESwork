@@ -48,29 +48,50 @@ def merge_raw_data(year):
     all_rows = []
     spam_list = load_spam_list()
 
-    # 1. Load Manual Fiat (app0)
+    # 1. Load Manual Registry (app0)
+    # 1a. Fiat
     fiat_path = os.path.join(year_dir, f"manual_fiat_{year}.csv")
     if os.path.exists(fiat_path) and os.path.getsize(fiat_path) > 0:
         try:
             df_fiat = pd.read_csv(fiat_path)
-        except Exception:
-            df_fiat = pd.DataFrame()
+            for _, r in df_fiat.iterrows():
+                all_rows.append({
+                    "Date": r.get("Date"),
+                    "Account": r.get("Account", r.get("Compte/Label", "Manual")),
+                    "Counterparty": r.get("Counterparty", r.get("Plateforme", "Bank")),
+                    "Asset": r.get("Asset", "EUR"),
+                    "Amount": float(r.get("Montant EUR", 0.0)) if "Vente" in str(r.get("Type")) else -float(r.get("Montant EUR", 0.0)),
+                    "Value ($)": 0.0,
+                    "Network": "Fiat",
+                    "Tx Hash": r.get("Tx Hash", ""),
+                    "Source Type": "Fiat",
+                    "Category": "Achat" if "Achat" in str(r.get("Type")) else "Vente",
+                    "Status": "Valide",
+                    "Imposable": False
+                })
+        except Exception: pass
 
-        for _, r in df_fiat.iterrows():
-            all_rows.append({
-                "Date": r.get("Date"),
-                "Account": r.get("Account", r.get("Compte/Label", "Manual")),
-                "Counterparty": r.get("Counterparty", r.get("Plateforme", "Bank")),
-                "Asset": r.get("Asset", "EUR"),
-                "Amount": float(r.get("Montant EUR", 0.0)) if "Vente" in str(r.get("Type")) else -float(r.get("Montant EUR", 0.0)),
-                "Value ($)": 0.0, # Will be handled by app3 or based on EUR rate
-                "Network": "Fiat",
-                "Tx Hash": r.get("Tx Hash", ""),
-                "Source Type": "Fiat",
-                "Category": "Achat" if "Achat" in str(r.get("Type")) else "Vente",
-                "Status": "Valide",
-                "Imposable": False
-            })
+    # 1b. Manual Swaps & Transfers
+    swap_path = os.path.join(year_dir, f"manual_swaps_{year}.csv")
+    if os.path.exists(swap_path) and os.path.getsize(swap_path) > 0:
+        try:
+            df_swap = pd.read_csv(swap_path)
+            for _, r in df_swap.iterrows():
+                all_rows.append({
+                    "Date": r.get("Date"),
+                    "Account": r.get("Account"),
+                    "Counterparty": r.get("Counterparty"),
+                    "Asset": r.get("Asset"),
+                    "Amount": float(r.get("Amount", 0.0)),
+                    "Value ($)": 0.0,
+                    "Network": "Manual",
+                    "Tx Hash": r.get("Tx Hash", ""),
+                    "Source Type": r.get("Source Type", "Manual"),
+                    "Category": "Transfert Interne" if "Transfert" in str(r.get("Type")) else "Swap",
+                    "Status": "Valide",
+                    "Imposable": False
+                })
+        except Exception: pass
 
     # 2. Load Blockchain Txs (app.py)
     files = os.listdir(year_dir)
