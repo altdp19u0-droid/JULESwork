@@ -209,6 +209,10 @@ def sync_data(year):
         try:
             old_df = pd.read_csv(qual_path)
             old_df["Date"] = pd.to_datetime(old_df["Date"], utc=True, errors="coerce", format="ISO8601")
+            # Force numeric
+            for col in ["Amount", "Value ($)"]:
+                if col in old_df.columns:
+                    old_df[col] = pd.to_numeric(old_df[col], errors='coerce').fillna(0.0)
         except Exception:
             old_df = pd.DataFrame(columns=COLUMNS)
         combined = pd.concat([new_df, old_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account"], keep="last")

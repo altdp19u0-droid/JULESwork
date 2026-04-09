@@ -35,6 +35,12 @@ def load_data(year):
             if 'Date' in df.columns:
                 df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
 
+            # Type Safety: Force numeric types to avoid pyarrow string errors
+            num_cols = ["Amount", "Value ($)", "VGP (EUR)", "Prix de Cession (EUR)", "Montant EUR", "Quantité"]
+            for col in num_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+
             # FILTRAGE ANTI-SPAM GLOBAL (uniquement pour le journal qualifié)
             if key == 'journal' and 'Status' in df.columns:
                 df = df[df['Status'] != 'Spam']
