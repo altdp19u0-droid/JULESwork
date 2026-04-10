@@ -202,13 +202,16 @@ with tab_cessions:
                     else:
                         st.error(f"VGP manquante pour la cession du {row['Date']}")
 
-                st.session_state.bilan_fiscale = pd.DataFrame(results)
-                st.success("Calcul terminé. Voir l'onglet Bilan.")
+                if results:
+                    st.session_state.bilan_fiscale = pd.DataFrame(results)
+                    st.success("Calcul terminé. Voir l'onglet Bilan.")
+                else:
+                    st.warning("Aucune plus-value n'a pu être calculée. Vérifiez les valeurs VGP.")
 
 with tab_bilan:
     st.subheader("📊 Bilan Annuel & Impôt Estimé")
 
-    if "bilan_fiscale" in st.session_state:
+    if "bilan_fiscale" in st.session_state and not st.session_state.bilan_fiscale.empty:
         df_bilan = st.session_state.bilan_fiscale
         st.table(df_bilan)
 
