@@ -233,13 +233,26 @@ def sync_data(year):
         try:
             old_df = pd.read_csv(qual_path)
             old_df["Date"] = pd.to_datetime(old_df["Date"], utc=True, errors="coerce", format="ISO8601")
+
+            # --- AUTO-REPAIR : Nettoyage des lignes Fiat corrompues (v1 legacy) ---
+            # Si Source Type est 'Fiat' mais Asset n'est pas 'EUR', c'est une erreur de transposition ancienne.
+            if not old_df.empty and "Source Type" in old_df.columns:
+                corrupted_mask = (old_df["Source Type"] == "Fiat") & (old_df["Asset"] != "EUR")
+                if corrupted_mask.any():
+                    old_df = old_df[~corrupted_mask]
+                    st.info(f"🔧 {corrupted_mask.sum()} lignes Fiat corrompues nettoyées du journal historique.")
+
             # Force numeric
             for col in ["Amount", "Value ($)"]:
                 if col in old_df.columns:
                     old_df[col] = pd.to_numeric(old_df[col], errors='coerce').fillna(0.0)
         except Exception:
             old_df = pd.DataFrame(columns=COLUMNS)
-        combined = pd.concat([new_df, old_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account"], keep="last")
+
+        # Fusion : pour les entrées manuelles (Fiat/Swap), on privilégie le Tx Hash + Asset + Account
+        # On utilise keep="first" car new_df contient la logique de double-écriture corrigée.
+        combined = pd.concat([new_df, old_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Account"], keep="first")
+
         if not combined.empty and "Date" in combined.columns:
             st.session_state.journal_qualifie = combined.sort_values("Date", ascending=False)
         else:
