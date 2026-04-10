@@ -72,13 +72,21 @@ def merge_raw_data(year):
                     "Network": "Fiat",
                     "Tx Hash": r.get("Tx Hash", ""),
                     "Source Type": "Fiat",
-                    "Category": "Mouvement Fiat",
+                    "Category": "Vente (Fiat)" if "Vente" in f_type else ("Achat (Fiat)" if "Achat" in f_type else "Mouvement Fiat"),
                     "Status": "Valide",
                     "Imposable": False
                 })
 
                 # 2. Le leg Crypto (Achat/Vente d'actif, potentiellement imposable)
                 if asset_name != "EUR" and asset_name != "NAN" and qty_asset > 0:
+                    # On utilise la valeur du journal manuel si présente, sinon fallback
+                    is_imp_manual = r.get("Imposable")
+                    if pd.isna(is_imp_manual) or is_imp_manual == "":
+                        is_imp = True if "Vente" in f_type else False
+                    else:
+                        # Conversion robuste du booléen
+                        is_imp = str(is_imp_manual).upper() in ["TRUE", "1", "1.0", "VRAI"]
+
                     all_rows.append({
                         "Date": r.get("Date"),
                         "Account": r.get("Account", r.get("Compte/Label", "Manual")),
@@ -86,12 +94,12 @@ def merge_raw_data(year):
                         "Asset": asset_name,
                         "Amount": qty_asset if "Achat" in f_type else -qty_asset,
                         "Value ($)": m_eur / 0.92,
-                        "Network": "Manual",
+                        "Network": "Fiat",
                         "Tx Hash": r.get("Tx Hash", ""),
                         "Source Type": "Fiat-to-Crypto",
                         "Category": "Achat" if "Achat" in f_type else "Vente",
                         "Status": "Valide",
-                        "Imposable": True if "Vente" in f_type else False # Seule une vente crypto est imposable
+                        "Imposable": is_imp
                     })
         except Exception: pass
 
@@ -252,7 +260,8 @@ def sync_data(year):
         # Fusion : On privilégie old_df (données déjà qualifiées) sur new_df (données brutes).
         # On utilise keep="first" avec old_df en premier pour ne pas écraser le travail de qualification
         # déjà effectué par l'utilisateur.
-        combined = pd.concat([old_df, new_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Account"], keep="first")
+        # Dédoublonnage incluant Amount pour éviter de fusionner des transactions différentes sans hash.
+        combined = pd.concat([old_df, new_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Account", "Amount"], keep="first")
 
         if not combined.empty and "Date" in combined.columns:
             st.session_state.journal_qualifie = combined.sort_values("Date", ascending=False)

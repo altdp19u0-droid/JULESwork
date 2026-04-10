@@ -36,9 +36,11 @@ def load_manual_data(year):
         if df["Counterparty"].replace("", pd.NA).isnull().all() and "Plateforme" in df.columns:
              df["Counterparty"] = df["Plateforme"].fillna("").astype(str)
 
+        if 'Imposable' not in df.columns:
+            df['Imposable'] = False
         st.session_state.fiat_journal = df
     else:
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash"])
+        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash", "Imposable"])
         for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
             st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
 
@@ -94,7 +96,7 @@ with st.sidebar:
 
     st.divider()
     if st.button("🗑️ Vider la saisie en cours"):
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash"])
+        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash", "Imposable"])
         for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
             st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
 
@@ -119,46 +121,54 @@ t1, t2, t3 = st.tabs(["💶 Mouvements Fiat", "🔒 Positions", "🔄 Échanges 
 
 with t1:
     st.subheader(f"📝 Saisie des flux monétaires ({target_year})")
-    with st.form("fiat_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        # Default date to start of year if target_year is not current year
-        default_date = datetime.now() if target_year == datetime.now().year else datetime(target_year, 1, 1)
-        f_date = c1.date_input("Date du virement", default_date)
-        f_label = c2.text_input("Compte Bancaire / Label", placeholder="ex: Compte Courant Bourso")
-        f_plat = c3.text_input("Plateforme / Exchange", placeholder="ex: Binance, Kraken")
 
-        c4, c5, c6 = st.columns(3)
-        f_amount = c4.number_input("Montant (EUR)", min_value=0.0, step=10.0)
-        f_type = c5.selectbox("Nature du flux", [
-            "Achat (Virement vers Crypto)",
-            "Vente (Retour vers Banque)",
-            "(Virement vers )",
-            "(Retrait de)"
-        ])
-        f_asset = c6.text_input("Asset concerné (Optionnel)", placeholder="ex: EUR, USDT, BTC")
+    # Utilisation de colonnes hors formulaire pour la réactivité
+    c1, c2, c3 = st.columns(3)
+    default_date = datetime.now() if target_year == datetime.now().year else datetime(target_year, 1, 1)
+    f_date = c1.date_input("Date du virement", default_date, key="fiat_date_input")
+    f_label = c2.text_input("Compte Bancaire / Label", placeholder="ex: Compte Courant Bourso", key="fiat_label_input")
+    f_plat = c3.text_input("Plateforme / Exchange", placeholder="ex: Binance, Kraken", key="fiat_plat_input")
 
-        c_hash, c_addr_f, c_qty_f = st.columns([1.5, 1.5, 1])
-        f_hash = c_hash.text_input("Tx Hash (Blockchain)", placeholder="0x...")
-        f_addr = c_addr_f.text_input("Adresse/Compte Blockchain", placeholder="0x...")
-        f_qty = c_qty_f.number_input("Quantité Asset", min_value=0.0, format="%.8f")
+    c4, c5, c6 = st.columns(3)
+    f_amount = c4.number_input("Montant (EUR)", min_value=0.0, step=10.0, key="fiat_amount_input")
+    def on_fiat_type_change():
+        st.session_state["fiat_imp_checkbox"] = (st.session_state["fiat_type_input"] == "Vente (Retour vers Banque)")
 
-        submit_fiat = st.form_submit_button("➕ Ajouter au journal")
+    f_type = c5.selectbox("Nature du flux", [
+        "Achat (Virement vers Crypto)",
+        "Vente (Retour vers Banque)",
+        "(Virement vers )",
+        "(Retrait de)"
+    ], key="fiat_type_input", on_change=on_fiat_type_change)
+    f_asset = c6.text_input("Asset concerné (Optionnel)", placeholder="ex: EUR, USDT, BTC", key="fiat_asset_input")
 
-        if submit_fiat:
-            if f_date.year != target_year:
-                st.error(f"❌ La date doit impérativement être en {target_year}.")
-            else:
-                new_row = {
-                    "Date": f_date, "Account": f_addr if f_addr else f_label, "Counterparty": f_plat,
-                    "Compte/Label": f_label, "Plateforme": f_plat,
-                    "Montant EUR": f_amount, "Type": f_type, "Asset": f_asset.upper(),
-                    "Quantité": f_qty, "Tx Hash": f_hash
-                }
-                st.session_state.fiat_journal = pd.concat([st.session_state.fiat_journal, pd.DataFrame([new_row])], ignore_index=True)
-                # Ensure types are maintained
-                for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
-                    st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].fillna("").astype(str)
-                st.success("Mouvement ajouté.")
+    c_hash, c_addr_f, c_qty_f, c_imp = st.columns([1.5, 1.5, 1, 0.5])
+    f_hash = c_hash.text_input("Tx Hash (Blockchain)", placeholder="0x...", key="fiat_hash_input")
+    f_addr = c_addr_f.text_input("Adresse/Compte Blockchain", placeholder="0x...", key="fiat_addr_input")
+    f_qty = c_qty_f.number_input("Quantité Asset", min_value=0.0, format="%.8f", key="fiat_qty_input")
+
+    # Automatisation de la coche imposable via session_state
+    if "fiat_imp_checkbox" not in st.session_state:
+        st.session_state["fiat_imp_checkbox"] = (f_type == "Vente (Retour vers Banque)")
+
+    f_imposable = c_imp.checkbox("Imp.", key="fiat_imp_checkbox")
+
+    if st.button("➕ Ajouter au journal", use_container_width=True):
+        if f_date.year != target_year:
+            st.error(f"❌ La date doit impérativement être en {target_year}.")
+        else:
+            new_row = {
+                "Date": f_date, "Account": f_addr if f_addr else f_label, "Counterparty": f_plat,
+                "Compte/Label": f_label, "Plateforme": f_plat,
+                "Montant EUR": f_amount, "Type": f_type, "Asset": f_asset.upper(),
+                "Quantité": f_qty, "Tx Hash": f_hash, "Imposable": f_imposable
+            }
+            st.session_state.fiat_journal = pd.concat([st.session_state.fiat_journal, pd.DataFrame([new_row])], ignore_index=True)
+            # Ensure types are maintained
+            for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
+                st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].fillna("").astype(str)
+            st.success("Mouvement ajouté.")
+            st.rerun()
 
     st.divider()
     st.subheader("📊 Contrôle & Observation (Journal en cours)")
@@ -182,6 +192,7 @@ with t1:
             "Montant EUR": st.column_config.NumberColumn("Montant EUR", format="%.2f"),
             "Quantité": st.column_config.NumberColumn("Quantité", format="%.8f"),
             "Tx Hash": st.column_config.TextColumn("Tx Hash"),
+            "Imposable": st.column_config.CheckboxColumn("Imposable"),
         },
         use_container_width=True,
         num_rows="dynamic",
