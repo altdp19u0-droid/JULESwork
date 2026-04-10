@@ -71,8 +71,12 @@ def get_price_eur(asset, date_obj):
         return 0.0
 
 def get_portfolio_snapshot(journal, target_date):
-    # Filtrage : tout sauf Spam et avant ou à la date de cession
-    df = journal[(journal["Status"] != "Spam") & (journal["Date"] <= target_date)]
+    # Filtrage : tout sauf Spam, pas de EUR, et avant ou à la date de cession
+    df = journal[
+        (journal["Status"] != "Spam") &
+        (journal["Asset"] != "EUR") &
+        (journal["Date"] <= target_date)
+    ]
     if df.empty: return pd.DataFrame()
 
     # Calcul des balances
@@ -123,9 +127,13 @@ for col in ["Amount", "Value ($)", "VGP (EUR)"]:
     else:
         journal[col] = 0.0
 
-# Identification des cessions (Vente ou Imposable)
+# Identification des cessions (Vente ou Imposable, hors EUR)
 # On crée un masque pour les lignes qui ont besoin d'une VGP
-mask_cessions = (journal["Imposable"] == True) | (journal["Category"].str.contains("Vente", case=False, na=False))
+mask_cessions = (
+    (journal["Imposable"] == True) |
+    (journal["Category"].str.contains("Vente", case=False, na=False))
+) & (journal["Asset"] != "EUR")
+
 cessions_all = journal[mask_cessions].copy()
 
 if cessions_all.empty:

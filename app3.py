@@ -144,9 +144,11 @@ with tab_cessions:
         st.warning("Le journal qualifié est vide. Terminez l'étape 2 d'abord.")
     else:
         # On cherche les lignes marquées comme Imposable ou étant des retraits Fiat (Vente)
+        # Mais on exclut formellement les lignes EUR (Fiat pur)
         cessions = journal[
-            (journal['Imposable'] == True) |
-            (journal['Category'].str.contains("Vente", case=False, na=False))
+            ((journal['Imposable'] == True) |
+             (journal['Category'].str.contains("Vente", case=False, na=False))) &
+            (journal['Asset'] != 'EUR')
         ].copy()
 
         if cessions.empty:
