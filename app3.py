@@ -145,9 +145,13 @@ with tab_cessions:
     else:
         # On cherche les lignes marquées comme Imposable ou étant des retraits Fiat (Vente)
         # Mais on exclut formellement les lignes EUR (Fiat pur)
+        def is_imposable(val):
+            s = str(val).upper()
+            return s == "TRUE" or s == "1" or s == "1.0"
+
         cessions = journal[
-            ((journal['Imposable'] == True) |
-             (journal['Category'].str.contains("Vente", case=False, na=False))) &
+            (journal['Imposable'].apply(is_imposable) |
+             journal['Category'].fillna("").str.contains("Vente", case=False)) &
             (journal['Asset'] != 'EUR')
         ].copy()
 

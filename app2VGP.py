@@ -128,10 +128,15 @@ for col in ["Amount", "Value ($)", "VGP (EUR)"]:
         journal[col] = 0.0
 
 # Identification des cessions (Vente ou Imposable, hors EUR)
+# On utilise une logique robuste pour détecter les booléens même s'ils sont stockés en texte
+def is_imposable(val):
+    s = str(val).upper()
+    return s == "TRUE" or s == "1" or s == "1.0"
+
 # On crée un masque pour les lignes qui ont besoin d'une VGP
 mask_cessions = (
-    (journal["Imposable"] == True) |
-    (journal["Category"].str.contains("Vente", case=False, na=False))
+    (journal["Imposable"].apply(is_imposable)) |
+    (journal["Category"].fillna("").str.contains("Vente", case=False))
 ) & (journal["Asset"] != "EUR")
 
 cessions_all = journal[mask_cessions].copy()
