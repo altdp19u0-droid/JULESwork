@@ -145,12 +145,12 @@ with tab_cessions:
     else:
         # On cherche les lignes marquées comme Imposable ou étant des retraits Fiat (Vente)
         # Mais on exclut formellement les lignes EUR (Fiat pur)
-        def is_imposable(val):
-            s = str(val).upper()
-            return s == "TRUE" or s == "1" or s == "1.0"
+        def is_imposable_robust(val):
+            s = str(val).upper().strip()
+            return s in ["TRUE", "1", "1.0", "VRAI"]
 
         cessions = journal[
-            (journal['Imposable'].apply(is_imposable) |
+            (journal['Imposable'].apply(is_imposable_robust) |
              journal['Category'].fillna("").str.contains("Vente", case=False)) &
             (journal['Asset'] != 'EUR')
         ].copy()
@@ -189,11 +189,14 @@ with tab_cessions:
             if st.button("🧮 Calculer les Plus-Values"):
                 # Formule: PV = Prix Cession - [Total Acq * (Prix Cession / VGP)]
                 # Note: Le Total Acq doit théoriquement être mis à jour après chaque cession.
-                # Ici on implémente la version simplifiée (une cession à la fois ou cumulée).
+                # Crucial: Le calcul doit être fait dans l'ordre chronologique (Ascendant).
                 results = []
                 temp_acq = total_acq_price
 
-                for _, row in edited_cessions.iterrows():
+                # Tri chronologique obligatoire pour la fiscalité française
+                cessions_sorted = edited_cessions.sort_values("Date", ascending=True)
+
+                for _, row in cessions_sorted.iterrows():
                     pc = row['Prix de Cession (EUR)']
                     vgp = row['VGP (EUR)']
 

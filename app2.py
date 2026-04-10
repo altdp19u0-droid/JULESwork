@@ -249,9 +249,10 @@ def sync_data(year):
         except Exception:
             old_df = pd.DataFrame(columns=COLUMNS)
 
-        # Fusion : pour les entrées manuelles (Fiat/Swap), on privilégie le Tx Hash + Asset + Account
-        # On utilise keep="first" car new_df contient la logique de double-écriture corrigée.
-        combined = pd.concat([new_df, old_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Account"], keep="first")
+        # Fusion : On privilégie old_df (données déjà qualifiées) sur new_df (données brutes).
+        # On utilise keep="first" avec old_df en premier pour ne pas écraser le travail de qualification
+        # déjà effectué par l'utilisateur.
+        combined = pd.concat([old_df, new_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Account"], keep="first")
 
         if not combined.empty and "Date" in combined.columns:
             st.session_state.journal_qualifie = combined.sort_values("Date", ascending=False)

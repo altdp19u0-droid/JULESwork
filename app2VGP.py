@@ -98,10 +98,19 @@ def get_portfolio_snapshot(journal, target_date):
 
     return pd.DataFrame(details), total_vgp
 
+def is_imposable_robust(val):
+    s = str(val).upper().strip()
+    return s in ["TRUE", "1", "1.0", "VRAI"]
+
 # --- UI sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
     target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, value=datetime.now().year)
+
+    st.divider()
+    st.subheader("🔍 Critères de détection")
+    use_imposable_col = st.checkbox("Basé sur 'Imposable'", value=True, help="Détecte les lignes marquées explicitement comme imposables dans l'App 2")
+    use_category_vente = st.checkbox("Basé sur 'Vente'", value=True, help="Détecte les lignes dont la catégorie contient 'Vente'")
 
     st.divider()
     st.info("💡 **Mode Incrémental** : Le calcul ignore les lignes ayant déjà une VGP non nulle.")
@@ -113,106 +122,103 @@ with st.sidebar:
 
 # --- Main logic ---
 path = get_qualified_path(target_year)
+
 if not os.path.exists(path):
-    st.error(f"Fichier introuvable : {path}")
-    st.stop()
-
-# Chargement journal
-journal = pd.read_csv(path)
-journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
-# Force numeric conversion
-for col in ["Amount", "Value ($)", "VGP (EUR)"]:
-    if col in journal.columns:
-        journal[col] = pd.to_numeric(journal[col], errors="coerce").fillna(0.0)
-    else:
-        journal[col] = 0.0
-
-# Identification des cessions (Vente ou Imposable, hors EUR)
-# On utilise une logique robuste pour détecter les booléens même s'ils sont stockés en texte
-def is_imposable(val):
-    s = str(val).upper()
-    return s == "TRUE" or s == "1" or s == "1.0"
-
-# On crée un masque pour les lignes qui ont besoin d'une VGP
-mask_cessions = (
-    (journal["Imposable"].apply(is_imposable)) |
-    (journal["Category"].fillna("").str.contains("Vente", case=False))
-) & (journal["Asset"] != "EUR")
-
-cessions_all = journal[mask_cessions].copy()
-
-if cessions_all.empty:
-    st.info("Aucune cession imposable détectée dans le journal.")
+    st.warning(f"📂 En attente de données : Le fichier '{os.path.basename(path)}' n'existe pas encore.")
+    st.info("💡 Utilisez l'**App 2** pour synchroniser et sanctuariser vos premières données qualifiées.")
 else:
-    # 1. État des lieux
-    nb_total = len(cessions_all)
-    nb_manquant = len(cessions_all[cessions_all["VGP (EUR)"] <= 0])
-
-    st.subheader(f"📈 Suivi des VGP ({nb_total} cessions au total)")
-    col1, col2 = st.columns(2)
-    col1.metric("Cessions identifiées", nb_total)
-    col2.metric("VGP à calculer", nb_manquant, delta=-nb_manquant, delta_color="inverse")
-
-    # 2. Boutons d'action
-    if nb_manquant > 0:
-        if st.button("🚀 Lancer le calcul automatique (Incrémental)", type="primary", use_container_width=True):
-            pbar = st.progress(0)
-            # On ne calcule que pour les manquants
-            to_calc = cessions_all[cessions_all["VGP (EUR)"] <= 0]
-
-            for idx, (i, row) in enumerate(to_calc.iterrows()):
-                _, vgp_val = get_portfolio_snapshot(journal, row["Date"])
-                journal.at[i, "VGP (EUR)"] = vgp_val
-                pbar.progress((idx + 1) / len(to_calc))
-
-            st.session_state.journal_active = journal
-            st.success("Calcul incrémental terminé.")
-            st.rerun()
-
-    # 3. Édition manuelle et Contrôle
-    st.divider()
-    st.subheader("📋 Liste des Cessions & Contrôle des VGP")
-    st.info("Vous pouvez modifier directement les valeurs VGP dans le tableau ci-dessous.")
-
-    # On affiche uniquement les cessions pour édition
-    # Type safety pour editor
-    display_cols = ["Date", "Account", "Asset", "Amount", "Value ($)", "VGP (EUR)", "Tx Hash"]
-    edit_df = journal[mask_cessions][display_cols].copy()
-    for c in ["Account", "Asset", "Tx Hash"]:
-        edit_df[c] = edit_df[c].fillna("").astype(str)
-
-    edited_cessions = st.data_editor(
-        edit_df,
-        column_config={
-            "VGP (EUR)": st.column_config.NumberColumn("VGP (EUR)", format="%.2f", help="Valeur totale du portefeuille à cette date"),
-            "Date": st.column_config.DatetimeColumn(disabled=True),
-            "Amount": st.column_config.NumberColumn(disabled=True),
-            "Asset": st.column_config.TextColumn(disabled=True),
-        },
-        use_container_width=True,
-        key="vgp_editor"
-    )
-
-    # Injection des modifs manuelles dans le journal principal
-    if st.button("💾 Sanctuariser les VGP (Enregistrer sur disque)", use_container_width=True):
-        journal.loc[mask_cessions, "VGP (EUR)"] = edited_cessions["VGP (EUR)"].values
-        journal.to_csv(path, index=False)
-        st.success(f"Journal mis à jour avec les VGP dans {path}")
-        st.balloons()
-
-    # 4. Audit détaillé
-    st.divider()
-    st.subheader("🔍 Audit : Détail du Portefeuille à une Date")
-    selected_date = st.selectbox("Choisir une date de cession pour voir le détail", options=sorted(cessions_all["Date"].unique(), reverse=True))
-
-    if selected_date:
-        snapshot_df, total_val = get_portfolio_snapshot(journal, selected_date)
-        if not snapshot_df.empty:
-            st.write(f"Composition du portefeuille au **{selected_date}** :")
-            st.dataframe(snapshot_df, use_container_width=True)
-            st.metric("VGP Totale Calculée", f"{total_val:,.2f} €")
+    # Chargement journal
+    journal = pd.read_csv(path)
+    journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
+    # Force numeric conversion
+    for col in ["Amount", "Value ($)", "VGP (EUR)"]:
+        if col in journal.columns:
+            journal[col] = pd.to_numeric(journal[col], errors="coerce").fillna(0.0)
         else:
-            st.warning("Aucun historique trouvé pour cette date.")
+            journal[col] = 0.0
+
+    # Construction du masque de détection
+    mask_imposable = journal["Imposable"].apply(is_imposable_robust) if use_imposable_col else pd.Series(False, index=journal.index)
+    mask_category = journal["Category"].fillna("").str.contains("Vente", case=False) if use_category_vente else pd.Series(False, index=journal.index)
+
+    mask_cessions = (mask_imposable | mask_category) & (journal["Asset"] != "EUR")
+    cessions_all = journal[mask_cessions].copy()
+
+    if cessions_all.empty:
+        st.warning("⚠️ Aucune cession imposable détectée avec les critères actuels.")
+        with st.expander("👀 Diagnostic : Voir tout le journal (pour vérifier les colonnes 'Imposable' / 'Category')"):
+            st.write("Vérifiez dans l'**App 2** que vos ventes sont bien marquées comme 'Imposable' ou 'Vente'.")
+            st.dataframe(journal, use_container_width=True)
+    else:
+        # 1. État des lieux
+        nb_total = len(cessions_all)
+        nb_manquant = len(cessions_all[cessions_all["VGP (EUR)"] <= 0])
+
+        st.subheader(f"📈 Suivi des VGP ({nb_total} cessions au total)")
+        col1, col2 = st.columns(2)
+        col1.metric("Cessions identifiées", nb_total)
+        col2.metric("VGP à calculer", nb_manquant, delta=-nb_manquant, delta_color="inverse")
+
+        # 2. Boutons d'action
+        if nb_manquant > 0:
+            if st.button("🚀 Lancer le calcul automatique (Incrémental)", type="primary", use_container_width=True):
+                pbar = st.progress(0)
+                # On ne calcule que pour les manquants
+                to_calc = cessions_all[cessions_all["VGP (EUR)"] <= 0]
+
+                for idx, (i, row) in enumerate(to_calc.iterrows()):
+                    _, vgp_val = get_portfolio_snapshot(journal, row["Date"])
+                    journal.at[i, "VGP (EUR)"] = vgp_val
+                    pbar.progress((idx + 1) / len(to_calc))
+
+                st.session_state.journal_active = journal
+                st.success("Calcul incrémental terminé.")
+                st.rerun()
+
+        # 3. Édition manuelle et Contrôle
+        st.divider()
+        st.subheader("📋 Liste des Cessions & Contrôle des VGP")
+        st.info("Vous pouvez modifier directement les valeurs VGP dans le tableau ci-dessous.")
+
+        # On affiche uniquement les cessions pour édition
+        # Type safety pour editor
+        display_cols = ["Date", "Account", "Asset", "Amount", "Value ($)", "VGP (EUR)", "Tx Hash"]
+        edit_df = journal[mask_cessions][display_cols].copy()
+        for c in ["Account", "Asset", "Tx Hash"]:
+            edit_df[c] = edit_df[c].fillna("").astype(str)
+
+        edited_cessions = st.data_editor(
+            edit_df,
+            column_config={
+                "VGP (EUR)": st.column_config.NumberColumn("VGP (EUR)", format="%.2f", help="Valeur totale du portefeuille à cette date"),
+                "Date": st.column_config.DatetimeColumn(disabled=True),
+                "Amount": st.column_config.NumberColumn(disabled=True),
+                "Asset": st.column_config.TextColumn(disabled=True),
+            },
+            use_container_width=True,
+            key="vgp_editor"
+        )
+
+        # Injection des modifs manuelles dans le journal principal
+        if st.button("💾 Sanctuariser les VGP (Enregistrer sur disque)", use_container_width=True):
+            journal.loc[mask_cessions, "VGP (EUR)"] = edited_cessions["VGP (EUR)"].values
+            journal.to_csv(path, index=False)
+            st.success(f"Journal mis à jour avec les VGP dans {path}")
+            st.balloons()
+
+        # 4. Audit détaillé
+        st.divider()
+        st.subheader("🔍 Audit : Détail du Portefeuille à une Date")
+        selected_date = st.selectbox("Choisir une date de cession pour voir le détail", options=sorted(cessions_all["Date"].unique(), reverse=True))
+
+        if selected_date:
+            snapshot_df, total_val = get_portfolio_snapshot(journal, selected_date)
+            if not snapshot_df.empty:
+                st.write(f"Composition du portefeuille au **{selected_date}** :")
+                st.dataframe(snapshot_df, use_container_width=True)
+                st.metric("VGP Totale Calculée", f"{total_val:,.2f} €")
+            else:
+                st.warning("Aucun historique trouvé pour cette date.")
 
 st.sidebar.divider()
 st.sidebar.caption("Calculateur VGP Pro v2.0 - app2VGP")
