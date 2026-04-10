@@ -55,20 +55,44 @@ def merge_raw_data(year):
         try:
             df_fiat = pd.read_csv(fiat_path)
             for _, r in df_fiat.iterrows():
+                m_eur = float(r.get("Montant EUR", 0.0))
+                qty_asset = float(r.get("Quantité", 0.0))
+                asset_name = str(r.get("Asset", "EUR")).upper()
+                f_type = str(r.get("Type", ""))
+
+                # --- LOGIQUE DOUBLE ÉCRITURE FIAT/CRYPTO ---
+                # 1. Toujours enregistrer le mouvement EUR
                 all_rows.append({
                     "Date": r.get("Date"),
                     "Account": r.get("Account", r.get("Compte/Label", "Manual")),
                     "Counterparty": r.get("Counterparty", r.get("Plateforme", "Bank")),
-                    "Asset": r.get("Asset", "EUR"),
-                    "Amount": float(r.get("Montant EUR", 0.0)) if "Vente" in str(r.get("Type")) else -float(r.get("Montant EUR", 0.0)),
-                    "Value ($)": 0.0,
+                    "Asset": "EUR",
+                    "Amount": m_eur if "Vente" in f_type else -m_eur,
+                    "Value ($)": (m_eur if "Vente" in f_type else -m_eur) / 0.92, # Simplification
                     "Network": "Fiat",
                     "Tx Hash": r.get("Tx Hash", ""),
                     "Source Type": "Fiat",
-                    "Category": "Achat" if "Achat" in str(r.get("Type")) else "Vente",
+                    "Category": "Achat" if "Achat" in f_type else "Vente",
                     "Status": "Valide",
                     "Imposable": False
                 })
+
+                # 2. Si un asset crypto et une quantité sont saisis, enregistrer le leg Crypto
+                if asset_name != "EUR" and asset_name != "NAN" and qty_asset > 0:
+                    all_rows.append({
+                        "Date": r.get("Date"),
+                        "Account": r.get("Account", r.get("Compte/Label", "Manual")),
+                        "Counterparty": r.get("Counterparty", r.get("Plateforme", "Bank")),
+                        "Asset": asset_name,
+                        "Amount": qty_asset if "Achat" in f_type else -qty_asset,
+                        "Value ($)": m_eur / 0.92, # La valeur crypto est le montant fiat payé
+                        "Network": "Manual",
+                        "Tx Hash": r.get("Tx Hash", ""),
+                        "Source Type": "Fiat-to-Crypto",
+                        "Category": "Achat" if "Achat" in f_type else "Vente",
+                        "Status": "Valide",
+                        "Imposable": False
+                    })
         except Exception: pass
 
     # 1b. Manual Swaps & Transfers
