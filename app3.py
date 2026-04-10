@@ -156,7 +156,12 @@ with tab_cessions:
 
             # On ajoute des colonnes pour le calcul fiscal
             cessions['Prix de Cession (EUR)'] = cessions['Value ($)'] * 0.92 # Conversion simplifiée ou saisie
-            if 'VGP (EUR)' not in cessions.columns: cessions['VGP (EUR)'] = 0.0
+
+            # Récupération automatique de la VGP calculée dans app2VGP si elle existe
+            if 'VGP (EUR)' not in cessions.columns:
+                cessions['VGP (EUR)'] = 0.0
+            else:
+                cessions['VGP (EUR)'] = cessions['VGP (EUR)'].fillna(0.0)
 
             # Type safety
             for col in ["Account", "Counterparty", "Asset", "Tx Hash", "Category", "Status"]:
