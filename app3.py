@@ -4,12 +4,14 @@ import streamlit as st
 from datetime import datetime
 from fpdf import FPDF
 from io import BytesIO
+import json
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Fiscalité (app3)", layout="wide")
 st.title("⚖️ Fiscalité Crypto France (Art. 150 VH bis)")
 
 EXPORT_BASE_DIR = "sanctuarisation"
+POSITIONS_FILE = "position_labels.json"
 
 # --- Helpers ---
 def get_file_path(year, category):
@@ -21,6 +23,17 @@ def get_file_path(year, category):
     if category == 'positions':
         return os.path.join(EXPORT_BASE_DIR, str(year), f"manual_positions_{year}.csv")
     return None
+
+def load_position_labels():
+    if os.path.exists(POSITIONS_FILE):
+        with open(POSITIONS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def resolve_raw_addr(addr_str):
+    if "(" in str(addr_str) and ")" in str(addr_str):
+        return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
+    return str(addr_str).strip().lower()
 
 def load_data(year):
     paths = {
@@ -91,30 +104,61 @@ with tab_accounts:
     st.subheader("🏦 Liste des Comptes Propriétaires Détectés")
     journal = data['journal']
     if not journal.empty:
-        accounts = journal['Account'].dropna().unique()
+        accounts = list(journal['Account'].dropna().unique())
         st.write(f"Comptes identifiés dans le journal : `{', '.join(accounts)}`")
 
         st.divider()
         st.subheader("📍 Positions de Fin d'Année")
-        # On peut soit dériver du journal, soit utiliser manual_positions
-        pos_df = data['positions']
+
+        # 1. Chargement du référentiel Protocoles
+        pos_labels = load_position_labels()
+        protocol_addrs = set(pos_labels.keys())
+        my_accounts = set(accounts)
 
         st.info("Ces positions servent à calculer la Valeur Globale du Portefeuille (VGP).")
 
-        # Merge manual positions with derived ones
-        derived_pos = journal.groupby(['Account', 'Asset']).agg({'Amount': 'sum'}).reset_index()
-        derived_pos = derived_pos[derived_pos['Amount'].abs() > 1e-8]
+        # 2. Calcul des soldes Locaux (Wallets)
+        derived_local = journal.groupby(['Account', 'Asset']).agg({'Amount': 'sum'}).reset_index()
+        derived_local = derived_local[derived_local['Amount'].abs() > 1e-8]
 
-        st.write("**Positions calculées depuis les flux :**")
-        # Force string casting for editor
-        for col in derived_pos.columns:
-            if derived_pos[col].dtype == object:
-                derived_pos[col] = derived_pos[col].fillna("").astype(str)
+        # 3. Calcul des soldes Protocoles (Mapping Counterparty)
+        # On cherche les flux vers des protocoles qui n'ont pas été retirés
+        # Solde Protocole = Sum(Sent to Protocol) - Sum(Received from Protocol)
+        protocol_rows = []
+        for addr, label in pos_labels.items():
+            # Flux ENVOYÉS au protocole (Amount négatif dans le journal car sort du wallet)
+            # Mais pour le solde du protocole, c'est une entrée.
+            # On simplifie : Solde = - (Somme des Amount du journal dont Counterparty est le protocole)
+            mask_prot = journal["Counterparty"].fillna("").apply(resolve_raw_addr) == addr
+            if mask_prot.any():
+                df_prot = journal[mask_prot].groupby("Asset")["Amount"].sum().reset_index()
+                for _, r in df_prot.iterrows():
+                    if abs(r["Amount"]) > 1e-8:
+                        protocol_rows.append({
+                            "Account": label,
+                            "Asset": r["Asset"],
+                            "Amount": -r["Amount"] # Inversion car c'est une créance sur le protocole
+                        })
 
-        st.data_editor(derived_pos, use_container_width=True, disabled=True, key="derived_pos_ed")
+        df_protocols = pd.DataFrame(protocol_rows)
+
+        # UI Affichage
+        st.write("**📱 Portefeuilles (Local) :**")
+        for col in derived_local.columns:
+            if derived_local[col].dtype == object:
+                derived_local[col] = derived_local[col].fillna("").astype(str)
+        st.data_editor(derived_local, use_container_width=True, disabled=True, key="local_pos_ed")
+
+        if not df_protocols.empty:
+            st.write("**🏦 Protocoles & Staking (Déporté) :**")
+            for col in df_protocols.columns:
+                if df_protocols[col].dtype == object:
+                    df_protocols[col] = df_protocols[col].fillna("").astype(str)
+            st.data_editor(df_protocols, use_container_width=True, disabled=True, key="proto_pos_ed")
 
         st.divider()
         st.write("**Positions déclarées manuellement (Off-chain, CEX, etc.) :**")
+        pos_df = data['positions']
         if not pos_df.empty:
             for col in pos_df.columns:
                 if pos_df[col].dtype == object:

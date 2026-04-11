@@ -12,6 +12,7 @@ st.title("🧮 Calculateur de VGP Historique (Version Pro)")
 
 EXPORT_BASE_DIR = "sanctuarisation"
 PRICE_CACHE_FILE = "historical_prices_cache.json"
+POSITIONS_FILE = "position_labels.json"
 
 # --- Cache Engine ---
 def load_price_cache():
@@ -21,6 +22,17 @@ def load_price_cache():
                 return json.load(f)
         except: return {}
     return {}
+
+def load_position_labels():
+    if os.path.exists(POSITIONS_FILE):
+        with open(POSITIONS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def resolve_raw_addr(addr_str):
+    if "(" in str(addr_str) and ")" in str(addr_str):
+        return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
+    return str(addr_str).strip().lower()
 
 def save_price_cache(cache):
     with open(PRICE_CACHE_FILE, "w") as f:
@@ -71,16 +83,44 @@ def get_price_eur(asset, date_obj):
         return 0.0
 
 def get_portfolio_snapshot(journal, target_date):
-    # Filtrage : tout sauf Spam, pas de EUR, et avant ou à la date de cession
+    # 1. Chargement des référentiels
+    pos_labels = load_position_labels()
+    protocol_addrs = set(pos_labels.keys())
+    my_accounts = set(journal["Account"].dropna().unique())
+
+    # 2. Filtrage de base
     df = journal[
         (journal["Status"] != "Spam") &
         (journal["Asset"] != "EUR") &
         (journal["Date"] <= target_date)
-    ]
-    if df.empty: return pd.DataFrame()
+    ].copy()
 
-    # Calcul des balances
-    balances = df.groupby("Asset")["Amount"].sum()
+    if df.empty: return pd.DataFrame(), 0.0
+
+    # 3. Identification des flux internes (qui ne changent pas la VGP globale)
+    # Un flux est interne si :
+    # - La contrepartie est un de mes comptes OU un protocole identifié
+    # AND
+    # - La catégorie est 'Transfert Interne' ou 'A vérifier' (par défaut pour les flux techniques)
+    def is_vgp_neutral(row):
+        cp_raw = resolve_raw_addr(row["Counterparty"])
+        cat = str(row["Category"])
+
+        # Si c'est un transfert entre mes wallets ou vers un protocole
+        if cp_raw in my_accounts or cp_raw in protocol_addrs:
+            # On neutralise seulement si c'est marqué comme transfert/technique
+            # On garde si c'est un Reward, Airdrop, Frais, etc.
+            if cat in ["Transfert Interne", "A vérifier", ""]:
+                return True
+        return False
+
+    df["is_neutral"] = df.apply(is_vgp_neutral, axis=1)
+
+    # On ne garde que ce qui modifie la richesse globale (Wealth-changing events)
+    df_wealth = df[~df["is_neutral"]]
+
+    # Calcul des balances consolidées (Portefeuilles + Protocoles)
+    balances = df_wealth.groupby("Asset")["Amount"].sum()
     balances = balances[balances.abs() > 1e-8]
 
     details = []

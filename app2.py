@@ -11,6 +11,7 @@ st.title("⚖️ Qualification & Nettoyage (Step 2)")
 
 EXPORT_BASE_DIR = "sanctuarisation"
 SPAM_FILE = "spam_blacklist.json"
+POSITIONS_FILE = "position_labels.json"
 
 # Schema Unifié
 COLUMNS = [
@@ -35,6 +36,16 @@ def load_spam_list():
 def save_spam_list(spam_set):
     with open(SPAM_FILE, "w") as f:
         json.dump(list(spam_set), f)
+
+def load_position_labels():
+    if os.path.exists(POSITIONS_FILE):
+        with open(POSITIONS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_position_labels(labels_dict):
+    with open(POSITIONS_FILE, "w") as f:
+        json.dump(labels_dict, f, indent=4)
 
 def get_qualified_path(year):
     return os.path.join(EXPORT_BASE_DIR, str(year), f"qualified_journal_{year}.csv")
@@ -313,6 +324,8 @@ with st.sidebar:
         f_acc = st.multiselect("Filtrer par Compte (Account)", options=get_safe_options(df_for_filters, "Account"))
         f_status = st.multiselect("Filtrer par Statut", options=get_safe_options(df_for_filters, "Status"), default=[])
 
+        f_cp_search = st.text_input("Filtrer par Counterparty (0x...)", "")
+
         st.divider()
         st.header("🔃 Tri du Journal")
         sort_cols = list(df_for_filters.columns)
@@ -386,6 +399,35 @@ with st.sidebar:
                 save_spam_list(spam_list)
                 st.rerun()
 
+    with st.expander("🏦 Mapping des Protocoles (Positions)"):
+        pos_labels = load_position_labels()
+        st.write(f"Protocoles identifiés : **{len(pos_labels)}**")
+
+        st.info("Associez une adresse à un nom de protocole (ex: Staking ETH, Compound Vault) pour l'inclure dans la VGP.")
+
+        new_addr = st.text_input("Adresse du contrat/vault", placeholder="0x...")
+        new_label = st.text_input("Nom du protocole / Label", placeholder="ex: Staking Lido")
+
+        if st.button("➕ Ajouter la Position"):
+            if new_addr and new_label:
+                addr_clean = resolve_raw_addr(new_addr)
+                pos_labels[addr_clean] = new_label
+                save_position_labels(pos_labels)
+                st.success(f"Position '{new_label}' enregistrée.")
+                st.rerun()
+
+        if pos_labels:
+            st.divider()
+            # Table simple pour voir/supprimer
+            pos_df = pd.DataFrame(list(pos_labels.items()), columns=["Adresse", "Label"])
+            st.dataframe(pos_df, use_container_width=True, hide_index=True)
+
+            to_del = st.selectbox("Supprimer une position", [""] + sorted(list(pos_labels.keys())))
+            if to_del and st.button("🗑️ Supprimer"):
+                del pos_labels[to_del]
+                save_position_labels(pos_labels)
+                st.rerun()
+
 # --- Main App ---
 st.subheader(f"📋 Journal de Qualification {target_year}")
 if "journal_qualifie" not in st.session_state or st.session_state.journal_qualifie.empty:
@@ -400,6 +442,8 @@ else:
         df_display = df_display[df_display["Account"].isin(f_acc)]
     if f_status:
         df_display = df_display[df_display["Status"].isin(f_status)]
+    if f_cp_search:
+        df_display = df_display[df_display["Counterparty"].astype(str).str.contains(f_cp_search, case=False, na=False)]
 
     # 1. Barre d'outils
     col_t1, col_t2, col_save = st.columns([1, 1, 1])
