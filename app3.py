@@ -35,6 +35,21 @@ def resolve_raw_addr(addr_str):
         return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
     return str(addr_str).strip().lower()
 
+def apply_position_labels(df):
+    """Remplace l'adresse Counterparty par 'Label (0x...)' si un mapping existe."""
+    if df.empty: return df
+    labels = load_position_labels()
+    if not labels: return df
+
+    def format_cp(cp_str):
+        raw = resolve_raw_addr(cp_str)
+        if raw in labels:
+            return f"{labels[raw]} ({raw})"
+        return cp_str
+
+    df["Counterparty"] = df["Counterparty"].apply(format_cp)
+    return df
+
 def load_data(year):
     paths = {
         'journal': get_file_path(year, 'qualified'),
@@ -59,6 +74,9 @@ def load_data(year):
             # FILTRAGE ANTI-SPAM GLOBAL (uniquement pour le journal qualifié)
             if key == 'journal' and 'Status' in df.columns:
                 df = df[df['Status'] != 'Spam']
+
+            if key == 'journal':
+                df = apply_position_labels(df)
 
             data[key] = df
         else:

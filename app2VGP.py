@@ -88,6 +88,12 @@ def get_portfolio_snapshot(journal, target_date):
     protocol_addrs = set(pos_labels.keys())
     my_accounts = set(journal["Account"].dropna().unique())
 
+    # Pre-calculate mapping for audit display
+    def get_location(cp_raw):
+        if cp_raw in protocol_addrs:
+            return pos_labels[cp_raw]
+        return "Wallet"
+
     # 2. Filtrage de base
     df = journal[
         (journal["Status"] != "Spam") &
@@ -123,18 +129,47 @@ def get_portfolio_snapshot(journal, target_date):
     balances = df_wealth.groupby("Asset")["Amount"].sum()
     balances = balances[balances.abs() > 1e-8]
 
+    # 5. Detail breakdown for audit (Breakdown by Location)
     details = []
     total_vgp = 0.0
+
+    # Pre-calculating prices to avoid redundant API calls
+    unique_assets = balances.index.tolist()
+    asset_prices = {a: get_price_eur(a, target_date) for a in unique_assets}
+
+    # Breakdown Logic:
+    # A. Balances in Wallets (Account-based)
+    local_bals = df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
+    for _, row in local_bals.iterrows():
+        if abs(row["Amount"]) > 1e-8:
+            p = asset_prices.get(row["Asset"], 0.0)
+            details.append({
+                "Location": f"Wallet: {row['Account']}",
+                "Asset": row["Asset"],
+                "Quantité": row["Amount"],
+                "Prix (EUR)": p,
+                "Valeur (EUR)": row["Amount"] * p
+            })
+
+    # B. Balances in Protocols (Label-based)
+    for addr, label in pos_labels.items():
+        mask_prot = df["Counterparty"].fillna("").apply(resolve_raw_addr) == addr
+        if mask_prot.any():
+            prot_bals = df[mask_prot].groupby("Asset")["Amount"].sum().reset_index()
+            for _, row in prot_bals.iterrows():
+                if abs(row["Amount"]) > 1e-8:
+                    p = asset_prices.get(row["Asset"], 0.0)
+                    details.append({
+                        "Location": f"Protocol: {label}",
+                        "Asset": row["Asset"],
+                        "Quantité": -row["Amount"], # Inverted
+                        "Prix (EUR)": p,
+                        "Valeur (EUR)": (-row["Amount"]) * p
+                    })
+
+    # Global VGP for return
     for asset, qty in balances.items():
-        price = get_price_eur(asset, target_date)
-        valeur = qty * price
-        total_vgp += valeur
-        details.append({
-            "Asset": asset,
-            "Quantité": qty,
-            "Prix (EUR)": price,
-            "Valeur (EUR)": valeur
-        })
+        total_vgp += qty * asset_prices.get(asset, 0.0)
 
     return pd.DataFrame(details), total_vgp
 

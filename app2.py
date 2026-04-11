@@ -51,6 +51,21 @@ def get_qualified_path(year):
     return os.path.join(EXPORT_BASE_DIR, str(year), f"qualified_journal_{year}.csv")
 
 # --- Engine: Merging & Cleaning ---
+def apply_position_labels(df):
+    """Remplace l'adresse Counterparty par 'Label (0x...)' si un mapping existe."""
+    if df.empty: return df
+    labels = load_position_labels()
+    if not labels: return df
+
+    def format_cp(cp_str):
+        raw = resolve_raw_addr(cp_str)
+        if raw in labels:
+            return f"{labels[raw]} ({raw})"
+        return cp_str
+
+    df["Counterparty"] = df["Counterparty"].apply(format_cp)
+    return df
+
 def merge_raw_data(year):
     year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
     if not os.path.exists(year_dir):
@@ -240,6 +255,8 @@ def merge_raw_data(year):
     if not df_final.empty:
         df_final["Date"] = pd.to_datetime(df_final["Date"], utc=True, errors="coerce", format="ISO8601")
         df_final = df_final.drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account"], keep="first")
+        # Application automatique des labels de protocoles
+        df_final = apply_position_labels(df_final)
 
     return df_final
 
@@ -275,7 +292,10 @@ def sync_data(year):
         combined = pd.concat([old_df, new_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Account", "Amount"], keep="first")
 
         if not combined.empty and "Date" in combined.columns:
-            st.session_state.journal_qualifie = combined.sort_values("Date", ascending=False)
+            combined = combined.sort_values("Date", ascending=False)
+            # Re-appliquer les labels si de nouveaux mappings ont été créés
+            combined = apply_position_labels(combined)
+            st.session_state.journal_qualifie = combined
         else:
             st.session_state.journal_qualifie = combined
     else:
@@ -293,6 +313,12 @@ with st.sidebar:
     if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
         sync_data(target_year)
         st.session_state.last_year = target_year
+
+    if st.button("🏷️ Appliquer les Labels de Protocoles"):
+        if "journal_qualifie" in st.session_state:
+            st.session_state.journal_qualifie = apply_position_labels(st.session_state.journal_qualifie)
+            st.success("Labels appliqués au journal en mémoire.")
+            st.rerun()
 
     st.divider()
     if st.button("🔄 Actualiser & Fusionner les Brutes"):

@@ -13,6 +13,24 @@ st.set_page_config(page_title="Jules Crypto - Explorateur (appcons)", layout="wi
 st.title("🔍 Explorateur de Données Sanctuarisées")
 
 EXPORT_BASE_DIR = "sanctuarisation"
+POSITIONS_FILE = "position_labels.json"
+
+def load_position_labels():
+    if os.path.exists(POSITIONS_FILE):
+        with open(POSITIONS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def apply_position_labels(df):
+    if df.empty: return df
+    labels = load_position_labels()
+    if not labels: return df
+    def format_cp(cp_str):
+        raw = resolve_raw_addr(cp_str)
+        if raw in labels: return f"{labels[raw]} ({raw})"
+        return cp_str
+    df["Counterparty"] = df["Counterparty"].apply(format_cp)
+    return df
 
 def resolve_raw_addr(addr_str):
     if "(" in str(addr_str) and ")" in str(addr_str):
@@ -114,6 +132,9 @@ def load_and_merge(files):
     return pd.concat(all_dfs, ignore_index=True)
 
 df_raw = load_and_merge(files_to_load)
+
+if not df_raw.empty:
+    df_raw = apply_position_labels(df_raw)
 
 if df_raw.empty:
     st.info("Sélectionnez des fichiers dans le sidebar pour commencer.")
