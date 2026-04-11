@@ -153,8 +153,15 @@ with st.sidebar:
             sel = st.multiselect(f"Filtrer par {c}", options)
             if sel: active_filters[c] = sel
 
+    # Manual Counterparty Filter
+    cp_search = st.text_input("Filtrer par Counterparty (0x...)", "")
+
 for col, val in active_filters.items():
     df = df[df[col].astype(str).isin(val)]
+
+if cp_search:
+    if "Counterparty" in df.columns:
+        df = df[df["Counterparty"].astype(str).str.contains(cp_search, case=False, na=False)]
 
 # 4. Sorting
 with st.sidebar:
