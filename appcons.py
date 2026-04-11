@@ -1,7 +1,12 @@
 import os
+import json
+import time
+import requests
 import pandas as pd
 import streamlit as st
-from datetime import datetime
+from fpdf import FPDF
+from io import BytesIO
+from datetime import datetime, time as dt_time
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Explorateur (appcons)", layout="wide")
@@ -16,119 +21,326 @@ def resolve_raw_addr(addr_str):
 
 # --- Sidebar ---
 with st.sidebar:
-    st.header("📂 Sélection du Fichier")
+    st.header("📂 Sélection des Données")
 
-    # 1. Année
-    years = sorted([y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))], reverse=True)
-    if not years:
-        st.warning("Aucune année trouvée dans 'sanctuarisation/'.")
+    # 1. Années disponibles
+    available_years = sorted([y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))], reverse=True)
+    if not available_years:
+        st.warning("Aucune donnée trouvée dans 'sanctuarisation/'.")
         st.stop()
 
-    target_year = st.selectbox("Année", years)
-    year_dir = os.path.join(EXPORT_BASE_DIR, target_year)
+    selected_years = st.multiselect("Années", available_years, default=available_years[:1])
 
-    # 2. Fichier
-    files = sorted([f for f in os.listdir(year_dir) if f.endswith(".csv")])
-    if not files:
-        st.warning(f"Aucun CSV trouvé dans {year_dir}.")
-        st.stop()
+    # 2. Mode de sélection des fichiers
+    sel_mode = st.radio("Mode de sélection", ["Thématique (Rapide)", "Manuel (Précis)"])
 
-    target_file = st.selectbox("Fichier CSV", files)
-    f_path = os.path.join(year_dir, target_file)
+    files_to_load = []
+
+    if sel_mode == "Thématique (Rapide)":
+        theme = st.selectbox("Thème", ["Sanctuarisation (Qualifié)", "Collecte (Raw)", "Fiat & Registres", "Tout fusionner"])
+        for y in selected_years:
+            y_dir = os.path.join(EXPORT_BASE_DIR, y)
+            all_files = os.listdir(y_dir)
+            if theme == "Sanctuarisation (Qualifié)":
+                files_to_load.extend([os.path.join(y_dir, f) for f in all_files if f.startswith("qualified_")])
+            elif theme == "Collecte (Raw)":
+                files_to_load.extend([os.path.join(y_dir, f) for f in all_files if f.startswith("raw_")])
+            elif theme == "Fiat & Registres":
+                files_to_load.extend([os.path.join(y_dir, f) for f in all_files if "fiat" in f or "swaps" in f or "positions" in f])
+            else: # Tout
+                files_to_load.extend([os.path.join(y_dir, f) for f in all_files if f.endswith(".csv") and not "backup" in f])
+    else:
+        # Manuel
+        for y in selected_years:
+            y_dir = os.path.join(EXPORT_BASE_DIR, y)
+            all_files = sorted([f for f in os.listdir(y_dir) if f.endswith(".csv")])
+            sel_files = st.multiselect(f"Fichiers {y}", all_files, key=f"sel_{y}")
+            files_to_load.extend([os.path.join(y_dir, f) for f in sel_files])
 
     st.divider()
-    st.header("📊 Paramètres d'Affichage")
+    st.header("📊 Filtres Globaux")
+    exclude_spam = st.checkbox("Exclure les Spams", value=True)
 
-    # Load data for column selection
-    try:
-        df = pd.read_csv(f_path)
+    # Date Range logic initialized later after data loading
 
-        # Résolution Account & Counterparty si manquantes (sans modifier le fichier source)
-        # 1. Account
-        if "Account" not in df.columns:
-            file_addr = ""
-            parts = target_file.split("_")
-            for p in parts:
-                if p.startswith("0x") and len(p) >= 40:
-                    file_addr = p.lower()
-                    break
-            df["Account"] = file_addr if file_addr else "unknown"
+# --- Data Loading Engine ---
+@st.cache_data
+def load_and_merge(files):
+    all_dfs = []
+    for f_path in files:
+        try:
+            temp_df = pd.read_csv(f_path)
+            # Add metadata
+            temp_df["_source_file"] = os.path.basename(f_path)
 
-        # 2. Counterparty
-        if "Counterparty" not in df.columns:
-            if "From" in df.columns and "To" in df.columns:
-                def get_cp(r):
-                    acc = str(r.get("Account", "")).lower()
-                    f_full = str(r.get("From", ""))
-                    t_full = str(r.get("To", ""))
-                    f_addr = resolve_raw_addr(f_full)
-                    return t_full if f_addr == acc else f_full
-                df["Counterparty"] = df.apply(get_cp, axis=1)
-            else:
-                df["Counterparty"] = "n/a"
+            # Standardization
+            if "Date" in temp_df.columns:
+                temp_df["Date"] = pd.to_datetime(temp_df["Date"], utc=True, errors="coerce")
 
-        cols = list(df.columns)
+            # Resolve Account for raw files
+            if "Account" not in temp_df.columns:
+                file_addr = ""
+                parts = os.path.basename(f_path).split("_")
+                for p in parts:
+                    if p.startswith("0x") and len(p) >= 40:
+                        file_addr = p.lower()
+                        break
+                temp_df["Account"] = file_addr if file_addr else "unknown"
 
-        sort_col = st.selectbox("Trier par", cols, index=0 if "Date" not in cols else cols.index("Date"))
-        sort_order = st.radio("Ordre de tri", ["Décroissant (Desc)", "Croissant (Asc)"], index=0)
+            # Resolve Counterparty for raw files
+            if "Counterparty" not in temp_df.columns:
+                if "From" in temp_df.columns and "To" in temp_df.columns:
+                    acc_col = temp_df["Account"].astype(str).str.lower()
+                    def get_cp_fast(row):
+                        f_addr = resolve_raw_addr(str(row.get("From", "")))
+                        return str(row.get("To", "")) if f_addr == str(row.get("Account", "")).lower() else str(row.get("From", ""))
+                    temp_df["Counterparty"] = temp_df.apply(get_cp_fast, axis=1)
+                else:
+                    temp_df["Counterparty"] = "n/a"
 
+            # Rename variations to common schema
+            rename_map = {
+                "Chain": "Network",
+                "Token": "Asset",
+                "Value": "Amount",
+                "Value ETH": "Amount"
+            }
+            temp_df = temp_df.rename(columns={k: v for k, v in rename_map.items() if k in temp_df.columns and v not in temp_df.columns})
+
+            all_dfs.append(temp_df)
+        except: continue
+
+    if not all_dfs: return pd.DataFrame()
+    return pd.concat(all_dfs, ignore_index=True)
+
+df_raw = load_and_merge(files_to_load)
+
+if df_raw.empty:
+    st.info("Sélectionnez des fichiers dans le sidebar pour commencer.")
+    st.stop()
+
+# --- Post-Processing & Filtering ---
+df = df_raw.copy()
+
+# 1. Spam filter
+if exclude_spam and "Status" in df.columns:
+    df = df[df["Status"].fillna("").astype(str).str.lower() != "spam"]
+
+# 2. Date Filter
+if "Date" in df.columns:
+    df = df.dropna(subset=["Date"])
+    min_date = df["Date"].min().date()
+    max_date = df["Date"].max().date()
+
+    with st.sidebar:
         st.divider()
-        st.info(f"💾 **Stats** : {len(df)} lignes, {len(cols)} colonnes.")
-        st.caption(f"Fichier : {target_file}")
-    except Exception as e:
-        st.error(f"Erreur de lecture : {e}")
-        st.stop()
+        st.header("📅 Période")
+        date_range = st.date_input("Intervalle", value=(min_date, max_date), min_value=min_date, max_value=max_date)
 
-# --- Main App ---
-st.subheader(f"📄 Contenu : {target_file}")
+    if len(date_range) == 2:
+        df = df[(df["Date"].dt.date >= date_range[0]) & (df["Date"].dt.date <= date_range[1])]
 
-# Processing
-if not df.empty:
-    ascending = (sort_order == "Croissant (Asc)")
-    df_display = df.sort_values(by=sort_col, ascending=ascending)
+# 3. Dynamic Filters
+with st.sidebar:
+    st.divider()
+    st.header("🔍 Filtres de Colonnes")
 
-    # Reorder columns for better visibility (Date, Account, Counterparty first)
-    cols = list(df_display.columns)
-    pref = ["Date", "Account", "Counterparty"]
-    existing_pref = [c for c in pref if c in cols]
-    others = [c for c in cols if c not in existing_pref]
-    df_display = df_display[existing_pref + others]
+    filter_cols = ["Asset", "Account", "Network", "Category"]
+    active_filters = {}
+    for c in filter_cols:
+        if c in df.columns:
+            options = sorted([str(x) for x in df[c].dropna().unique()])
+            sel = st.multiselect(f"Filtrer par {c}", options)
+            if sel: active_filters[c] = sel
 
-    # UI pour filtrage rapide (Optionnel mais utile)
-    search = st.text_input("🔍 Recherche rapide dans tout le tableau", "")
+for col, val in active_filters.items():
+    df = df[df[col].astype(str).isin(val)]
+
+# 4. Sorting
+with st.sidebar:
+    st.divider()
+    cols_avail = list(df.columns)
+    sort_col = st.selectbox("Trier par", cols_avail, index=cols_avail.index("Date") if "Date" in cols_avail else 0)
+    sort_order = st.radio("Sens", ["Décroissant", "Croissant"])
+    df = df.sort_values(by=sort_col, ascending=(sort_order == "Croissant"))
+
+# --- Main App Tabs ---
+tab_list, tab_vgp = st.tabs(["📋 Liste de Consultation", "💰 Soldes & VGP"])
+
+with tab_list:
+    st.subheader(f"📊 Données Consolidées ({len(df)} lignes)")
+
+    search = st.text_input("🔍 Recherche globale (tous champs)", "")
     if search:
-        # Recherche insensitive à la casse sur tous les champs
-        df_display = df_display[df_display.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)]
-        st.caption(f"Résultats filtrés : {len(df_display)} lignes.")
+        df = df[df.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)]
+        st.caption(f"Résultats après recherche : {len(df)} lignes.")
 
-    # Affichage avec Data Editor (qui permet le copier-coller natif)
-    # Type safety: force string for all non-numeric columns to avoid Streamlit FLOAT mismatch
-    for col in df_display.columns:
-        if df_display[col].dtype == object:
-            df_display[col] = df_display[col].fillna("").astype(str)
+    # Cast for editor
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].fillna("").astype(str)
 
-    st.data_editor(
-        df_display,
-        use_container_width=True,
-        num_rows="fixed", # On ne modifie pas ici, on consulte
-        disabled=True, # Lecture seule pour l'exploration
-        key="cons_editor"
+    st.data_editor(df, use_container_width=True, disabled=True, key="cons_editor")
+
+    st.download_button(
+        "📥 Exporter cette vue en CSV",
+        df.to_csv(index=False).encode('utf-8'),
+        "export_consolidated.csv",
+        "text/csv",
+        use_container_width=True
     )
 
-    st.divider()
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button(
-            label="📥 Télécharger ce CSV",
-            data=df_display.to_csv(index=False).encode('utf-8'),
-            file_name=f"export_{target_file}",
-            mime='text/csv'
-        )
-    with col2:
-        st.info("💡 **Astuce** : Sélectionnez des cellules et utilisez `Ctrl+C` pour copier le contenu directement.")
+with tab_vgp:
+    st.subheader("🏁 État des lieux & VGP Consolidé")
 
-else:
-    st.info("Le fichier est vide.")
+    if df.empty:
+        st.warning("Aucune donnée disponible avec les filtres actuels pour calculer la VGP.")
+    else:
+        # Logic: Balances at end date
+        end_date = df["Date"].max()
+        st.write(f"Calcul des soldes au **{end_date.strftime('%d/%m/%Y %H:%M')}** (Fin de période)")
+
+        # 1. Aggrégation des soldes par Compte et par Asset
+        # On utilise toutes les transactions jusqu'à la date de fin (pas seulement celles filtrées dans la liste)
+        df_snapshot_base = df_raw.copy()
+        if exclude_spam and "Status" in df_snapshot_base.columns:
+            df_snapshot_base = df_snapshot_base[df_snapshot_base["Status"].fillna("").astype(str).str.lower() != "spam"]
+
+        df_at_date = df_snapshot_base[df_snapshot_base["Date"] <= end_date]
+
+        # Filter EUR which doesn't count for VGP crypto
+        df_at_date = df_at_date[df_at_date["Asset"] != "EUR"]
+
+        if df_at_date.empty:
+            st.warning("Aucun mouvement trouvé pour calculer des soldes.")
+        else:
+            balances = df_at_date.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
+            balances = balances[balances["Amount"].abs() > 1e-8]
+
+            # UI: Bouton de conversion
+            st.divider()
+            st.write("📈 **Valorisation des actifs**")
+
+            # Mock/Import logic from app2VGP for pricing
+            PRICE_CACHE_FILE = "historical_prices_cache.json"
+
+            def get_price_eur_cached(asset, date_obj):
+                asset = str(asset).upper()
+                if asset in ["USDC", "USDT", "DAI", "USDC.E"]: return 0.92 # Approximation par défaut
+
+                d_str = date_obj.strftime("%d-%m-%Y")
+                cache = {}
+                if os.path.exists(PRICE_CACHE_FILE):
+                    try:
+                        with open(PRICE_CACHE_FILE, "r") as f: cache = json.load(f)
+                    except: pass
+
+                cache_key = f"{asset}_{d_str}"
+                if cache_key in cache: return float(cache[cache_key])
+
+                # API CoinGecko
+                asset_map = {"ETH": "ethereum", "BTC": "bitcoin", "POL": "polygon-ecosystem-token", "BNB": "binancecoin", "ARB": "arbitrum", "OP": "optimism", "WETH": "ethereum"}
+                cg_id = asset_map.get(asset, asset.lower())
+                url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
+                try:
+                    time.sleep(1.2)
+                    res = requests.get(url, timeout=10)
+                    data = res.json()
+                    price = float(data["market_data"]["current_price"]["eur"])
+                    cache[cache_key] = price
+                    with open(PRICE_CACHE_FILE, "w") as f: json.dump(cache, f)
+                    return price
+                except: return 0.0
+
+            if st.button("🚀 Rechercher les prix & Calculer la VGP", type="primary", use_container_width=True):
+                pbar = st.progress(0)
+                assets_unique = balances["Asset"].unique()
+                prices = {}
+                for i, a in enumerate(assets_unique):
+                    prices[a] = get_price_eur_cached(a, end_date)
+                    pbar.progress((i + 1) / len(assets_unique))
+
+                balances["Prix (EUR)"] = balances["Asset"].map(prices)
+                balances["Valeur (EUR)"] = balances["Amount"] * balances["Prix (EUR)"]
+
+                st.session_state.vgp_df = balances
+                st.success("Calcul de valorisation terminé.")
+
+            if "vgp_df" in st.session_state:
+                res_df = st.session_state.vgp_df
+
+                # Total par compte
+                st.write("🔍 **Détail par Compte et Asset**")
+                st.dataframe(res_df, use_container_width=True)
+
+                st.divider()
+                col_v1, col_v2 = st.columns(2)
+
+                # 1. Total Global
+                total_vgp = res_df["Valeur (EUR)"].sum()
+                col_v1.metric("Valeur Globale du Portefeuille (VGP)", f"{total_vgp:,.2f} €")
+
+                # 2. Total par Compte
+                st.write("📊 **Répartition par Compte**")
+                by_acc = res_df.groupby("Account")["Valeur (EUR)"].sum().reset_index()
+                st.dataframe(by_acc, use_container_width=True)
+
+                # Export results
+                st.divider()
+                c1, c2 = st.columns(2)
+                c1.download_button(
+                    "📥 Exporter en CSV",
+                    res_df.to_csv(index=False).encode('utf-8'),
+                    f"vgp_snapshot_{end_date.strftime('%Y%m%d')}.csv",
+                    "text/csv",
+                    use_container_width=True
+                )
+
+                # PDF Generation
+                def generate_vgp_pdf(data_df, date_str, total_val):
+                    pdf = FPDF(orientation='L', unit='mm', format='A4')
+                    pdf.add_page()
+                    pdf.set_font("helvetica", 'B', 16)
+                    pdf.cell(0, 10, f"Etat des Lieux & VGP - {date_str}", ln=True, align='C')
+                    pdf.ln(10)
+
+                    # Table Header
+                    pdf.set_font("helvetica", 'B', 10)
+                    pdf.set_fill_color(200, 200, 200)
+                    cols = ["Account", "Asset", "Amount", "Prix (EUR)", "Valeur (EUR)"]
+                    col_widths = [80, 40, 50, 50, 50]
+                    for i, c in enumerate(cols):
+                        pdf.cell(col_widths[i], 10, c, border=1, fill=True)
+                    pdf.ln()
+
+                    # Table Rows
+                    pdf.set_font("helvetica", '', 10)
+                    for _, row in data_df.iterrows():
+                        # Character replacement for Latin-1 compatibility
+                        acc = str(row["Account"])[:40].encode('latin-1', 'replace').decode('latin-1')
+                        asset = str(row["Asset"]).encode('latin-1', 'replace').decode('latin-1')
+
+                        pdf.cell(col_widths[0], 10, acc, border=1)
+                        pdf.cell(col_widths[1], 10, asset, border=1)
+                        pdf.cell(col_widths[2], 10, f"{row['Amount']:.4f}", border=1)
+                        pdf.cell(col_widths[3], 10, f"{row['Prix (EUR)']:.2f} EUR", border=1)
+                        pdf.cell(col_widths[4], 10, f"{row['Valeur (EUR)']:.2f} EUR", border=1)
+                        pdf.ln()
+
+                    pdf.ln(10)
+                    pdf.set_font("helvetica", 'B', 12)
+                    pdf.cell(0, 10, f"VALEUR GLOBALE DU PORTEFEUILLE : {total_val:,.2f} EUR", ln=True, align='R')
+
+                    return pdf.output() # returns bytes in fpdf2
+
+                pdf_bytes = generate_vgp_pdf(res_df, end_date.strftime('%d/%m/%Y'), total_vgp)
+                c2.download_button(
+                    "📄 Télécharger le Rapport PDF",
+                    data=pdf_bytes,
+                    file_name=f"Rapport_VGP_{end_date.strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
 
 st.sidebar.divider()
 st.sidebar.caption("Explorateur v1.0 - appcons")

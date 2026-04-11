@@ -2,6 +2,8 @@ import os
 import pandas as pd
 import streamlit as st
 from datetime import datetime
+from fpdf import FPDF
+from io import BytesIO
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Fiscalité (app3)", layout="wide")
@@ -252,6 +254,50 @@ with tab_bilan:
         st.code(f"{round(total_pv)}")
 
         st.info("💡 N'oubliez pas de joindre l'annexe 2086 à votre déclaration de revenus.")
+
+        # PDF Export for Fiscality
+        def generate_fiscal_pdf(bilan_df, year, total_pv, impot):
+            pdf = FPDF(orientation='L', unit='mm', format='A4')
+            pdf.add_page()
+            pdf.set_font("helvetica", 'B', 16)
+            pdf.cell(0, 10, f"Rapport Fiscal Crypto France - {year} (Art. 150 VH bis)", ln=True, align='C')
+            pdf.ln(10)
+
+            # Header
+            pdf.set_font("helvetica", 'B', 10)
+            pdf.set_fill_color(200, 200, 200)
+            cols = ["Date", "Asset", "Prix Cession", "VGP", "Abattement Acq", "Plus-Value Brute"]
+            col_widths = [45, 30, 45, 45, 55, 55]
+            for i, c in enumerate(cols):
+                pdf.cell(col_widths[i], 10, c, border=1, fill=True)
+            pdf.ln()
+
+            # Rows
+            pdf.set_font("helvetica", '', 10)
+            for _, row in bilan_df.iterrows():
+                pdf.cell(col_widths[0], 10, str(row["Date"]), border=1)
+                pdf.cell(col_widths[1], 10, str(row["Asset"]), border=1)
+                pdf.cell(col_widths[2], 10, f"{row['Prix Cession']:.2f} EUR", border=1)
+                pdf.cell(col_widths[3], 10, f"{row['VGP']:.2f} EUR", border=1)
+                pdf.cell(col_widths[4], 10, f"{row['Abattement Acq']:.2f} EUR", border=1)
+                pdf.cell(col_widths[5], 10, f"{row['Plus-Value Brute']:.2f} EUR", border=1)
+                pdf.ln()
+
+            pdf.ln(10)
+            pdf.set_font("helvetica", 'B', 12)
+            pdf.cell(0, 10, f"PLUS-VALUE TOTALE BRUTE : {total_pv:,.2f} EUR", ln=True, align='R')
+            pdf.cell(0, 10, f"IMPOT ESTIMÉ (PFU) : {impot:,.2f} EUR", ln=True, align='R')
+
+            return pdf.output()
+
+        pdf_bytes = generate_fiscal_pdf(df_bilan, target_year, total_pv, impot)
+        st.download_button(
+            "📄 Télécharger le Rapport Fiscal PDF",
+            data=pdf_bytes,
+            file_name=f"Rapport_Fiscal_{target_year}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
     else:
         st.info("Réalisez le calcul dans l'onglet 'Cessions' pour voir le bilan.")
 
