@@ -53,24 +53,31 @@ def apply_position_labels(df):
     return df
 
 def pdf_safe_str(val):
-    """Sanitize string for Latin-1 PDF encoding by removing/replacing problematic chars."""
+    """Sanitize string for Latin-1 PDF encoding by preserving visual nuances."""
     if val is None: return ""
     s = str(val)
 
-    # Unicode Normalization (NFKD handles compatibility chars)
+    # Unicode Normalization
     s = unicodedata.normalize('NFKD', s)
 
-    # Map look-alike characters (Lisu, Cyrillic, etc.) to ASCII
+    # Comprehensive Mapping of Visual "Nuances" (Look-alikes)
+    # This ensures "ꓴꓢꓓС" maps to "USDC" visually while preserving the count of characters
     replacements = {
-        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\u0421": "C", # look-alikes USDC
-        "\u216d": "C", # Roman numeral C
-        "\u20ac": "EUR", "\u2019": "'", "\u200a": " ",
+        # Lisu / Other blocks
+        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D",
+        # Cyrillic Look-alikes
+        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H", "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X", "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
+        # Roman Numerals
+        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
+        # Special Spaces / Punctuation
+        "\u200a": " ", "\u2009": " ", "\u202f": " ", "\u2019": "'", "\u20ac": "EUR"
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
 
-    # Final ASCII filtering to ensure readability in PDF
-    return s.encode('latin-1', 'replace').decode('latin-1').replace('?', '') or "Asset"
+    # Encode as latin-1. Use 'replace' strategy but DON'T strip the '?'
+    # This allows the user to see that a nuance existed while keeping the PDF from crashing.
+    return s.encode('latin-1', 'replace').decode('latin-1') or "Asset"
 
 def load_data(year):
     paths = {
