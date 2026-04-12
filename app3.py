@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 from fpdf import FPDF
-from io import BytesIO
+from io import BytesIO, StringIO
 import json
 
 # --- Configuration ---
@@ -320,7 +320,7 @@ with tab_bilan:
         # PDF Export for Fiscality
         @st.cache_data
         def generate_fiscal_pdf_cached(bilan_json, year, total_pv, impot):
-            bilan_df = pd.read_json(bilan_json)
+            bilan_df = pd.read_json(StringIO(bilan_json))
             pdf = FPDF(orientation='L', unit='mm', format='A4')
             pdf.set_auto_page_break(auto=True, margin=15)
             pdf.add_page()

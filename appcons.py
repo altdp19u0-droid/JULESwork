@@ -5,7 +5,7 @@ import requests
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
-from io import BytesIO
+from io import BytesIO, StringIO
 from datetime import datetime, time as dt_time
 
 # --- Configuration ---
@@ -327,7 +327,7 @@ with tab_vgp:
                 # PDF Generation
                 @st.cache_data
                 def generate_vgp_pdf_cached(data_json, date_str, total_val):
-                    data_df = pd.read_json(data_json)
+                    data_df = pd.read_json(StringIO(data_json))
                     pdf = FPDF(orientation='L', unit='mm', format='A4')
                     pdf.set_auto_page_break(auto=True, margin=15)
                     pdf.add_page()
