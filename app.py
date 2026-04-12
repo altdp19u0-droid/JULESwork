@@ -241,10 +241,10 @@ if harvest_btn:
                     "Date": dt, "Chain": chain, "Tx Hash": tx_hash, "Type": "Native/Internal",
                     "Method": method, "Block": block, "From": f_addr, "To": t_addr,
                     "Value ETH": val, "Value ($)": val_usd, "Rate ($)": rate_usd,
-                    "Fee ETH": fee if f_addr == addr_c.lower() else 0.0,
-                    "Fee ($)": fee_usd if f_addr == addr_c.lower() else 0.0,
+                    "Fee ETH": fee if f_raw == addr_c.lower() else 0.0,
+                    "Fee ($)": fee_usd if f_raw == addr_c.lower() else 0.0,
                     "Account": addr_c.lower(),
-                    "Counterparty": t_addr if f_addr == addr_c.lower() else f_addr
+                    "Counterparty": t_addr if f_raw == addr_c.lower() else f_addr
                 })
             progress_tx.progress((idx + 1) / len(chains))
 

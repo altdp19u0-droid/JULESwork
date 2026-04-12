@@ -5,6 +5,7 @@ from datetime import datetime
 from fpdf import FPDF
 from io import BytesIO, StringIO
 import json
+import tempfile
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Fiscalité (app3)", layout="wide")
@@ -318,9 +319,7 @@ with tab_bilan:
         st.info("💡 N'oubliez pas de joindre l'annexe 2086 à votre déclaration de revenus.")
 
         # PDF Export for Fiscality
-        @st.cache_data
-        def generate_fiscal_pdf_cached(bilan_json, year, total_pv, impot):
-            bilan_df = pd.read_json(StringIO(bilan_json))
+        def generate_fiscal_pdf(bilan_df, year, total_pv, impot):
             pdf = FPDF(orientation='L', unit='mm', format='A4')
             pdf.set_auto_page_break(auto=True, margin=15)
             pdf.add_page()
@@ -339,7 +338,12 @@ with tab_bilan:
 
             pdf.set_font("helvetica", '', 10)
             for _, row in bilan_df.iterrows():
-                date_str = str(row["Date"]).encode('latin-1', 'replace').decode('latin-1')
+                try:
+                    d_str = pd.to_datetime(row["Date"]).strftime("%d/%m/%Y")
+                except:
+                    d_str = str(row["Date"])
+
+                date_str = d_str.encode('latin-1', 'replace').decode('latin-1')
                 asset_str = str(row["Asset"]).encode('latin-1', 'replace').decode('latin-1')
                 pdf.cell(col_widths[0], 10, date_str, border=1)
                 pdf.cell(col_widths[1], 10, asset_str, border=1)
@@ -354,17 +358,36 @@ with tab_bilan:
             pdf.cell(0, 10, f"PLUS-VALUE TOTALE BRUTE : {total_pv:,.2f} EUR", ln=True, align='R')
             pdf.cell(0, 10, f"IMPOT ESTIMÉ (PFU) : {impot:,.2f} EUR", ln=True, align='R')
 
-            output = pdf.output()
-            if isinstance(output, str):
-                return output.encode('latin-1')
-            return bytes(output)
+            # Most robust way: write to a temporary file and read it back
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp_path = tmp.name
+
+            try:
+                pdf.output(tmp_path)
+                with open(tmp_path, "rb") as f:
+                    pdf_bytes = f.read()
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+
+            return pdf_bytes
 
         # Explicit trigger for PDF generation to ensure data is present
         if st.button("📊 Préparer le Rapport PDF", use_container_width=True):
-            # Serialize to JSON for caching
-            pdf_bytes = generate_fiscal_pdf_cached(df_bilan.to_json(), target_year, total_pv, impot)
-            st.session_state.fiscal_pdf_bytes = pdf_bytes
-            st.success("Rapport PDF prêt.")
+            if df_bilan.empty:
+                st.error("Le bilan est vide, impossible de générer le PDF.")
+            else:
+                try:
+                    # Generate directly
+                    final_bytes = generate_fiscal_pdf(df_bilan, target_year, total_pv, impot)
+                    if len(final_bytes) > 500:
+                        st.session_state.fiscal_pdf_bytes = final_bytes
+                        st.success(f"Rapport PDF prêt ({len(final_bytes)} octets).")
+                        st.rerun()
+                    else:
+                        st.error("Erreur : Le PDF généré est trop petit.")
+                except Exception as e:
+                    st.error(f"Erreur de génération : {e}")
 
         if "fiscal_pdf_bytes" in st.session_state:
             st.download_button(

@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 from fpdf import FPDF
 from io import BytesIO, StringIO
+import tempfile
 from datetime import datetime, time as dt_time
 
 # --- Configuration ---
@@ -325,9 +326,7 @@ with tab_vgp:
                 )
 
                 # PDF Generation
-                @st.cache_data
-                def generate_vgp_pdf_cached(data_json, date_str, total_val):
-                    data_df = pd.read_json(StringIO(data_json))
+                def generate_vgp_pdf(data_df, date_str, total_val):
                     pdf = FPDF(orientation='L', unit='mm', format='A4')
                     pdf.set_auto_page_break(auto=True, margin=15)
                     pdf.add_page()
@@ -358,15 +357,29 @@ with tab_vgp:
                     pdf.set_font("helvetica", 'B', 12)
                     pdf.cell(0, 10, f"VALEUR GLOBALE DU PORTEFEUILLE : {total_val:,.2f} EUR", ln=True, align='R')
 
-                    output = pdf.output()
-                    if isinstance(output, str):
-                        return output.encode('latin-1')
-                    return bytes(output)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                        tmp_path = tmp.name
+                    try:
+                        pdf.output(tmp_path)
+                        with open(tmp_path, "rb") as f:
+                            pdf_bytes = f.read()
+                    finally:
+                        if os.path.exists(tmp_path):
+                            os.unlink(tmp_path)
+
+                    return pdf_bytes
 
                 if c2.button("📊 Préparer le Rapport PDF", use_container_width=True):
-                    pdf_bytes = generate_vgp_pdf_cached(res_df.to_json(), end_date.strftime('%d/%m/%Y'), total_vgp)
-                    st.session_state.vgp_pdf_bytes = pdf_bytes
-                    st.success("Rapport PDF prêt.")
+                    try:
+                        final_bytes = generate_vgp_pdf(res_df, end_date.strftime('%d/%m/%Y'), total_vgp)
+                        if len(final_bytes) > 500:
+                            st.session_state.vgp_pdf_bytes = final_bytes
+                            st.success(f"Rapport PDF prêt ({len(final_bytes)} octets).")
+                            st.rerun()
+                        else:
+                            st.error("Erreur : Le PDF généré est trop petit.")
+                    except Exception as e:
+                        st.error(f"Erreur de génération : {e}")
 
                 if "vgp_pdf_bytes" in st.session_state:
                     c2.download_button(
