@@ -7,6 +7,18 @@ from io import BytesIO, StringIO
 import json
 import tempfile
 import unicodedata
+import traceback
+
+# --- Helpers ---
+def pd_read_csv_safe(path):
+    """Robust CSV reading for Windows with encoding fallbacks."""
+    try:
+        return pd.read_csv(path, encoding="utf-8-sig")
+    except:
+        try:
+            return pd.read_csv(path, encoding="latin-1")
+        except:
+            return pd.read_csv(path, encoding="utf-8", errors="replace")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Fiscalité (app3)", layout="wide")
@@ -28,8 +40,10 @@ def get_file_path(year, category):
 
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
-        with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(POSITIONS_FILE, "r", encoding="utf-8", errors="replace") as f:
+                return json.load(f)
+        except: return {}
     return {}
 
 def resolve_raw_addr(addr_str):
@@ -90,7 +104,7 @@ def load_data(year):
     data = {}
     for key, path in paths.items():
         if os.path.exists(path) and os.path.getsize(path) > 0:
-            df = pd.read_csv(path, encoding="utf-8-sig")
+            df = pd_read_csv_safe(path)
             # Standardisation Date
             if 'Date' in df.columns:
                 df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
@@ -492,6 +506,10 @@ with tab_bilan:
                         target_year, accounts, derived_local, df_protocols, pos_df, data['fiat'],
                         df_bilan, total_pv, impot
                     )
+                    # Convert to bytes if it came as string/bytearray
+                    if not isinstance(final_bytes, bytes):
+                        final_bytes = bytes(final_bytes)
+
                     if len(final_bytes) > 1000:
                         st.session_state.fiscal_pdf_bytes = final_bytes
                         st.success(f"Rapport complet prêt ({len(final_bytes)} octets).")
@@ -500,6 +518,7 @@ with tab_bilan:
                         st.error("Erreur : Le PDF généré est anormalement court.")
                 except Exception as e:
                     st.error(f"Erreur de génération : {e}")
+                    st.expander("Détails technique de l'erreur").code(traceback.format_exc())
 
         if "fiscal_pdf_bytes" in st.session_state:
             st.download_button(

@@ -18,15 +18,17 @@ POSITIONS_FILE = "position_labels.json"
 def load_price_cache():
     if os.path.exists(PRICE_CACHE_FILE):
         try:
-            with open(PRICE_CACHE_FILE, "r", encoding="utf-8") as f:
+            with open(PRICE_CACHE_FILE, "r", encoding="utf-8", errors="replace") as f:
                 return json.load(f)
         except: return {}
     return {}
 
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
-        with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(POSITIONS_FILE, "r", encoding="utf-8", errors="replace") as f:
+                return json.load(f)
+        except: return {}
     return {}
 
 def resolve_raw_addr(addr_str):
@@ -39,6 +41,16 @@ def save_price_cache(cache):
         json.dump(cache, f)
 
 # --- Helpers ---
+def pd_read_csv_safe(path):
+    """Robust CSV reading for Windows with encoding fallbacks."""
+    try:
+        return pd.read_csv(path, encoding="utf-8-sig")
+    except:
+        try:
+            return pd.read_csv(path, encoding="latin-1")
+        except:
+            return pd.read_csv(path, encoding="utf-8", errors="replace")
+
 def get_qualified_path(year):
     return os.path.join(EXPORT_BASE_DIR, str(year), f"qualified_journal_{year}.csv")
 
@@ -203,7 +215,7 @@ if not os.path.exists(path):
     st.info("💡 Utilisez l'**App 2** pour synchroniser et sanctuariser vos premières données qualifiées.")
 else:
     # Chargement journal
-    journal = pd.read_csv(path, encoding="utf-8-sig")
+    journal = pd_read_csv_safe(path)
     journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
     # Force numeric conversion
     for col in ["Amount", "Value ($)", "VGP (EUR)"]:

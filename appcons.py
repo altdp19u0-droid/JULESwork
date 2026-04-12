@@ -8,7 +8,19 @@ from fpdf import FPDF
 from io import BytesIO, StringIO
 import tempfile
 import unicodedata
+import traceback
 from datetime import datetime, time as dt_time
+
+# --- Helpers ---
+def pd_read_csv_safe(path):
+    """Robust CSV reading for Windows with encoding fallbacks."""
+    try:
+        return pd.read_csv(path, encoding="utf-8-sig")
+    except:
+        try:
+            return pd.read_csv(path, encoding="latin-1")
+        except:
+            return pd.read_csv(path, encoding="utf-8", errors="replace")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Explorateur (appcons)", layout="wide")
@@ -19,8 +31,10 @@ POSITIONS_FILE = "position_labels.json"
 
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
-        with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(POSITIONS_FILE, "r", encoding="utf-8", errors="replace") as f:
+                return json.load(f)
+        except: return {}
     return {}
 
 def apply_position_labels(df):
@@ -117,7 +131,7 @@ def load_and_merge(files):
     all_dfs = []
     for f_path in files:
         try:
-            temp_df = pd.read_csv(f_path, encoding="utf-8-sig")
+            temp_df = pd_read_csv_safe(f_path)
             # Add metadata
             temp_df["_source_file"] = os.path.basename(f_path)
 
@@ -290,7 +304,7 @@ with tab_vgp:
                 cache = {}
                 if os.path.exists(PRICE_CACHE_FILE):
                     try:
-                        with open(PRICE_CACHE_FILE, "r", encoding="utf-8") as f: cache = json.load(f)
+                        with open(PRICE_CACHE_FILE, "r", encoding="utf-8", errors="replace") as f: cache = json.load(f)
                     except: pass
 
                 cache_key = f"{asset}_{d_str}"
@@ -403,6 +417,10 @@ with tab_vgp:
                     if "vgp_pdf_bytes" in st.session_state: del st.session_state.vgp_pdf_bytes
                     try:
                         final_bytes = generate_vgp_pdf(res_df, end_date.strftime('%d/%m/%Y'), total_vgp)
+                        # Convert to bytes if it came as string/bytearray
+                        if not isinstance(final_bytes, bytes):
+                            final_bytes = bytes(final_bytes)
+
                         if len(final_bytes) > 500:
                             st.session_state.vgp_pdf_bytes = final_bytes
                             st.success(f"Rapport PDF prêt ({len(final_bytes)} octets).")
@@ -411,6 +429,7 @@ with tab_vgp:
                             st.error("Erreur : Le PDF généré est trop petit.")
                     except Exception as e:
                         st.error(f"Erreur de génération : {e}")
+                        st.expander("Détails technique de l'erreur").code(traceback.format_exc())
 
                 if "vgp_pdf_bytes" in st.session_state:
                     c2.download_button(
