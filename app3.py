@@ -53,31 +53,29 @@ def apply_position_labels(df):
     return df
 
 def pdf_safe_str(val):
-    """Sanitize string for Latin-1 PDF encoding by preserving visual nuances."""
+    """Sanitize string for PDF encoding by preserving visual nuances."""
     if val is None: return ""
     s = str(val)
 
-    # Unicode Normalization
-    s = unicodedata.normalize('NFKD', s)
+    # Map Lisu look-alikes which are rarely in standard fonts
+    # Mapping them to ASCII ensures they display correctly even in DejaVu
+    lisu_map = {
+        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
+    }
+    for k, v in lisu_map.items():
+        s = s.replace(k, v)
 
-    # Comprehensive Mapping of Visual "Nuances" (Look-alikes)
-    # This ensures "ꓴꓢꓓС" maps to "USDC" visually while preserving the count of characters
+    # Unicode Normalization (NFKC is better for visual mapping)
+    s = unicodedata.normalize('NFKC', s)
+
+    # Special Spaces / Punctuation
     replacements = {
-        # Lisu / Other blocks
-        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D",
-        # Cyrillic Look-alikes
-        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H", "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X", "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
-        # Roman Numerals
-        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
-        # Special Spaces / Punctuation
         "\u200a": " ", "\u2009": " ", "\u202f": " ", "\u2019": "'", "\u20ac": "EUR"
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
 
-    # Encode as latin-1. Use 'replace' strategy but DON'T strip the '?'
-    # This allows the user to see that a nuance existed while keeping the PDF from crashing.
-    return s.encode('latin-1', 'replace').decode('latin-1') or "Asset"
+    return s
 
 def load_data(year):
     paths = {
@@ -351,28 +349,38 @@ with tab_bilan:
             pdf = FPDF(orientation='L', unit='mm', format='A4')
             pdf.set_auto_page_break(auto=True, margin=15)
 
+            # Unicode Font Registration
+            font_path = "DejaVuSans.ttf"
+            font_bold_path = "DejaVuSans-Bold.ttf"
+            if os.path.exists(font_path) and os.path.exists(font_bold_path):
+                pdf.add_font("DejaVu", "", font_path)
+                pdf.add_font("DejaVu", "B", font_bold_path)
+                main_font = "DejaVu"
+            else:
+                main_font = "helvetica"
+
             # --- Page 1: Comptes et Positions ---
             pdf.add_page()
-            pdf.set_font("helvetica", 'B', 18)
+            pdf.set_font(main_font, 'B', 18)
             pdf.cell(0, 15, f"RAPPORT FISCAL CRYPTO - {year}", ln=True, align='C')
-            pdf.set_font("helvetica", 'B', 14)
+            pdf.set_font(main_font, 'B', 14)
             pdf.cell(0, 10, "SECTION 1 : COMPTES & POSITIONS", ln=True)
             pdf.ln(5)
 
-            pdf.set_font("helvetica", 'B', 10)
+            pdf.set_font(main_font, 'B', 10)
             acc_str = ", ".join([pdf_safe_str(a) for a in accounts]) if accounts else "Aucun"
             pdf.multi_cell(0, 10, f"Comptes identifies : {acc_str}")
             pdf.ln(5)
 
             # Table Local Wallets
-            pdf.set_font("helvetica", 'B', 11)
+            pdf.set_font(main_font, 'B', 11)
             pdf.cell(0, 10, "Positions Portefeuilles (Local)", ln=True)
             pdf.set_fill_color(220, 220, 220)
             cols_p = ["Account", "Asset", "Quantite"]
             w_p = [140, 60, 60]
             for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
             pdf.ln()
-            pdf.set_font("helvetica", '', 10)
+            pdf.set_font(main_font, '', 10)
             for _, r in local_pos.iterrows():
                 pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"])[:60], border=1)
                 pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"]), border=1)
@@ -382,11 +390,11 @@ with tab_bilan:
 
             # Table Protocols
             if not proto_pos.empty:
-                pdf.set_font("helvetica", 'B', 11)
+                pdf.set_font(main_font, 'B', 11)
                 pdf.cell(0, 10, "Positions Protocoles (Staking / Vaults)", ln=True)
                 for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
                 pdf.ln()
-                pdf.set_font("helvetica", '', 10)
+                pdf.set_font(main_font, '', 10)
                 for _, r in proto_pos.iterrows():
                     pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"]), border=1)
                     pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"]), border=1)
@@ -396,17 +404,17 @@ with tab_bilan:
 
             # --- Page 2: Prix d'Acquisition ---
             pdf.add_page()
-            pdf.set_font("helvetica", 'B', 14)
+            pdf.set_font(main_font, 'B', 14)
             pdf.cell(0, 10, "SECTION 2 : HISTORIQUE DES ACHATS (FIAT)", ln=True)
             pdf.ln(5)
 
-            pdf.set_font("helvetica", 'B', 10)
+            pdf.set_font(main_font, 'B', 10)
             # Adjusting widths to avoid overlap: Type needs more space, and total must fit A4 Landscape (~277mm usable)
             cols_f = ["Date", "Compte", "Asset", "Type", "Montant EUR", "Quantite"]
             w_f = [25, 45, 20, 85, 40, 40] # Total: 255mm
             for i, c in enumerate(cols_f): pdf.cell(w_f[i], 8, c, border=1, fill=True)
             pdf.ln()
-            pdf.set_font("helvetica", '', 9)
+            pdf.set_font(main_font, '', 9)
             for _, r in fiat_df.iterrows():
                 try: d_str = pd.to_datetime(r["Date"]).strftime("%d/%m/%Y")
                 except: d_str = "N/A"
@@ -420,16 +428,16 @@ with tab_bilan:
 
             # --- Page 3: Cessions ---
             pdf.add_page()
-            pdf.set_font("helvetica", 'B', 14)
+            pdf.set_font(main_font, 'B', 14)
             pdf.cell(0, 10, "SECTION 3 : DETAIL DES CESSIONS (FORMULAIRE 2086)", ln=True)
             pdf.ln(5)
 
-            pdf.set_font("helvetica", 'B', 9)
+            pdf.set_font(main_font, 'B', 9)
             cols_c = ["Date", "Asset", "Prix Cession", "VGP", "Abattement Acq", "PV Brute"]
             w_c = [40, 30, 50, 50, 50, 50]
             for i, c in enumerate(cols_c): pdf.cell(w_c[i], 8, c, border=1, fill=True)
             pdf.ln()
-            pdf.set_font("helvetica", '', 9)
+            pdf.set_font(main_font, '', 9)
             for _, row in bilan_df.iterrows():
                 try: ds = pd.to_datetime(row["Date"]).strftime("%d/%m/%Y")
                 except: ds = str(row["Date"])
@@ -444,11 +452,11 @@ with tab_bilan:
 
             # --- Page 4: Bilan Final ---
             pdf.add_page()
-            pdf.set_font("helvetica", 'B', 16)
+            pdf.set_font(main_font, 'B', 16)
             pdf.cell(0, 15, "BILAN FISCAL RECAPITULATIF", ln=True, align='C')
             pdf.ln(10)
 
-            pdf.set_font("helvetica", 'B', 14)
+            pdf.set_font(main_font, 'B', 14)
             pdf.cell(100, 12, "PLUS-VALUE BRUTE TOTALE :", border=0)
             pdf.cell(0, 12, f"{total_pv:,.2f} EUR", border=0, ln=True, align='R')
 
@@ -456,7 +464,7 @@ with tab_bilan:
             pdf.cell(0, 12, f"{impot:,.2f} EUR", border=0, ln=True, align='R')
 
             pdf.ln(20)
-            pdf.set_font("helvetica", 'I', 10)
+            pdf.set_font(main_font, 'I', 10)
             pdf.multi_cell(0, 8, "Ce document est un assistant au calcul fiscal base sur les donnees fournies. Il appartient a l'utilisateur de verifier l'exactitude des montants reportes dans la declaration officielle.")
 
             # Extraction des bytes

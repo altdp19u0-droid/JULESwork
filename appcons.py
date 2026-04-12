@@ -40,29 +40,28 @@ def resolve_raw_addr(addr_str):
     return str(addr_str).strip().lower()
 
 def pdf_safe_str(val):
-    """Sanitize string for Latin-1 PDF encoding by preserving visual nuances."""
+    """Sanitize string for PDF encoding by preserving visual nuances."""
     if val is None: return ""
     s = str(val)
 
-    # Unicode Normalization
-    s = unicodedata.normalize('NFKD', s)
+    # Map Lisu look-alikes which are rarely in standard fonts
+    lisu_map = {
+        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
+    }
+    for k, v in lisu_map.items():
+        s = s.replace(k, v)
 
-    # Comprehensive Mapping of Visual "Nuances" (Look-alikes)
+    # Unicode Normalization
+    s = unicodedata.normalize('NFKC', s)
+
+    # Special Spaces / Punctuation
     replacements = {
-        # Lisu / Other blocks
-        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D",
-        # Cyrillic Look-alikes
-        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H", "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X", "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
-        # Roman Numerals
-        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
-        # Special Spaces / Punctuation
         "\u200a": " ", "\u2009": " ", "\u202f": " ", "\u2019": "'", "\u20ac": "EUR"
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
 
-    # Encode as latin-1. Use 'replace' strategy but DON'T strip the '?'
-    return s.encode('latin-1', 'replace').decode('latin-1') or "Asset"
+    return s
 
 # --- Sidebar ---
 with st.sidebar:
@@ -355,12 +354,22 @@ with tab_vgp:
                 def generate_vgp_pdf(data_df, date_str, total_val):
                     pdf = FPDF(orientation='L', unit='mm', format='A4')
                     pdf.set_auto_page_break(auto=True, margin=15)
+
+                    font_path = "DejaVuSans.ttf"
+                    font_bold_path = "DejaVuSans-Bold.ttf"
+                    if os.path.exists(font_path) and os.path.exists(font_bold_path):
+                        pdf.add_font("DejaVu", "", font_path)
+                        pdf.add_font("DejaVu", "B", font_bold_path)
+                        main_font = "DejaVu"
+                    else:
+                        main_font = "helvetica"
+
                     pdf.add_page()
-                    pdf.set_font("helvetica", 'B', 16)
+                    pdf.set_font(main_font, 'B', 16)
                     pdf.cell(0, 10, f"Etat des Lieux & VGP - {date_str}", ln=True, align='C')
                     pdf.ln(10)
 
-                    pdf.set_font("helvetica", 'B', 10)
+                    pdf.set_font(main_font, 'B', 10)
                     pdf.set_fill_color(200, 200, 200)
                     cols = ["Account", "Asset", "Amount", "Prix (EUR)", "Valeur (EUR)"]
                     col_widths = [80, 40, 50, 50, 50]
@@ -368,7 +377,7 @@ with tab_vgp:
                         pdf.cell(col_widths[i], 10, c, border=1, fill=True)
                     pdf.ln()
 
-                    pdf.set_font("helvetica", '', 10)
+                    pdf.set_font(main_font, '', 10)
                     for _, row in data_df.iterrows():
                         acc = pdf_safe_str(row["Account"])[:40]
                         asset = pdf_safe_str(row["Asset"])
@@ -380,7 +389,7 @@ with tab_vgp:
                         pdf.ln()
 
                     pdf.ln(10)
-                    pdf.set_font("helvetica", 'B', 12)
+                    pdf.set_font(main_font, 'B', 12)
                     pdf.cell(0, 10, f"VALEUR GLOBALE DU PORTEFEUILLE : {total_val:,.2f} EUR", ln=True, align='R')
 
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
