@@ -123,8 +123,6 @@ with st.sidebar:
     st.header("📊 Filtres Globaux")
     exclude_spam = st.checkbox("Exclure les Spams", value=True)
 
-    # Date Range logic initialized later after data loading
-
 # --- Data Loading Engine ---
 @st.cache_data
 def load_and_merge(files):
@@ -375,12 +373,15 @@ with tab_vgp:
 
                     font_path = "DejaVuSans.ttf"
                     font_bold_path = "DejaVuSans-Bold.ttf"
+                    main_font = "helvetica" # Default fallback
+
                     if os.path.exists(font_path) and os.path.exists(font_bold_path):
-                        pdf.add_font("DejaVu", "", font_path)
-                        pdf.add_font("DejaVu", "B", font_bold_path)
-                        main_font = "DejaVu"
-                    else:
-                        main_font = "helvetica"
+                        try:
+                            pdf.add_font("DejaVu", "", font_path)
+                            pdf.add_font("DejaVu", "B", font_bold_path)
+                            main_font = "DejaVu"
+                        except:
+                            pass
 
                     pdf.add_page()
                     pdf.set_font(main_font, 'B', 16)
@@ -390,7 +391,8 @@ with tab_vgp:
                     pdf.set_font(main_font, 'B', 10)
                     pdf.set_fill_color(200, 200, 200)
                     cols = ["Account", "Asset", "Amount", "Prix (EUR)", "Valeur (EUR)"]
-                    col_widths = [80, 40, 50, 50, 50]
+                    # Expanded Account to 110mm, reduced others to fit (Total 270mm for A4 L)
+                    col_widths = [110, 30, 45, 40, 45]
                     for i, c in enumerate(cols):
                         pdf.cell(col_widths[i], 10, c, border=1, fill=True)
                     pdf.ln()

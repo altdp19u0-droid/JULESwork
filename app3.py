@@ -375,12 +375,16 @@ with tab_bilan:
             # Unicode Font Registration
             font_path = "DejaVuSans.ttf"
             font_bold_path = "DejaVuSans-Bold.ttf"
+            main_font = "helvetica" # Default fallback
+
             if os.path.exists(font_path) and os.path.exists(font_bold_path):
-                pdf.add_font("DejaVu", "", font_path)
-                pdf.add_font("DejaVu", "B", font_bold_path)
-                main_font = "DejaVu"
-            else:
-                main_font = "helvetica"
+                try:
+                    pdf.add_font("DejaVu", "", font_path)
+                    pdf.add_font("DejaVu", "B", font_bold_path)
+                    main_font = "DejaVu"
+                except Exception as e:
+                    # Silently fallback to helvetica to avoid charmap/pickle crashes on Windows
+                    pass
 
             # --- Page 1: Comptes et Positions ---
             pdf.add_page()
@@ -487,7 +491,10 @@ with tab_bilan:
             pdf.cell(0, 12, f"{impot:,.2f} EUR", border=0, ln=True, align='R')
 
             pdf.ln(20)
-            pdf.set_font(main_font, 'I', 10)
+            # If DejaVu is used, we only have Regular and Bold.
+            # Style 'I' would require DejaVuSans-Oblique.ttf
+            footer_style = 'I' if main_font == "helvetica" else ""
+            pdf.set_font(main_font, footer_style, 10)
             pdf.multi_cell(0, 8, "Ce document est un assistant au calcul fiscal base sur les donnees fournies. Il appartient a l'utilisateur de verifier l'exactitude des montants reportes dans la declaration officielle.")
 
             # Extraction des bytes (Directement en mémoire pour éviter les erreurs de fichier/encodage sur Windows)
