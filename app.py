@@ -18,6 +18,12 @@ if "tokens" not in st.session_state: st.session_state.tokens = pd.DataFrame()
 if "portfolio" not in st.session_state: st.session_state.portfolio = pd.DataFrame()
 
 # Configuration des Réseaux avec Blockscout V1 et V2
+def load_api_keys():
+    if os.path.exists("api_keys.json"):
+        with open("api_keys.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
 CHAIN_APIS = {
     "Ethereum": {
         "v1": "https://blockscout.com/eth/mainnet/api/",
@@ -327,9 +333,9 @@ if has_data:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         prefix = f"{address}_{ts}"
 
-        st.session_state.portfolio.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False)
-        st.session_state.transactions.to_csv(os.path.join(year_dir, f"raw_transactions_{prefix}.csv"), index=False)
-        st.session_state.tokens.to_csv(os.path.join(year_dir, f"raw_token_transfers_{prefix}.csv"), index=False)
+        st.session_state.portfolio.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False, encoding="utf-8-sig")
+        st.session_state.transactions.to_csv(os.path.join(year_dir, f"raw_transactions_{prefix}.csv"), index=False, encoding="utf-8-sig")
+        st.session_state.tokens.to_csv(os.path.join(year_dir, f"raw_token_transfers_{prefix}.csv"), index=False, encoding="utf-8-sig")
 
         st.balloons()
         st.success(f"📂 Fichiers enregistrés dans : {year_dir}")

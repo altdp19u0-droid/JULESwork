@@ -20,7 +20,7 @@ def load_manual_data(year):
     swap_path = os.path.join(year_dir, f"manual_swaps_{year}.csv")
 
     if os.path.exists(fiat_path):
-        df = pd.read_csv(fiat_path)
+        df = pd.read_csv(fiat_path, encoding="utf-8-sig")
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
 
         # migration schema & type safety
@@ -45,7 +45,7 @@ def load_manual_data(year):
             st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
 
     if os.path.exists(pos_path):
-        df = pd.read_csv(pos_path)
+        df = pd.read_csv(pos_path, encoding="utf-8-sig")
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
 
         # migration schema & type safety
@@ -68,7 +68,7 @@ def load_manual_data(year):
             st.session_state.positions_journal[col] = st.session_state.positions_journal[col].astype(str)
 
     if os.path.exists(swap_path):
-        df = pd.read_csv(swap_path)
+        df = pd.read_csv(swap_path, encoding="utf-8-sig")
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
         text_cols = ["Account", "Counterparty", "Asset", "Type", "Tx Hash", "Source Type"]
         for col in text_cols:
@@ -347,15 +347,15 @@ with col_save1:
         pos_path = os.path.join(year_dir, f"manual_positions_{target_year}.csv")
         swap_path = os.path.join(year_dir, f"manual_swaps_{target_year}.csv")
 
-        if not st.session_state.fiat_journal.empty: st.session_state.fiat_journal.to_csv(fiat_path, index=False)
-        if not st.session_state.positions_journal.empty: st.session_state.positions_journal.to_csv(pos_path, index=False)
-        if not st.session_state.swaps_journal.empty: st.session_state.swaps_journal.to_csv(swap_path, index=False)
+        if not st.session_state.fiat_journal.empty: st.session_state.fiat_journal.to_csv(fiat_path, index=False, encoding="utf-8-sig")
+        if not st.session_state.positions_journal.empty: st.session_state.positions_journal.to_csv(pos_path, index=False, encoding="utf-8-sig")
+        if not st.session_state.swaps_journal.empty: st.session_state.swaps_journal.to_csv(swap_path, index=False, encoding="utf-8-sig")
 
         # Backups
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if not st.session_state.fiat_journal.empty: st.session_state.fiat_journal.to_csv(os.path.join(year_dir, f"backup_fiat_{ts}.csv"), index=False)
-        if not st.session_state.positions_journal.empty: st.session_state.positions_journal.to_csv(os.path.join(year_dir, f"backup_positions_{ts}.csv"), index=False)
-        if not st.session_state.swaps_journal.empty: st.session_state.swaps_journal.to_csv(os.path.join(year_dir, f"backup_swaps_{ts}.csv"), index=False)
+        if not st.session_state.fiat_journal.empty: st.session_state.fiat_journal.to_csv(os.path.join(year_dir, f"backup_fiat_{ts}.csv"), index=False, encoding="utf-8-sig")
+        if not st.session_state.positions_journal.empty: st.session_state.positions_journal.to_csv(os.path.join(year_dir, f"backup_positions_{ts}.csv"), index=False, encoding="utf-8-sig")
+        if not st.session_state.swaps_journal.empty: st.session_state.swaps_journal.to_csv(os.path.join(year_dir, f"backup_swaps_{ts}.csv"), index=False, encoding="utf-8-sig")
 
         st.balloons()
         st.success(f"📂 Registres mis à jour et sauvegardés dans : {year_dir}")

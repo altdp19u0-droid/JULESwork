@@ -28,7 +28,7 @@ def get_file_path(year, category):
 
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
-        with open(POSITIONS_FILE, "r") as f:
+        with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
@@ -53,31 +53,32 @@ def apply_position_labels(df):
     return df
 
 def pdf_safe_str(val):
-    """Sanitize string for PDF encoding by preserving visual nuances and avoiding encoding crashes."""
+    """Sanitize string for PDF encoding by preserving visual nuances and avoiding crashes."""
     if val is None: return ""
     s = str(val)
 
     # Comprehensive mapping of visual nuances (Cyrillic, Lisu, etc.)
-    # Necessary even with DejaVu because 'latin-1' might still be used for internal indexing or fallbacks
+    # This is critical to ensure look-alike assets (fake USDC) are readable.
     nuance_map = {
         # Lisu look-alikes
         "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
-        # Cyrillic look-alikes (These are NOT decompositions of Latin letters)
-        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H", "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
+        # Cyrillic look-alikes (not handled by NFKC for Latin look-alikes)
+        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
+        "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
         "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
-        # Roman / Other
-        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X",
-        # Spaces / Symbols
+        # Roman Numerals & Other
+        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
+        # Special Spaces / Punctuation
         "\u200a": " ", "\u2009": " ", "\u202f": " ", "\u2019": "'", "\u20ac": "EUR"
     }
     for k, v in nuance_map.items():
         s = s.replace(k, v)
 
-    # NFKC Normalization handles remaining compatibility characters
+    # NFKC Normalization handles compatibility characters
     s = unicodedata.normalize('NFKC', s)
 
-    # Final safety: force conversion to latin-1 compatible for the library if it re-encodes
-    # Use 'replace' to avoid crashing the whole report for one character
+    # Force conversion to latin-1 compatible for the PDF engine
+    # Use 'replace' to ensure a string is returned, never an error
     return s.encode('latin-1', 'replace').decode('latin-1')
 
 def load_data(year):
@@ -90,7 +91,7 @@ def load_data(year):
     data = {}
     for key, path in paths.items():
         if os.path.exists(path) and os.path.getsize(path) > 0:
-            df = pd.read_csv(path)
+            df = pd.read_csv(path, encoding="utf-8-sig")
             # Standardisation Date
             if 'Date' in df.columns:
                 df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
@@ -425,9 +426,9 @@ with tab_bilan:
             pdf.ln()
             pdf.set_font(main_font, '', 9)
             for _, r in fiat_df.iterrows():
-                try: d_str = pd.to_datetime(r["Date"]).strftime("%d/%m/%Y")
-                except: d_str = "N/A"
-                pdf.cell(w_f[0], 8, d_str, border=1)
+                try: ds_f = pd.to_datetime(r["Date"]).strftime("%d/%m/%Y")
+                except: ds_f = "N/A"
+                pdf.cell(w_f[0], 8, ds_f, border=1)
                 pdf.cell(w_f[1], 8, pdf_safe_str(r.get("Account", "Manual"))[:30], border=1)
                 pdf.cell(w_f[2], 8, pdf_safe_str(r.get("Asset", "EUR")), border=1)
                 pdf.cell(w_f[3], 8, pdf_safe_str(r.get("Type", "")), border=1)
@@ -448,10 +449,10 @@ with tab_bilan:
             pdf.ln()
             pdf.set_font(main_font, '', 9)
             for _, row in bilan_df.iterrows():
-                try: ds = pd.to_datetime(row["Date"]).strftime("%d/%m/%Y")
-                except: ds = str(row["Date"])
+                try: ds_c = pd.to_datetime(row["Date"]).strftime("%d/%m/%Y")
+                except: ds_c = str(row["Date"])
 
-                pdf.cell(w_c[0], 8, ds, border=1)
+                pdf.cell(w_c[0], 8, ds_c, border=1)
                 pdf.cell(w_c[1], 8, pdf_safe_str(row["Asset"]), border=1)
                 pdf.cell(w_c[2], 8, f"{row['Prix Cession']:.2f} EUR", border=1)
                 pdf.cell(w_c[3], 8, f"{row['VGP']:.2f} EUR", border=1)
@@ -491,6 +492,9 @@ with tab_bilan:
             if df_bilan.empty:
                 st.error("Le bilan est vide, impossible de générer le PDF.")
             else:
+                # Clear stale cache
+                if "fiscal_pdf_bytes" in st.session_state: del st.session_state.fiscal_pdf_bytes
+
                 try:
                     final_bytes = generate_fiscal_pdf_full(
                         target_year, accounts, derived_local, df_protocols, pos_df, data['fiat'],

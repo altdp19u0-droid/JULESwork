@@ -19,7 +19,7 @@ POSITIONS_FILE = "position_labels.json"
 
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
-        with open(POSITIONS_FILE, "r") as f:
+        with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
@@ -115,7 +115,7 @@ def load_and_merge(files):
     all_dfs = []
     for f_path in files:
         try:
-            temp_df = pd.read_csv(f_path)
+            temp_df = pd.read_csv(f_path, encoding="utf-8-sig")
             # Add metadata
             temp_df["_source_file"] = os.path.basename(f_path)
 
@@ -240,7 +240,7 @@ with tab_list:
 
     st.download_button(
         "📥 Exporter cette vue en CSV",
-        df.to_csv(index=False).encode('utf-8'),
+        df.to_csv(index=False, encoding="utf-8-sig"),
         "export_consolidated.csv",
         "text/csv",
         use_container_width=True
@@ -346,7 +346,7 @@ with tab_vgp:
                 c1, c2 = st.columns(2)
                 c1.download_button(
                     "📥 Exporter en CSV",
-                    res_df.to_csv(index=False).encode('utf-8'),
+                    res_df.to_csv(index=False, encoding="utf-8-sig"),
                     f"vgp_snapshot_{end_date.strftime('%Y%m%d')}.csv",
                     "text/csv",
                     use_container_width=True
@@ -407,6 +407,7 @@ with tab_vgp:
                     return pdf_bytes
 
                 if c2.button("📊 Préparer le Rapport PDF", use_container_width=True):
+                    if "vgp_pdf_bytes" in st.session_state: del st.session_state.vgp_pdf_bytes
                     try:
                         final_bytes = generate_vgp_pdf(res_df, end_date.strftime('%d/%m/%Y'), total_vgp)
                         if len(final_bytes) > 500:

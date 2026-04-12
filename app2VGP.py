@@ -18,14 +18,14 @@ POSITIONS_FILE = "position_labels.json"
 def load_price_cache():
     if os.path.exists(PRICE_CACHE_FILE):
         try:
-            with open(PRICE_CACHE_FILE, "r") as f:
+            with open(PRICE_CACHE_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except: return {}
     return {}
 
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
-        with open(POSITIONS_FILE, "r") as f:
+        with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
@@ -35,7 +35,7 @@ def resolve_raw_addr(addr_str):
     return str(addr_str).strip().lower()
 
 def save_price_cache(cache):
-    with open(PRICE_CACHE_FILE, "w") as f:
+    with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f)
 
 # --- Helpers ---
@@ -203,7 +203,7 @@ if not os.path.exists(path):
     st.info("💡 Utilisez l'**App 2** pour synchroniser et sanctuariser vos premières données qualifiées.")
 else:
     # Chargement journal
-    journal = pd.read_csv(path)
+    journal = pd.read_csv(path, encoding="utf-8-sig")
     journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
     # Force numeric conversion
     for col in ["Amount", "Value ($)", "VGP (EUR)"]:
@@ -277,7 +277,7 @@ else:
         # Injection des modifs manuelles dans le journal principal
         if st.button("💾 Sanctuariser les VGP (Enregistrer sur disque)", use_container_width=True):
             journal.loc[mask_cessions, "VGP (EUR)"] = edited_cessions["VGP (EUR)"].values
-            journal.to_csv(path, index=False)
+            journal.to_csv(path, index=False, encoding="utf-8-sig")
             st.success(f"Journal mis à jour avec les VGP dans {path}")
             st.balloons()
 

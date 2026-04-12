@@ -29,22 +29,22 @@ def resolve_raw_addr(addr_str):
 
 def load_spam_list():
     if os.path.exists(SPAM_FILE):
-        with open(SPAM_FILE, "r") as f:
+        with open(SPAM_FILE, "r", encoding="utf-8") as f:
             return set(json.load(f))
     return set()
 
 def save_spam_list(spam_set):
-    with open(SPAM_FILE, "w") as f:
+    with open(SPAM_FILE, "w", encoding="utf-8") as f:
         json.dump(list(spam_set), f)
 
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
-        with open(POSITIONS_FILE, "r") as f:
+        with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
 def save_position_labels(labels_dict):
-    with open(POSITIONS_FILE, "w") as f:
+    with open(POSITIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(labels_dict, f, indent=4)
 
 def get_qualified_path(year):
@@ -79,7 +79,7 @@ def merge_raw_data(year):
     fiat_path = os.path.join(year_dir, f"manual_fiat_{year}.csv")
     if os.path.exists(fiat_path) and os.path.getsize(fiat_path) > 0:
         try:
-            df_fiat = pd.read_csv(fiat_path)
+            df_fiat = pd.read_csv(fiat_path, encoding="utf-8-sig")
             for _, r in df_fiat.iterrows():
                 m_eur = float(r.get("Montant EUR", 0.0))
                 qty_asset = float(r.get("Quantité", 0.0))
@@ -133,7 +133,7 @@ def merge_raw_data(year):
     swap_path = os.path.join(year_dir, f"manual_swaps_{year}.csv")
     if os.path.exists(swap_path) and os.path.getsize(swap_path) > 0:
         try:
-            df_swap = pd.read_csv(swap_path)
+            df_swap = pd.read_csv(swap_path, encoding="utf-8-sig")
             for _, r in df_swap.iterrows():
                 all_rows.append({
                     "Date": r.get("Date"),
@@ -167,7 +167,7 @@ def merge_raw_data(year):
 
         if f.startswith("raw_transactions_") and os.path.getsize(f_path) > 0:
             try:
-                df = pd.read_csv(f_path)
+                df = pd.read_csv(f_path, encoding="utf-8-sig")
             except Exception:
                 continue
             for _, r in df.iterrows():
@@ -210,7 +210,7 @@ def merge_raw_data(year):
 
         if f.startswith("raw_token_transfers_") and os.path.getsize(f_path) > 0:
             try:
-                df = pd.read_csv(f_path)
+                df = pd.read_csv(f_path, encoding="utf-8-sig")
             except Exception:
                 continue
             for _, r in df.iterrows():
@@ -267,7 +267,7 @@ def sync_data(year):
 
     if os.path.exists(qual_path) and os.path.getsize(qual_path) > 0:
         try:
-            old_df = pd.read_csv(qual_path)
+            old_df = pd.read_csv(qual_path, encoding="utf-8-sig")
             old_df["Date"] = pd.to_datetime(old_df["Date"], utc=True, errors="coerce", format="ISO8601")
 
             # --- AUTO-REPAIR : Nettoyage des lignes Fiat corrompues (v1 legacy) ---
@@ -544,7 +544,7 @@ else:
         # SUPPRESSION de la propagation automatique asset/adresse vers la blacklist globale.
         # Seul un bannissement via la Sidebar est définitif pour le futur.
 
-        st.session_state.journal_qualifie.to_csv(get_qualified_path(target_year), index=False)
+        st.session_state.journal_qualifie.to_csv(get_qualified_path(target_year), index=False, encoding="utf-8-sig")
         st.balloons()
         st.success(f"Journal qualifié enregistré dans {year_dir}")
 
