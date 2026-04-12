@@ -358,7 +358,10 @@ with tab_vgp:
                     pdf.set_font("helvetica", 'B', 12)
                     pdf.cell(0, 10, f"VALEUR GLOBALE DU PORTEFEUILLE : {total_val:,.2f} EUR", ln=True, align='R')
 
-                    return bytes(pdf.output())
+                    output = pdf.output()
+                    if isinstance(output, str):
+                        return output.encode('latin-1')
+                    return bytes(output)
 
                 if c2.button("📊 Préparer le Rapport PDF", use_container_width=True):
                     pdf_bytes = generate_vgp_pdf_cached(res_df.to_json(), end_date.strftime('%d/%m/%Y'), total_vgp)

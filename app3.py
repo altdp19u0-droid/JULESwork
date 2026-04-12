@@ -354,7 +354,10 @@ with tab_bilan:
             pdf.cell(0, 10, f"PLUS-VALUE TOTALE BRUTE : {total_pv:,.2f} EUR", ln=True, align='R')
             pdf.cell(0, 10, f"IMPOT ESTIMÉ (PFU) : {impot:,.2f} EUR", ln=True, align='R')
 
-            return bytes(pdf.output())
+            output = pdf.output()
+            if isinstance(output, str):
+                return output.encode('latin-1')
+            return bytes(output)
 
         # Explicit trigger for PDF generation to ensure data is present
         if st.button("📊 Préparer le Rapport PDF", use_container_width=True):
