@@ -42,7 +42,14 @@ def pdf_safe_str(val):
     """Sanitize string for Latin-1 PDF encoding."""
     if val is None: return ""
     s = str(val)
-    return s.encode('latin-1', 'replace').decode('latin-1')
+    replacements = {
+        "\u216d": "C", # Roman numeral C
+        "\u20ac": "EUR", # Euro
+        "\u2019": "'", # Smart quote
+    }
+    for k, v in replacements.items():
+        s = s.replace(k, v)
+    return s.encode('latin-1', 'ignore').decode('latin-1')
 
 # --- Sidebar ---
 with st.sidebar:

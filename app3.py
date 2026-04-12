@@ -52,12 +52,20 @@ def apply_position_labels(df):
     return df
 
 def pdf_safe_str(val):
-    """Sanitize string for Latin-1 PDF encoding."""
+    """Sanitize string for Latin-1 PDF encoding by removing/replacing problematic chars."""
     if val is None: return ""
     s = str(val)
-    # Common replacements for problematic unicode characters if needed
-    # But mainly use encode/decode with replace
-    return s.encode('latin-1', 'replace').decode('latin-1')
+    # Replace common problematic characters
+    replacements = {
+        "\u216d": "C", # Roman numeral C
+        "\u20ac": "EUR", # Euro
+        "\u2019": "'", # Smart quote
+    }
+    for k, v in replacements.items():
+        s = s.replace(k, v)
+
+    # Try to encode as latin-1, ignore errors for characters that really can't be represented
+    return s.encode('latin-1', 'ignore').decode('latin-1')
 
 def load_data(year):
     paths = {
@@ -349,7 +357,7 @@ with tab_bilan:
             pdf.cell(0, 10, "Positions Portefeuilles (Local)", ln=True)
             pdf.set_fill_color(220, 220, 220)
             cols_p = ["Account", "Asset", "Quantite"]
-            w_p = [120, 60, 60]
+            w_p = [140, 60, 60]
             for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
             pdf.ln()
             pdf.set_font("helvetica", '', 10)
@@ -381,8 +389,9 @@ with tab_bilan:
             pdf.ln(5)
 
             pdf.set_font("helvetica", 'B', 10)
+            # Adjusting widths to avoid overlap: Type needs more space, and total must fit A4 Landscape (~277mm usable)
             cols_f = ["Date", "Compte", "Asset", "Type", "Montant EUR", "Quantite"]
-            w_f = [40, 60, 30, 40, 40, 40]
+            w_f = [25, 45, 20, 85, 40, 40] # Total: 255mm
             for i, c in enumerate(cols_f): pdf.cell(w_f[i], 8, c, border=1, fill=True)
             pdf.ln()
             pdf.set_font("helvetica", '', 9)
