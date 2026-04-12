@@ -53,33 +53,32 @@ def apply_position_labels(df):
     return df
 
 def pdf_safe_str(val):
-    """Sanitize string for PDF encoding by preserving visual nuances and avoiding crashes."""
+    """Sanitize string for PDF encoding by preserving visual nuances."""
     if val is None: return ""
     s = str(val)
 
-    # Comprehensive mapping of visual nuances (Cyrillic, Lisu, etc.)
-    # This is critical to ensure look-alike assets (fake USDC) are readable.
+    # Aggressive mapping of Cyrillic/Lisu/Other look-alikes to ASCII
+    # This prevents latin-1 and charmap crashes in environments with restricted codecs.
     nuance_map = {
-        # Lisu look-alikes
         "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
-        # Cyrillic look-alikes (not handled by NFKC for Latin look-alikes)
         "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
         "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
         "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
-        # Roman Numerals & Other
         "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
-        # Special Spaces / Punctuation
         "\u200a": " ", "\u2009": " ", "\u202f": " ", "\u2019": "'", "\u20ac": "EUR"
     }
     for k, v in nuance_map.items():
         s = s.replace(k, v)
 
-    # NFKC Normalization handles compatibility characters
+    # NFKC Normalization handles standard compatibility characters
     s = unicodedata.normalize('NFKC', s)
 
-    # Force conversion to latin-1 compatible for the PDF engine
-    # Use 'replace' to ensure a string is returned, never an error
-    return s.encode('latin-1', 'replace').decode('latin-1')
+    # Try to keep as much as possible for Unicode fonts, but fallback safely
+    try:
+        # If we use DejaVu, it handles most things, but we want to avoid charmap errors on Windows
+        return s.encode('utf-8').decode('utf-8')
+    except:
+        return s.encode('latin-1', 'replace').decode('latin-1')
 
 def load_data(year):
     paths = {
@@ -477,15 +476,8 @@ with tab_bilan:
             pdf.set_font(main_font, 'I', 10)
             pdf.multi_cell(0, 8, "Ce document est un assistant au calcul fiscal base sur les donnees fournies. Il appartient a l'utilisateur de verifier l'exactitude des montants reportes dans la declaration officielle.")
 
-            # Extraction des bytes
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                tmp_path = tmp.name
-            try:
-                pdf.output(tmp_path)
-                with open(tmp_path, "rb") as f: pdf_bytes = f.read()
-            finally:
-                if os.path.exists(tmp_path): os.unlink(tmp_path)
-            return pdf_bytes
+            # Extraction des bytes (Directement en mémoire pour éviter les erreurs de fichier/encodage sur Windows)
+            return bytes(pdf.output())
 
         # Explicit trigger for PDF generation to ensure data is present
         if st.button("📊 Préparer le Rapport PDF Complet", use_container_width=True):

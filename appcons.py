@@ -40,30 +40,32 @@ def resolve_raw_addr(addr_str):
     return str(addr_str).strip().lower()
 
 def pdf_safe_str(val):
-    """Sanitize string for PDF encoding by preserving visual nuances and avoiding crashes."""
+    """Sanitize string for PDF encoding by preserving visual nuances."""
     if val is None: return ""
     s = str(val)
 
-    # Comprehensive mapping of visual nuances (Cyrillic, Lisu, etc.)
+    # Aggressive mapping of Cyrillic/Lisu/Other look-alikes to ASCII
+    # This prevents latin-1 and charmap crashes in environments with restricted codecs.
     nuance_map = {
-        # Lisu look-alikes
         "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
-        # Cyrillic look-alikes
-        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H", "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
+        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
+        "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
         "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
-        # Roman / Other
-        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X",
-        # Spaces / Symbols
+        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
         "\u200a": " ", "\u2009": " ", "\u202f": " ", "\u2019": "'", "\u20ac": "EUR"
     }
     for k, v in nuance_map.items():
         s = s.replace(k, v)
 
-    # Unicode Normalization
+    # NFKC Normalization handles standard compatibility characters
     s = unicodedata.normalize('NFKC', s)
 
-    # Force conversion to latin-1 compatible
-    return s.encode('latin-1', 'replace').decode('latin-1')
+    # Try to keep as much as possible for Unicode fonts, but fallback safely
+    try:
+        # If we use DejaVu, it handles most things, but we want to avoid charmap errors on Windows
+        return s.encode('utf-8').decode('utf-8')
+    except:
+        return s.encode('latin-1', 'replace').decode('latin-1')
 
 # --- Sidebar ---
 with st.sidebar:
@@ -288,7 +290,7 @@ with tab_vgp:
                 cache = {}
                 if os.path.exists(PRICE_CACHE_FILE):
                     try:
-                        with open(PRICE_CACHE_FILE, "r") as f: cache = json.load(f)
+                        with open(PRICE_CACHE_FILE, "r", encoding="utf-8") as f: cache = json.load(f)
                     except: pass
 
                 cache_key = f"{asset}_{d_str}"
@@ -304,7 +306,7 @@ with tab_vgp:
                     data = res.json()
                     price = float(data["market_data"]["current_price"]["eur"])
                     cache[cache_key] = price
-                    with open(PRICE_CACHE_FILE, "w") as f: json.dump(cache, f)
+                    with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f: json.dump(cache, f)
                     return price
                 except: return 0.0
 
@@ -394,17 +396,8 @@ with tab_vgp:
                     pdf.set_font(main_font, 'B', 12)
                     pdf.cell(0, 10, f"VALEUR GLOBALE DU PORTEFEUILLE : {total_val:,.2f} EUR", ln=True, align='R')
 
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp_path = tmp.name
-                    try:
-                        pdf.output(tmp_path)
-                        with open(tmp_path, "rb") as f:
-                            pdf_bytes = f.read()
-                    finally:
-                        if os.path.exists(tmp_path):
-                            os.unlink(tmp_path)
-
-                    return pdf_bytes
+                    # Extraction des bytes (Directement en mémoire pour éviter les erreurs de fichier/encodage sur Windows)
+                    return bytes(pdf.output())
 
                 if c2.button("📊 Préparer le Rapport PDF", use_container_width=True):
                     if "vgp_pdf_bytes" in st.session_state: del st.session_state.vgp_pdf_bytes
