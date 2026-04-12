@@ -53,29 +53,32 @@ def apply_position_labels(df):
     return df
 
 def pdf_safe_str(val):
-    """Sanitize string for PDF encoding by preserving visual nuances."""
+    """Sanitize string for PDF encoding by preserving visual nuances and avoiding encoding crashes."""
     if val is None: return ""
     s = str(val)
 
-    # Map Lisu look-alikes which are rarely in standard fonts
-    # Mapping them to ASCII ensures they display correctly even in DejaVu
-    lisu_map = {
+    # Comprehensive mapping of visual nuances (Cyrillic, Lisu, etc.)
+    # Necessary even with DejaVu because 'latin-1' might still be used for internal indexing or fallbacks
+    nuance_map = {
+        # Lisu look-alikes
         "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
-    }
-    for k, v in lisu_map.items():
-        s = s.replace(k, v)
-
-    # Unicode Normalization (NFKC is better for visual mapping)
-    s = unicodedata.normalize('NFKC', s)
-
-    # Special Spaces / Punctuation
-    replacements = {
+        # Cyrillic look-alikes (These are NOT decompositions of Latin letters)
+        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H", "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
+        "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
+        # Roman / Other
+        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X",
+        # Spaces / Symbols
         "\u200a": " ", "\u2009": " ", "\u202f": " ", "\u2019": "'", "\u20ac": "EUR"
     }
-    for k, v in replacements.items():
+    for k, v in nuance_map.items():
         s = s.replace(k, v)
 
-    return s
+    # NFKC Normalization handles remaining compatibility characters
+    s = unicodedata.normalize('NFKC', s)
+
+    # Final safety: force conversion to latin-1 compatible for the library if it re-encodes
+    # Use 'replace' to avoid crashing the whole report for one character
+    return s.encode('latin-1', 'replace').decode('latin-1')
 
 def load_data(year):
     paths = {
@@ -113,6 +116,12 @@ def load_data(year):
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres Fiscaux")
+
+    # Font Check
+    if not os.path.exists("DejaVuSans.ttf"):
+        st.warning("⚠️ Police Unicode 'DejaVuSans.ttf' absente. Les caractères spéciaux seront limités dans le PDF.")
+    else:
+        st.success("✅ Police Unicode détectée.")
     target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, value=datetime.now().year)
 
     st.divider()

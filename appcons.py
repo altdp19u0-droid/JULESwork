@@ -40,28 +40,30 @@ def resolve_raw_addr(addr_str):
     return str(addr_str).strip().lower()
 
 def pdf_safe_str(val):
-    """Sanitize string for PDF encoding by preserving visual nuances."""
+    """Sanitize string for PDF encoding by preserving visual nuances and avoiding crashes."""
     if val is None: return ""
     s = str(val)
 
-    # Map Lisu look-alikes which are rarely in standard fonts
-    lisu_map = {
+    # Comprehensive mapping of visual nuances (Cyrillic, Lisu, etc.)
+    nuance_map = {
+        # Lisu look-alikes
         "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
+        # Cyrillic look-alikes
+        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H", "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
+        "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
+        # Roman / Other
+        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X",
+        # Spaces / Symbols
+        "\u200a": " ", "\u2009": " ", "\u202f": " ", "\u2019": "'", "\u20ac": "EUR"
     }
-    for k, v in lisu_map.items():
+    for k, v in nuance_map.items():
         s = s.replace(k, v)
 
     # Unicode Normalization
     s = unicodedata.normalize('NFKC', s)
 
-    # Special Spaces / Punctuation
-    replacements = {
-        "\u200a": " ", "\u2009": " ", "\u202f": " ", "\u2019": "'", "\u20ac": "EUR"
-    }
-    for k, v in replacements.items():
-        s = s.replace(k, v)
-
-    return s
+    # Force conversion to latin-1 compatible
+    return s.encode('latin-1', 'replace').decode('latin-1')
 
 # --- Sidebar ---
 with st.sidebar:
