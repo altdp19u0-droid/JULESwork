@@ -318,74 +318,144 @@ with tab_bilan:
 
         st.info("💡 N'oubliez pas de joindre l'annexe 2086 à votre déclaration de revenus.")
 
-        # PDF Export for Fiscality
-        def generate_fiscal_pdf(bilan_df, year, total_pv, impot):
+        # PDF Export for Fiscality (Full Report)
+        def generate_fiscal_pdf_full(year, accounts, local_pos, proto_pos, manual_pos, fiat_df, bilan_df, total_pv, impot):
             pdf = FPDF(orientation='L', unit='mm', format='A4')
             pdf.set_auto_page_break(auto=True, margin=15)
-            pdf.add_page()
 
-            pdf.set_font("helvetica", 'B', 16)
-            pdf.cell(0, 10, f"Rapport Fiscal Crypto France - {year} (Art. 150 VH bis)", ln=True, align='C')
-            pdf.ln(10)
+            # --- Page 1: Comptes et Positions ---
+            pdf.add_page()
+            pdf.set_font("helvetica", 'B', 18)
+            pdf.cell(0, 15, f"RAPPORT FISCAL CRYPTO - {year}", ln=True, align='C')
+            pdf.set_font("helvetica", 'B', 14)
+            pdf.cell(0, 10, "SECTION 1 : COMPTES & POSITIONS", ln=True)
+            pdf.ln(5)
 
             pdf.set_font("helvetica", 'B', 10)
-            pdf.set_fill_color(200, 200, 200)
-            cols = ["Date", "Asset", "Prix Cession", "VGP", "Abattement Acq", "Plus-Value Brute"]
-            col_widths = [45, 30, 45, 45, 55, 55]
-            for i, c in enumerate(cols):
-                pdf.cell(col_widths[i], 10, c, border=1, fill=True)
+            acc_str = ", ".join(accounts) if accounts else "Aucun"
+            pdf.multi_cell(0, 10, f"Comptes identifies : {acc_str}")
+            pdf.ln(5)
+
+            # Table Local Wallets
+            pdf.set_font("helvetica", 'B', 11)
+            pdf.cell(0, 10, "Positions Portefeuilles (Local)", ln=True)
+            pdf.set_fill_color(220, 220, 220)
+            cols_p = ["Account", "Asset", "Quantite"]
+            w_p = [120, 60, 60]
+            for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
             pdf.ln()
-
             pdf.set_font("helvetica", '', 10)
-            for _, row in bilan_df.iterrows():
-                try:
-                    d_str = pd.to_datetime(row["Date"]).strftime("%d/%m/%Y")
-                except:
-                    d_str = str(row["Date"])
+            for _, r in local_pos.iterrows():
+                pdf.cell(w_p[0], 8, str(r["Account"])[:60], border=1)
+                pdf.cell(w_p[1], 8, str(r["Asset"]), border=1)
+                pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
+                pdf.ln()
+            pdf.ln(10)
 
-                date_str = d_str.encode('latin-1', 'replace').decode('latin-1')
-                asset_str = str(row["Asset"]).encode('latin-1', 'replace').decode('latin-1')
-                pdf.cell(col_widths[0], 10, date_str, border=1)
-                pdf.cell(col_widths[1], 10, asset_str, border=1)
-                pdf.cell(col_widths[2], 10, f"{row['Prix Cession']:.2f} EUR", border=1)
-                pdf.cell(col_widths[3], 10, f"{row['VGP']:.2f} EUR", border=1)
-                pdf.cell(col_widths[4], 10, f"{row['Abattement Acq']:.2f} EUR", border=1)
-                pdf.cell(col_widths[5], 10, f"{row['Plus-Value Brute']:.2f} EUR", border=1)
+            # Table Protocols
+            if not proto_pos.empty:
+                pdf.set_font("helvetica", 'B', 11)
+                pdf.cell(0, 10, "Positions Protocoles (Staking / Vaults)", ln=True)
+                for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
+                pdf.ln()
+                pdf.set_font("helvetica", '', 10)
+                for _, r in proto_pos.iterrows():
+                    pdf.cell(w_p[0], 8, str(r["Account"]), border=1)
+                    pdf.cell(w_p[1], 8, str(r["Asset"]), border=1)
+                    pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
+                    pdf.ln()
+                pdf.ln(10)
+
+            # --- Page 2: Prix d'Acquisition ---
+            pdf.add_page()
+            pdf.set_font("helvetica", 'B', 14)
+            pdf.cell(0, 10, "SECTION 2 : HISTORIQUE DES ACHATS (FIAT)", ln=True)
+            pdf.ln(5)
+
+            pdf.set_font("helvetica", 'B', 10)
+            cols_f = ["Date", "Compte", "Asset", "Type", "Montant EUR", "Quantite"]
+            w_f = [40, 60, 30, 40, 40, 40]
+            for i, c in enumerate(cols_f): pdf.cell(w_f[i], 8, c, border=1, fill=True)
+            pdf.ln()
+            pdf.set_font("helvetica", '', 9)
+            for _, r in fiat_df.iterrows():
+                try: d_str = pd.to_datetime(r["Date"]).strftime("%d/%m/%Y")
+                except: d_str = "N/A"
+                pdf.cell(w_f[0], 8, d_str, border=1)
+                pdf.cell(w_f[1], 8, str(r.get("Account", "Manual"))[:30], border=1)
+                pdf.cell(w_f[2], 8, str(r.get("Asset", "EUR")), border=1)
+                pdf.cell(w_f[3], 8, str(r.get("Type", "")), border=1)
+                pdf.cell(w_f[4], 8, f"{r.get('Montant EUR', 0):.2f} EUR", border=1)
+                pdf.cell(w_f[5], 8, f"{r.get('Quantité', 0):.6f}", border=1)
                 pdf.ln()
 
-            pdf.ln(10)
-            pdf.set_font("helvetica", 'B', 12)
-            pdf.cell(0, 10, f"PLUS-VALUE TOTALE BRUTE : {total_pv:,.2f} EUR", ln=True, align='R')
-            pdf.cell(0, 10, f"IMPOT ESTIMÉ (PFU) : {impot:,.2f} EUR", ln=True, align='R')
+            # --- Page 3: Cessions ---
+            pdf.add_page()
+            pdf.set_font("helvetica", 'B', 14)
+            pdf.cell(0, 10, "SECTION 3 : DETAIL DES CESSIONS (FORMULAIRE 2086)", ln=True)
+            pdf.ln(5)
 
-            # Most robust way: write to a temporary file and read it back
+            pdf.set_font("helvetica", 'B', 9)
+            cols_c = ["Date", "Asset", "Prix Cession", "VGP", "Abattement Acq", "PV Brute"]
+            w_c = [40, 30, 50, 50, 50, 50]
+            for i, c in enumerate(cols_c): pdf.cell(w_c[i], 8, c, border=1, fill=True)
+            pdf.ln()
+            pdf.set_font("helvetica", '', 9)
+            for _, row in bilan_df.iterrows():
+                try: ds = pd.to_datetime(row["Date"]).strftime("%d/%m/%Y")
+                except: ds = str(row["Date"])
+
+                pdf.cell(w_c[0], 8, ds, border=1)
+                pdf.cell(w_c[1], 8, str(row["Asset"]), border=1)
+                pdf.cell(w_c[2], 8, f"{row['Prix Cession']:.2f} EUR", border=1)
+                pdf.cell(w_c[3], 8, f"{row['VGP']:.2f} EUR", border=1)
+                pdf.cell(w_c[4], 8, f"{row['Abattement Acq']:.2f} EUR", border=1)
+                pdf.cell(w_c[5], 8, f"{row['Plus-Value Brute']:.2f} EUR", border=1)
+                pdf.ln()
+
+            # --- Page 4: Bilan Final ---
+            pdf.add_page()
+            pdf.set_font("helvetica", 'B', 16)
+            pdf.cell(0, 15, "BILAN FISCAL RECAPITULATIF", ln=True, align='C')
+            pdf.ln(10)
+
+            pdf.set_font("helvetica", 'B', 14)
+            pdf.cell(100, 12, "PLUS-VALUE BRUTE TOTALE :", border=0)
+            pdf.cell(0, 12, f"{total_pv:,.2f} EUR", border=0, ln=True, align='R')
+
+            pdf.cell(100, 12, "IMPOT ESTIME (PFU 30%) :", border=0)
+            pdf.cell(0, 12, f"{impot:,.2f} EUR", border=0, ln=True, align='R')
+
+            pdf.ln(20)
+            pdf.set_font("helvetica", 'I', 10)
+            pdf.multi_cell(0, 8, "Ce document est un assistant au calcul fiscal base sur les donnees fournies. Il appartient a l'utilisateur de verifier l'exactitude des montants reportes dans la declaration officielle.")
+
+            # Extraction des bytes
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                 tmp_path = tmp.name
-
             try:
                 pdf.output(tmp_path)
-                with open(tmp_path, "rb") as f:
-                    pdf_bytes = f.read()
+                with open(tmp_path, "rb") as f: pdf_bytes = f.read()
             finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-
+                if os.path.exists(tmp_path): os.unlink(tmp_path)
             return pdf_bytes
 
         # Explicit trigger for PDF generation to ensure data is present
-        if st.button("📊 Préparer le Rapport PDF", use_container_width=True):
+        if st.button("📊 Préparer le Rapport PDF Complet", use_container_width=True):
             if df_bilan.empty:
                 st.error("Le bilan est vide, impossible de générer le PDF.")
             else:
                 try:
-                    # Generate directly
-                    final_bytes = generate_fiscal_pdf(df_bilan, target_year, total_pv, impot)
-                    if len(final_bytes) > 500:
+                    final_bytes = generate_fiscal_pdf_full(
+                        target_year, accounts, derived_local, df_protocols, pos_df, data['fiat'],
+                        df_bilan, total_pv, impot
+                    )
+                    if len(final_bytes) > 1000:
                         st.session_state.fiscal_pdf_bytes = final_bytes
-                        st.success(f"Rapport PDF prêt ({len(final_bytes)} octets).")
+                        st.success(f"Rapport complet prêt ({len(final_bytes)} octets).")
                         st.rerun()
                     else:
-                        st.error("Erreur : Le PDF généré est trop petit.")
+                        st.error("Erreur : Le PDF généré est anormalement court.")
                 except Exception as e:
                     st.error(f"Erreur de génération : {e}")
 
