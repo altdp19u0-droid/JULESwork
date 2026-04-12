@@ -325,14 +325,16 @@ with tab_vgp:
                 )
 
                 # PDF Generation
-                def generate_vgp_pdf(data_df, date_str, total_val):
+                @st.cache_data
+                def generate_vgp_pdf_cached(data_json, date_str, total_val):
+                    data_df = pd.read_json(data_json)
                     pdf = FPDF(orientation='L', unit='mm', format='A4')
+                    pdf.set_auto_page_break(auto=True, margin=15)
                     pdf.add_page()
                     pdf.set_font("helvetica", 'B', 16)
                     pdf.cell(0, 10, f"Etat des Lieux & VGP - {date_str}", ln=True, align='C')
                     pdf.ln(10)
 
-                    # Table Header
                     pdf.set_font("helvetica", 'B', 10)
                     pdf.set_fill_color(200, 200, 200)
                     cols = ["Account", "Asset", "Amount", "Prix (EUR)", "Valeur (EUR)"]
@@ -341,13 +343,10 @@ with tab_vgp:
                         pdf.cell(col_widths[i], 10, c, border=1, fill=True)
                     pdf.ln()
 
-                    # Table Rows
                     pdf.set_font("helvetica", '', 10)
                     for _, row in data_df.iterrows():
-                        # Character replacement for Latin-1 compatibility
                         acc = str(row["Account"])[:40].encode('latin-1', 'replace').decode('latin-1')
                         asset = str(row["Asset"]).encode('latin-1', 'replace').decode('latin-1')
-
                         pdf.cell(col_widths[0], 10, acc, border=1)
                         pdf.cell(col_widths[1], 10, asset, border=1)
                         pdf.cell(col_widths[2], 10, f"{row['Amount']:.4f}", border=1)
@@ -359,16 +358,21 @@ with tab_vgp:
                     pdf.set_font("helvetica", 'B', 12)
                     pdf.cell(0, 10, f"VALEUR GLOBALE DU PORTEFEUILLE : {total_val:,.2f} EUR", ln=True, align='R')
 
-                    return pdf.output() # returns bytes in fpdf2
+                    return bytes(pdf.output())
 
-                pdf_bytes = generate_vgp_pdf(res_df, end_date.strftime('%d/%m/%Y'), total_vgp)
-                c2.download_button(
-                    "📄 Télécharger le Rapport PDF",
-                    data=pdf_bytes,
-                    file_name=f"Rapport_VGP_{end_date.strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+                if c2.button("📊 Préparer le Rapport PDF", use_container_width=True):
+                    pdf_bytes = generate_vgp_pdf_cached(res_df.to_json(), end_date.strftime('%d/%m/%Y'), total_vgp)
+                    st.session_state.vgp_pdf_bytes = pdf_bytes
+                    st.success("Rapport PDF prêt.")
+
+                if "vgp_pdf_bytes" in st.session_state:
+                    c2.download_button(
+                        "📄 Télécharger le Rapport PDF",
+                        data=st.session_state.vgp_pdf_bytes,
+                        file_name=f"Rapport_VGP_{end_date.strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
 
 st.sidebar.divider()
 st.sidebar.caption("Explorateur v1.0 - appcons")

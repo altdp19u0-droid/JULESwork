@@ -318,14 +318,17 @@ with tab_bilan:
         st.info("💡 N'oubliez pas de joindre l'annexe 2086 à votre déclaration de revenus.")
 
         # PDF Export for Fiscality
-        def generate_fiscal_pdf(bilan_df, year, total_pv, impot):
+        @st.cache_data
+        def generate_fiscal_pdf_cached(bilan_json, year, total_pv, impot):
+            bilan_df = pd.read_json(bilan_json)
             pdf = FPDF(orientation='L', unit='mm', format='A4')
+            pdf.set_auto_page_break(auto=True, margin=15)
             pdf.add_page()
+
             pdf.set_font("helvetica", 'B', 16)
             pdf.cell(0, 10, f"Rapport Fiscal Crypto France - {year} (Art. 150 VH bis)", ln=True, align='C')
             pdf.ln(10)
 
-            # Header
             pdf.set_font("helvetica", 'B', 10)
             pdf.set_fill_color(200, 200, 200)
             cols = ["Date", "Asset", "Prix Cession", "VGP", "Abattement Acq", "Plus-Value Brute"]
@@ -334,11 +337,12 @@ with tab_bilan:
                 pdf.cell(col_widths[i], 10, c, border=1, fill=True)
             pdf.ln()
 
-            # Rows
             pdf.set_font("helvetica", '', 10)
             for _, row in bilan_df.iterrows():
-                pdf.cell(col_widths[0], 10, str(row["Date"]), border=1)
-                pdf.cell(col_widths[1], 10, str(row["Asset"]), border=1)
+                date_str = str(row["Date"]).encode('latin-1', 'replace').decode('latin-1')
+                asset_str = str(row["Asset"]).encode('latin-1', 'replace').decode('latin-1')
+                pdf.cell(col_widths[0], 10, date_str, border=1)
+                pdf.cell(col_widths[1], 10, asset_str, border=1)
                 pdf.cell(col_widths[2], 10, f"{row['Prix Cession']:.2f} EUR", border=1)
                 pdf.cell(col_widths[3], 10, f"{row['VGP']:.2f} EUR", border=1)
                 pdf.cell(col_widths[4], 10, f"{row['Abattement Acq']:.2f} EUR", border=1)
@@ -350,16 +354,23 @@ with tab_bilan:
             pdf.cell(0, 10, f"PLUS-VALUE TOTALE BRUTE : {total_pv:,.2f} EUR", ln=True, align='R')
             pdf.cell(0, 10, f"IMPOT ESTIMÉ (PFU) : {impot:,.2f} EUR", ln=True, align='R')
 
-            return pdf.output()
+            return bytes(pdf.output())
 
-        pdf_bytes = generate_fiscal_pdf(df_bilan, target_year, total_pv, impot)
-        st.download_button(
-            "📄 Télécharger le Rapport Fiscal PDF",
-            data=pdf_bytes,
-            file_name=f"Rapport_Fiscal_{target_year}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+        # Explicit trigger for PDF generation to ensure data is present
+        if st.button("📊 Préparer le Rapport PDF", use_container_width=True):
+            # Serialize to JSON for caching
+            pdf_bytes = generate_fiscal_pdf_cached(df_bilan.to_json(), target_year, total_pv, impot)
+            st.session_state.fiscal_pdf_bytes = pdf_bytes
+            st.success("Rapport PDF prêt.")
+
+        if "fiscal_pdf_bytes" in st.session_state:
+            st.download_button(
+                "📄 Télécharger le Rapport Fiscal PDF",
+                data=st.session_state.fiscal_pdf_bytes,
+                file_name=f"Rapport_Fiscal_{target_year}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
     else:
         st.info("Réalisez le calcul dans l'onglet 'Cessions' pour voir le bilan.")
 
