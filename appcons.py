@@ -53,13 +53,22 @@ def resolve_raw_addr(addr_str):
         return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
     return str(addr_str).strip().lower()
 
-def pdf_safe_str(val):
-    """Sanitize string for PDF encoding by preserving visual nuances."""
+def pdf_safe_str(val, use_unicode=True):
+    """Sanitize string for PDF encoding.
+    If use_unicode is True, we preserve exotic characters as much as possible.
+    """
     if val is None: return ""
     s = str(val)
 
-    # Aggressive mapping of Cyrillic/Lisu/Other look-alikes to ASCII
-    # This prevents latin-1 and charmap crashes in environments with restricted codecs.
+    # Minimal normalization to preserve visual nuances
+    s = unicodedata.normalize('NFKC', s)
+
+    if use_unicode:
+        # We try to return the string as-is for fpdf2 Unicode fonts
+        # Only replace extremely problematic control chars or nulls
+        return s.replace("\x00", "")
+
+    # Fallback to ASCII-ish mapping if we are forced to Latin-1
     nuance_map = {
         "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
         "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
@@ -71,15 +80,7 @@ def pdf_safe_str(val):
     for k, v in nuance_map.items():
         s = s.replace(k, v)
 
-    # NFKC Normalization handles standard compatibility characters
-    s = unicodedata.normalize('NFKC', s)
-
-    # Try to keep as much as possible for Unicode fonts, but fallback safely
-    try:
-        # If we use DejaVu, it handles most things, but we want to avoid charmap errors on Windows
-        return s.encode('utf-8').decode('utf-8')
-    except:
-        return s.encode('latin-1', 'replace').decode('latin-1')
+    return s.encode('latin-1', 'replace').decode('latin-1')
 
 # --- Sidebar ---
 with st.sidebar:
@@ -368,6 +369,9 @@ with tab_vgp:
 
                 # PDF Generation
                 def generate_vgp_pdf(data_df, date_str, total_val):
+                    import fpdf
+                    is_fpdf2 = hasattr(fpdf, "__version__") and int(fpdf.__version__.split(".")[0]) >= 2
+
                     pdf = FPDF(orientation='L', unit='mm', format='A4')
                     pdf.set_auto_page_break(auto=True, margin=15)
 
@@ -398,9 +402,10 @@ with tab_vgp:
                     pdf.ln()
 
                     pdf.set_font(main_font, '', 10)
+                    use_uni = (main_font == "DejaVu")
                     for _, row in data_df.iterrows():
-                        acc = pdf_safe_str(row["Account"])[:40]
-                        asset = pdf_safe_str(row["Asset"])
+                        acc = pdf_safe_str(row["Account"], use_uni)[:40]
+                        asset = pdf_safe_str(row["Asset"], use_uni)
                         pdf.cell(col_widths[0], 10, acc, border=1)
                         pdf.cell(col_widths[1], 10, asset, border=1)
                         pdf.cell(col_widths[2], 10, f"{row['Amount']:.4f}", border=1)

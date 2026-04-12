@@ -66,13 +66,22 @@ def apply_position_labels(df):
     df["Counterparty"] = df["Counterparty"].apply(format_cp)
     return df
 
-def pdf_safe_str(val):
-    """Sanitize string for PDF encoding by preserving visual nuances."""
+def pdf_safe_str(val, use_unicode=True):
+    """Sanitize string for PDF encoding.
+    If use_unicode is True, we preserve exotic characters as much as possible.
+    """
     if val is None: return ""
     s = str(val)
 
-    # Aggressive mapping of Cyrillic/Lisu/Other look-alikes to ASCII
-    # This prevents latin-1 and charmap crashes in environments with restricted codecs.
+    # Minimal normalization to preserve visual nuances
+    s = unicodedata.normalize('NFKC', s)
+
+    if use_unicode:
+        # We try to return the string as-is for fpdf2 Unicode fonts
+        # Only replace extremely problematic control chars or nulls
+        return s.replace("\x00", "")
+
+    # Fallback to ASCII-ish mapping if we are forced to Latin-1
     nuance_map = {
         "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
         "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
@@ -84,15 +93,7 @@ def pdf_safe_str(val):
     for k, v in nuance_map.items():
         s = s.replace(k, v)
 
-    # NFKC Normalization handles standard compatibility characters
-    s = unicodedata.normalize('NFKC', s)
-
-    # Try to keep as much as possible for Unicode fonts, but fallback safely
-    try:
-        # If we use DejaVu, it handles most things, but we want to avoid charmap errors on Windows
-        return s.encode('utf-8').decode('utf-8')
-    except:
-        return s.encode('latin-1', 'replace').decode('latin-1')
+    return s.encode('latin-1', 'replace').decode('latin-1')
 
 def load_data(year):
     paths = {
@@ -369,6 +370,9 @@ with tab_bilan:
 
         # PDF Export for Fiscality (Full Report)
         def generate_fiscal_pdf_full(year, accounts, local_pos, proto_pos, manual_pos, fiat_df, bilan_df, total_pv, impot):
+            import fpdf
+            is_fpdf2 = hasattr(fpdf, "__version__") and int(fpdf.__version__.split(".")[0]) >= 2
+
             pdf = FPDF(orientation='L', unit='mm', format='A4')
             pdf.set_auto_page_break(auto=True, margin=15)
 
@@ -395,7 +399,8 @@ with tab_bilan:
             pdf.ln(5)
 
             pdf.set_font(main_font, 'B', 10)
-            acc_str = ", ".join([pdf_safe_str(a) for a in accounts]) if accounts else "Aucun"
+            use_uni = (main_font == "DejaVu")
+            acc_str = ", ".join([pdf_safe_str(a, use_uni) for a in accounts]) if accounts else "Aucun"
             pdf.multi_cell(0, 10, f"Comptes identifies : {acc_str}")
             pdf.ln(5)
 
@@ -409,8 +414,8 @@ with tab_bilan:
             pdf.ln()
             pdf.set_font(main_font, '', 10)
             for _, r in local_pos.iterrows():
-                pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"])[:60], border=1)
-                pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"]), border=1)
+                pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"], use_uni)[:60], border=1)
+                pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"], use_uni), border=1)
                 pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
                 pdf.ln()
             pdf.ln(10)
@@ -423,8 +428,8 @@ with tab_bilan:
                 pdf.ln()
                 pdf.set_font(main_font, '', 10)
                 for _, r in proto_pos.iterrows():
-                    pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"]), border=1)
-                    pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"]), border=1)
+                    pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"], use_uni), border=1)
+                    pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"], use_uni), border=1)
                     pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
                     pdf.ln()
                 pdf.ln(10)
@@ -446,9 +451,9 @@ with tab_bilan:
                 try: ds_f = pd.to_datetime(r["Date"]).strftime("%d/%m/%Y")
                 except: ds_f = "N/A"
                 pdf.cell(w_f[0], 8, ds_f, border=1)
-                pdf.cell(w_f[1], 8, pdf_safe_str(r.get("Account", "Manual"))[:30], border=1)
-                pdf.cell(w_f[2], 8, pdf_safe_str(r.get("Asset", "EUR")), border=1)
-                pdf.cell(w_f[3], 8, pdf_safe_str(r.get("Type", "")), border=1)
+                pdf.cell(w_f[1], 8, pdf_safe_str(r.get("Account", "Manual"), use_uni)[:30], border=1)
+                pdf.cell(w_f[2], 8, pdf_safe_str(r.get("Asset", "EUR"), use_uni), border=1)
+                pdf.cell(w_f[3], 8, pdf_safe_str(r.get("Type", ""), use_uni), border=1)
                 pdf.cell(w_f[4], 8, f"{r.get('Montant EUR', 0):.2f} EUR", border=1)
                 pdf.cell(w_f[5], 8, f"{r.get('Quantité', 0):.6f}", border=1)
                 pdf.ln()
@@ -470,7 +475,7 @@ with tab_bilan:
                 except: ds_c = str(row["Date"])
 
                 pdf.cell(w_c[0], 8, ds_c, border=1)
-                pdf.cell(w_c[1], 8, pdf_safe_str(row["Asset"]), border=1)
+                pdf.cell(w_c[1], 8, pdf_safe_str(row["Asset"], use_uni), border=1)
                 pdf.cell(w_c[2], 8, f"{row['Prix Cession']:.2f} EUR", border=1)
                 pdf.cell(w_c[3], 8, f"{row['VGP']:.2f} EUR", border=1)
                 pdf.cell(w_c[4], 8, f"{row['Abattement Acq']:.2f} EUR", border=1)
