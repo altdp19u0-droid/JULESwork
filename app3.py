@@ -51,6 +51,14 @@ def apply_position_labels(df):
     df["Counterparty"] = df["Counterparty"].apply(format_cp)
     return df
 
+def pdf_safe_str(val):
+    """Sanitize string for Latin-1 PDF encoding."""
+    if val is None: return ""
+    s = str(val)
+    # Common replacements for problematic unicode characters if needed
+    # But mainly use encode/decode with replace
+    return s.encode('latin-1', 'replace').decode('latin-1')
+
 def load_data(year):
     paths = {
         'journal': get_file_path(year, 'qualified'),
@@ -332,7 +340,7 @@ with tab_bilan:
             pdf.ln(5)
 
             pdf.set_font("helvetica", 'B', 10)
-            acc_str = ", ".join(accounts) if accounts else "Aucun"
+            acc_str = ", ".join([pdf_safe_str(a) for a in accounts]) if accounts else "Aucun"
             pdf.multi_cell(0, 10, f"Comptes identifies : {acc_str}")
             pdf.ln(5)
 
@@ -346,8 +354,8 @@ with tab_bilan:
             pdf.ln()
             pdf.set_font("helvetica", '', 10)
             for _, r in local_pos.iterrows():
-                pdf.cell(w_p[0], 8, str(r["Account"])[:60], border=1)
-                pdf.cell(w_p[1], 8, str(r["Asset"]), border=1)
+                pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"])[:60], border=1)
+                pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"]), border=1)
                 pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
                 pdf.ln()
             pdf.ln(10)
@@ -360,8 +368,8 @@ with tab_bilan:
                 pdf.ln()
                 pdf.set_font("helvetica", '', 10)
                 for _, r in proto_pos.iterrows():
-                    pdf.cell(w_p[0], 8, str(r["Account"]), border=1)
-                    pdf.cell(w_p[1], 8, str(r["Asset"]), border=1)
+                    pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"]), border=1)
+                    pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"]), border=1)
                     pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
                     pdf.ln()
                 pdf.ln(10)
@@ -382,9 +390,9 @@ with tab_bilan:
                 try: d_str = pd.to_datetime(r["Date"]).strftime("%d/%m/%Y")
                 except: d_str = "N/A"
                 pdf.cell(w_f[0], 8, d_str, border=1)
-                pdf.cell(w_f[1], 8, str(r.get("Account", "Manual"))[:30], border=1)
-                pdf.cell(w_f[2], 8, str(r.get("Asset", "EUR")), border=1)
-                pdf.cell(w_f[3], 8, str(r.get("Type", "")), border=1)
+                pdf.cell(w_f[1], 8, pdf_safe_str(r.get("Account", "Manual"))[:30], border=1)
+                pdf.cell(w_f[2], 8, pdf_safe_str(r.get("Asset", "EUR")), border=1)
+                pdf.cell(w_f[3], 8, pdf_safe_str(r.get("Type", "")), border=1)
                 pdf.cell(w_f[4], 8, f"{r.get('Montant EUR', 0):.2f} EUR", border=1)
                 pdf.cell(w_f[5], 8, f"{r.get('Quantité', 0):.6f}", border=1)
                 pdf.ln()
@@ -406,7 +414,7 @@ with tab_bilan:
                 except: ds = str(row["Date"])
 
                 pdf.cell(w_c[0], 8, ds, border=1)
-                pdf.cell(w_c[1], 8, str(row["Asset"]), border=1)
+                pdf.cell(w_c[1], 8, pdf_safe_str(row["Asset"]), border=1)
                 pdf.cell(w_c[2], 8, f"{row['Prix Cession']:.2f} EUR", border=1)
                 pdf.cell(w_c[3], 8, f"{row['VGP']:.2f} EUR", border=1)
                 pdf.cell(w_c[4], 8, f"{row['Abattement Acq']:.2f} EUR", border=1)

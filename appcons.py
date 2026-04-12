@@ -38,6 +38,12 @@ def resolve_raw_addr(addr_str):
         return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
     return str(addr_str).strip().lower()
 
+def pdf_safe_str(val):
+    """Sanitize string for Latin-1 PDF encoding."""
+    if val is None: return ""
+    s = str(val)
+    return s.encode('latin-1', 'replace').decode('latin-1')
+
 # --- Sidebar ---
 with st.sidebar:
     st.header("📂 Sélection des Données")
@@ -344,8 +350,8 @@ with tab_vgp:
 
                     pdf.set_font("helvetica", '', 10)
                     for _, row in data_df.iterrows():
-                        acc = str(row["Account"])[:40].encode('latin-1', 'replace').decode('latin-1')
-                        asset = str(row["Asset"]).encode('latin-1', 'replace').decode('latin-1')
+                        acc = pdf_safe_str(row["Account"])[:40]
+                        asset = pdf_safe_str(row["Asset"])
                         pdf.cell(col_widths[0], 10, acc, border=1)
                         pdf.cell(col_widths[1], 10, asset, border=1)
                         pdf.cell(col_widths[2], 10, f"{row['Amount']:.4f}", border=1)
