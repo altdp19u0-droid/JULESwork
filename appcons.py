@@ -7,6 +7,7 @@ import streamlit as st
 from fpdf import FPDF
 from io import BytesIO, StringIO
 import tempfile
+import unicodedata
 from datetime import datetime, time as dt_time
 
 # --- Configuration ---
@@ -39,17 +40,24 @@ def resolve_raw_addr(addr_str):
     return str(addr_str).strip().lower()
 
 def pdf_safe_str(val):
-    """Sanitize string for Latin-1 PDF encoding."""
+    """Sanitize string for Latin-1 PDF encoding by removing/replacing problematic chars."""
     if val is None: return ""
     s = str(val)
+
+    # Unicode Normalization (NFKD handles compatibility chars)
+    s = unicodedata.normalize('NFKD', s)
+
+    # Map look-alike characters (Lisu, Cyrillic, etc.) to ASCII
     replacements = {
+        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\u0421": "C", # look-alikes USDC
         "\u216d": "C", # Roman numeral C
-        "\u20ac": "EUR", # Euro
-        "\u2019": "'", # Smart quote
+        "\u20ac": "EUR", "\u2019": "'", "\u200a": " ",
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
-    return s.encode('latin-1', 'ignore').decode('latin-1')
+
+    # Final ASCII filtering to ensure readability in PDF
+    return s.encode('latin-1', 'replace').decode('latin-1').replace('?', '') or "Asset"
 
 # --- Sidebar ---
 with st.sidebar:

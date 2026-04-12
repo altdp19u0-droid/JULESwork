@@ -6,6 +6,7 @@ from fpdf import FPDF
 from io import BytesIO, StringIO
 import json
 import tempfile
+import unicodedata
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Fiscalité (app3)", layout="wide")
@@ -55,17 +56,21 @@ def pdf_safe_str(val):
     """Sanitize string for Latin-1 PDF encoding by removing/replacing problematic chars."""
     if val is None: return ""
     s = str(val)
-    # Replace common problematic characters
+
+    # Unicode Normalization (NFKD handles compatibility chars)
+    s = unicodedata.normalize('NFKD', s)
+
+    # Map look-alike characters (Lisu, Cyrillic, etc.) to ASCII
     replacements = {
+        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\u0421": "C", # look-alikes USDC
         "\u216d": "C", # Roman numeral C
-        "\u20ac": "EUR", # Euro
-        "\u2019": "'", # Smart quote
+        "\u20ac": "EUR", "\u2019": "'", "\u200a": " ",
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
 
-    # Try to encode as latin-1, ignore errors for characters that really can't be represented
-    return s.encode('latin-1', 'ignore').decode('latin-1')
+    # Final ASCII filtering to ensure readability in PDF
+    return s.encode('latin-1', 'replace').decode('latin-1').replace('?', '') or "Asset"
 
 def load_data(year):
     paths = {
