@@ -175,9 +175,12 @@ def get_portfolio_snapshot(journal, target_date):
     details = []
     total_vgp = 0.0
 
-    # Pre-calculating prices to avoid redundant API calls
-    unique_assets = balances.index.tolist()
-    asset_prices = {a: get_price_eur(a, target_date) for a in unique_assets}
+    # --- FIX: COLLECT ALL ASSETS FOR PRICING ---
+    # We fetch prices for every asset present in the journal up to this date,
+    # not just the ones in the consolidated balance, to ensure the Audit View
+    # and Wallets show correct values.
+    all_assets = set(df["Asset"].unique())
+    asset_prices = {a: get_price_eur(a, target_date) for a in all_assets}
 
     # Breakdown Logic:
     # A. Balances in Wallets (Account-based)
@@ -244,9 +247,16 @@ if not os.path.exists(path):
     st.warning(f"📂 En attente de données : Le fichier '{os.path.basename(path)}' n'existe pas encore.")
     st.info("💡 Utilisez l'**App 2** pour synchroniser et sanctuariser vos premières données qualifiées.")
 else:
-    # Chargement journal
-    journal = pd_read_csv_safe(path)
-    journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
+    # --- Persistence Logic ---
+    # We use session state to ensure UI updates after calculation
+    if "journal_active" not in st.session_state or st.session_state.get("active_path") != path:
+        journal = pd_read_csv_safe(path)
+        journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
+        st.session_state.journal_active = journal
+        st.session_state.active_path = path
+
+    journal = st.session_state.journal_active
+
     # Force numeric conversion
     for col in ["Amount", "Value ($)", "VGP (EUR)"]:
         if col in journal.columns:
@@ -269,15 +279,22 @@ else:
     else:
         # 1. État des lieux
         nb_total = len(cessions_all)
-        nb_manquant = len(cessions_all[cessions_all["VGP (EUR)"] <= 0])
+        # We consider missing if VGP is exactly 0.0 or NaN
+        mask_manquant = (cessions_all["VGP (EUR)"].isna()) | (cessions_all["VGP (EUR)"] == 0)
+        nb_manquant = len(cessions_all[mask_manquant])
 
         st.subheader(f"📈 Suivi des VGP ({nb_total} cessions au total)")
         col1, col2 = st.columns(2)
         col1.metric("Cessions identifiées", nb_total)
+
+        # Real-time counter logic: we use the session state directly for the counter
         col2.metric("VGP à calculer", nb_manquant, delta=-nb_manquant, delta_color="inverse")
 
         # 2. Boutons d'action
         if nb_manquant > 0:
+            with st.expander("🔍 Voir les cessions sans VGP"):
+                st.write(cessions_all[mask_manquant][["Date", "Asset", "Amount"]])
+
             if st.button("🚀 Lancer le calcul automatique (Incrémental)", type="primary", use_container_width=True):
                 pbar = st.progress(0)
                 # On ne calcule que pour les manquants
