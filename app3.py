@@ -73,13 +73,14 @@ def pdf_safe_str(val, use_unicode=True):
     if val is None: return ""
     s = str(val)
 
-    # Minimal normalization to preserve visual nuances
-    s = unicodedata.normalize('NFKC', s)
-
     if use_unicode:
-        # We try to return the string as-is for fpdf2 Unicode fonts
-        # Only replace extremely problematic control chars or nulls
+        # ABSOLUTE PRESERVATION OF NUANCES:
+        # We skip NFKC normalization which transforms characters like 'Ⅽ' (Roman) to 'C' (ASCII).
+        # We only remove null bytes and extremely problematic characters for the PDF engine.
         return s.replace("\x00", "")
+
+    # Minimal normalization for fallback mode (Latin-1)
+    s = unicodedata.normalize('NFKC', s)
 
     # Fallback to ASCII-ish mapping if we are forced to Latin-1
     nuance_map = {
