@@ -75,9 +75,9 @@ def pdf_safe_str(val, use_unicode=True):
 
     if use_unicode:
         # ABSOLUTE PRESERVATION OF NUANCES:
-        # We skip NFKC normalization which transforms characters like 'Ⅽ' (Roman) to 'C' (ASCII).
-        # We only remove null bytes and extremely problematic characters for the PDF engine.
-        return s.replace("\x00", "")
+        # We skip NFKC normalization and homoglyph mapping.
+        # We only remove null bytes and extremely problematic control characters.
+        return "".join(c for c in s if ord(c) >= 32 or c in "\n\r\t")
 
     # Minimal normalization for fallback mode (Latin-1)
     s = unicodedata.normalize('NFKC', s)
