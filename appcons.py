@@ -87,6 +87,21 @@ def pdf_safe_str(val, use_unicode=True):
 with st.sidebar:
     st.header("📂 Sélection des Données")
 
+    # Unicode Diagnostics
+    with st.expander("🛠️ Diagnostic PDF & Unicode"):
+        import fpdf
+        f_ver = getattr(fpdf, "__version__", "Inconnue")
+        is_fpdf2 = int(f_ver.split(".")[0]) >= 2 if f_ver != "Inconnue" else False
+        st.write(f"Bibliothèque : `fpdf2` {'✅' if is_fpdf2 else '❌ (Installez fpdf2)'}")
+        st.write(f"Version : `{f_ver}`")
+        if st.button("🧹 Nettoyer Cache Polices (.pkl)"):
+            import glob
+            pkl_files = glob.glob("*.pkl")
+            for pf in pkl_files:
+                try: os.remove(pf)
+                except: pass
+            st.info(f"{len(pkl_files)} fichiers de cache supprimés.")
+
     # 1. Années disponibles
     available_years = sorted([y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))], reverse=True)
     if not available_years:
@@ -371,22 +386,26 @@ with tab_vgp:
                 # PDF Generation
                 def generate_vgp_pdf(data_df, date_str, total_val):
                     import fpdf
-                    is_fpdf2 = hasattr(fpdf, "__version__") and int(fpdf.__version__.split(".")[0]) >= 2
+                    f_ver = getattr(fpdf, "__version__", "1.0")
+                    is_fpdf2 = int(f_ver.split(".")[0]) >= 2
 
                     pdf = FPDF(orientation='L', unit='mm', format='A4')
                     pdf.set_auto_page_break(auto=True, margin=15)
 
                     font_path = "DejaVuSans.ttf"
                     font_bold_path = "DejaVuSans-Bold.ttf"
-                    main_font = "helvetica" # Default fallback
+                    main_font = "helvetica"
 
                     if os.path.exists(font_path) and os.path.exists(font_bold_path):
                         try:
                             pdf.add_font("DejaVu", "", font_path)
                             pdf.add_font("DejaVu", "B", font_bold_path)
                             main_font = "DejaVu"
-                        except:
-                            pass
+                        except: pass
+
+                    if is_fpdf2 and main_font == "DejaVu":
+                        try: pdf.set_fallback_fonts(["DejaVu"])
+                        except: pass
 
                     pdf.add_page()
                     pdf.set_font(main_font, 'B', 16)

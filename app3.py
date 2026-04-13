@@ -133,11 +133,27 @@ def load_data(year):
 with st.sidebar:
     st.header("⚙️ Paramètres Fiscaux")
 
-    # Font Check
-    if not os.path.exists("DejaVuSans.ttf"):
-        st.warning("⚠️ Police Unicode 'DejaVuSans.ttf' absente. Les caractères spéciaux seront limités dans le PDF.")
-    else:
-        st.success("✅ Police Unicode détectée.")
+    # Unicode Diagnostics
+    with st.expander("🛠️ Diagnostic PDF & Unicode"):
+        import fpdf
+        f_ver = getattr(fpdf, "__version__", "Inconnue")
+        is_fpdf2 = int(f_ver.split(".")[0]) >= 2 if f_ver != "Inconnue" else False
+        st.write(f"Bibliothèque : `fpdf2` {'✅' if is_fpdf2 else '❌ (Installez fpdf2)'}")
+        st.write(f"Version : `{f_ver}`")
+
+        if not os.path.exists("DejaVuSans.ttf"):
+            st.error("Police DejaVuSans.ttf : Manquante")
+        else:
+            st.success("Police DejaVuSans.ttf : OK")
+
+        if st.button("🧹 Nettoyer Cache Polices (.pkl)"):
+            import glob
+            pkl_files = glob.glob("*.pkl")
+            for pf in pkl_files:
+                try: os.remove(pf)
+                except: pass
+            st.info(f"{len(pkl_files)} fichiers de cache supprimés.")
+
     target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, value=datetime.now().year)
 
     st.divider()
@@ -372,7 +388,8 @@ with tab_bilan:
         # PDF Export for Fiscality (Full Report)
         def generate_fiscal_pdf_full(year, accounts, local_pos, proto_pos, manual_pos, fiat_df, bilan_df, total_pv, impot):
             import fpdf
-            is_fpdf2 = hasattr(fpdf, "__version__") and int(fpdf.__version__.split(".")[0]) >= 2
+            f_ver = getattr(fpdf, "__version__", "1.0")
+            is_fpdf2 = int(f_ver.split(".")[0]) >= 2
 
             pdf = FPDF(orientation='L', unit='mm', format='A4')
             pdf.set_auto_page_break(auto=True, margin=15)
@@ -380,16 +397,20 @@ with tab_bilan:
             # Unicode Font Registration
             font_path = "DejaVuSans.ttf"
             font_bold_path = "DejaVuSans-Bold.ttf"
-            main_font = "helvetica" # Default fallback
+            main_font = "helvetica"
 
             if os.path.exists(font_path) and os.path.exists(font_bold_path):
                 try:
+                    # On force l'utilisation des fichiers TTF
                     pdf.add_font("DejaVu", "", font_path)
                     pdf.add_font("DejaVu", "B", font_bold_path)
                     main_font = "DejaVu"
-                except Exception as e:
-                    # Silently fallback to helvetica to avoid charmap/pickle crashes on Windows
-                    pass
+                except: pass
+
+            # Gestion des glyphes manquants pour fpdf2
+            if is_fpdf2 and main_font == "DejaVu":
+                try: pdf.set_fallback_fonts(["DejaVu"])
+                except: pass
 
             # --- Page 1: Comptes et Positions ---
             pdf.add_page()
