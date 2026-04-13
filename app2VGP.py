@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 import streamlit as st
 from datetime import datetime
+import unicodedata
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Calcul VGP Pro (app2VGP)", layout="wide")
@@ -55,13 +56,26 @@ def get_qualified_path(year):
     return os.path.join(EXPORT_BASE_DIR, str(year), f"qualified_journal_{year}.csv")
 
 def get_price_eur(asset, date_obj):
-    asset = str(asset).upper()
-    if asset in ["EUR", "EURA", "AGEUR"]: return 1.0
-    if asset in ["USDC", "USDT", "DAI", "USDC.E"]: return 0.92 # Approximation par défaut
+    # CRUCIAL: On normalise pour l'API tout en gardant l'original pour l'affichage UI
+    # Aggressive mapping of Cyrillic/Lisu/Other look-alikes back to ASCII for API search
+    nuance_map = {
+        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
+        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
+        "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
+        "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
+        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
+    }
+    asset_clean = str(asset)
+    for k, v in nuance_map.items():
+        asset_clean = asset_clean.replace(k, v)
+    asset_clean = unicodedata.normalize('NFKC', asset_clean).upper().strip()
+
+    if asset_clean in ["EUR", "EURA", "AGEUR"]: return 1.0
+    if asset_clean in ["USDC", "USDT", "DAI", "USDC.E"]: return 0.92 # Approximation par défaut
 
     d_str = date_obj.strftime("%d-%m-%Y")
     cache = load_price_cache()
-    cache_key = f"{asset}_{d_str}"
+    cache_key = f"{asset_clean}_{d_str}"
 
     # Priorité au cache persistant
     if cache_key in cache:
@@ -70,29 +84,45 @@ def get_price_eur(asset, date_obj):
     # Sinon API CoinGecko
     asset_map = {
         "ETH": "ethereum", "BTC": "bitcoin", "POL": "polygon-ecosystem-token",
-        "BNB": "binancecoin", "ARB": "arbitrum", "OP": "optimism", "WETH": "ethereum"
+        "BNB": "binancecoin", "ARB": "arbitrum", "OP": "optimism", "WETH": "ethereum",
+        "SOL": "solana", "MATIC": "matic-network", "AVAX": "avalanche-2", "DOT": "polkadot",
+        "LINK": "chainlink", "UNI": "uniswap", "AAVE": "aave", "DAI": "dai"
     }
 
-    cg_id = asset_map.get(asset, asset.lower())
-    url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
+    # 1. Tentative CoinGecko
+    cg_id = asset_map.get(asset_clean, asset_clean.lower())
+    url_cg = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
 
     try:
         time.sleep(1.5) # Protection API gratuite
-        res = requests.get(url, timeout=10)
-        if res.status_code == 429:
-            st.warning("⚠️ Rate limit API atteint. Attente 10s...")
-            time.sleep(10)
-            return get_price_eur(asset, date_obj)
+        res = requests.get(url_cg, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            price = float(data["market_data"]["current_price"]["eur"])
+            cache[cache_key] = price
+            save_price_cache(cache)
+            return price
+    except: pass
 
-        data = res.json()
-        price = float(data["market_data"]["current_price"]["eur"])
+    # 2. Fallback DefiLlama (Prix spot ou historique par timestamp)
+    try:
+        ts = int(date_obj.timestamp())
+        # Note: DefiLlama utilise souvent coingecko:id comme préfixe
+        url_llama = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{cg_id}?searchWidth=4h"
+        res = requests.get(url_llama, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            coins = data.get("coins", {})
+            if coins:
+                # Récupère le premier prix trouvé
+                price_usd = float(next(iter(coins.values()))["price"])
+                price = price_usd * 0.92 # Conversion simplifiée EUR/USD
+                cache[cache_key] = price
+                save_price_cache(cache)
+                return price
+    except: pass
 
-        # Sauvegarde au cache
-        cache[cache_key] = price
-        save_price_cache(cache)
-        return price
-    except:
-        return 0.0
+    return 0.0
 
 def get_portfolio_snapshot(journal, target_date):
     # 1. Chargement des référentiels

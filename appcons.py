@@ -312,8 +312,22 @@ with tab_vgp:
             PRICE_CACHE_FILE = "historical_prices_cache.json"
 
             def get_price_eur_cached(asset, date_obj):
-                asset = str(asset).upper()
-                if asset in ["USDC", "USDT", "DAI", "USDC.E"]: return 0.92 # Approximation par défaut
+                # Normalisation pour la recherche (API/Cache)
+                # Aggressive mapping back to ASCII for API compatibility
+                nuance_map = {
+                    "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
+                    "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
+                    "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
+                    "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
+                    "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
+                }
+                asset_clean = str(asset)
+                for k, v in nuance_map.items():
+                    asset_clean = asset_clean.replace(k, v)
+                asset_clean = unicodedata.normalize('NFKC', asset_clean).upper().strip()
+
+                if asset_clean in ["EUR", "EURA", "AGEUR"]: return 1.0
+                if asset_clean in ["USDC", "USDT", "DAI", "USDC.E"]: return 0.92 # Approximation par défaut
 
                 d_str = date_obj.strftime("%d-%m-%Y")
                 cache = {}
@@ -322,22 +336,49 @@ with tab_vgp:
                         with open(PRICE_CACHE_FILE, "r", encoding="utf-8", errors="replace") as f: cache = json.load(f)
                     except: pass
 
-                cache_key = f"{asset}_{d_str}"
+                cache_key = f"{asset_clean}_{d_str}"
                 if cache_key in cache: return float(cache[cache_key])
 
                 # API CoinGecko
-                asset_map = {"ETH": "ethereum", "BTC": "bitcoin", "POL": "polygon-ecosystem-token", "BNB": "binancecoin", "ARB": "arbitrum", "OP": "optimism", "WETH": "ethereum"}
-                cg_id = asset_map.get(asset, asset.lower())
-                url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
+                asset_map = {
+                    "ETH": "ethereum", "BTC": "bitcoin", "POL": "polygon-ecosystem-token",
+                    "BNB": "binancecoin", "ARB": "arbitrum", "OP": "optimism", "WETH": "ethereum",
+                    "SOL": "solana", "MATIC": "matic-network", "AVAX": "avalanche-2", "DOT": "polkadot",
+                    "LINK": "chainlink", "UNI": "uniswap", "AAVE": "aave"
+                }
+
+                cg_id = asset_map.get(asset_clean, asset_clean.lower())
+
+                # 1. Tentative CoinGecko
+                url_cg = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
                 try:
-                    time.sleep(1.2)
-                    res = requests.get(url, timeout=10)
-                    data = res.json()
-                    price = float(data["market_data"]["current_price"]["eur"])
-                    cache[cache_key] = price
-                    with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f: json.dump(cache, f)
-                    return price
-                except: return 0.0
+                    time.sleep(1.5)
+                    res = requests.get(url_cg, timeout=10)
+                    if res.status_code == 200:
+                        data = res.json()
+                        price = float(data["market_data"]["current_price"]["eur"])
+                        cache[cache_key] = price
+                        with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f: json.dump(cache, f)
+                        return price
+                except: pass
+
+                # 2. Fallback DefiLlama
+                try:
+                    ts = int(date_obj.timestamp())
+                    url_llama = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{cg_id}?searchWidth=4h"
+                    res = requests.get(url_llama, timeout=10)
+                    if res.status_code == 200:
+                        data = res.json()
+                        coins = data.get("coins", {})
+                        if coins:
+                            price_usd = float(next(iter(coins.values()))["price"])
+                            price = price_usd * 0.92
+                            cache[cache_key] = price
+                            with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f: json.dump(cache, f)
+                            return price
+                except: pass
+
+                return 0.0
 
             if st.button("🚀 Rechercher les prix & Calculer la VGP", type="primary", use_container_width=True):
                 pbar = st.progress(0)
