@@ -21,6 +21,12 @@ COLUMNS = [
 ]
 
 # --- Helpers ---
+def is_imposable_robust(val):
+    """Robust boolean detection for various CSV formats."""
+    if pd.isna(val): return False
+    s = str(val).upper().strip()
+    return s in ["TRUE", "1", "1.0", "VRAI", "YES", "OUI"]
+
 def resolve_raw_addr(addr_str):
     if "(" in str(addr_str) and ")" in str(addr_str):
         # Extract content between parentheses
@@ -219,7 +225,7 @@ def merge_raw_data(year):
                     "Source Type": "Native",
                     "Category": "Transfert Interne" if "Discovery" in str(r.get("Type")) else "A vérifier",
                     "Status": status,
-                    "Imposable": False
+                    "Imposable": is_imposable_robust(r.get("Imposable", False))
                 })
 
         if f.startswith("raw_token_transfers_") and os.path.getsize(f_path) > 0:
@@ -262,7 +268,7 @@ def merge_raw_data(year):
                     "Source Type": "Token",
                     "Category": "A vérifier",
                     "Status": status,
-                    "Imposable": False
+                    "Imposable": is_imposable_robust(r.get("Imposable", False))
                 })
 
     df_final = pd.DataFrame(all_rows)
