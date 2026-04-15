@@ -37,7 +37,7 @@ def process_neverless_csv(df):
     progress_bar = st.progress(0)
     total_rows = len(df)
 
-    for idx, row in df.iterrows():
+    for i, (idx, row) in enumerate(df.iterrows()):
         dt_str = str(row.get("Date", ""))
         try:
             dt = pd.to_datetime(dt_str)
@@ -130,7 +130,7 @@ def process_neverless_csv(df):
                     "Imposable": False
             })
 
-        progress_bar.progress((idx + 1) / total_rows)
+        progress_bar.progress((i + 1) / total_rows)
 
     return pd.DataFrame(new_rows)
 

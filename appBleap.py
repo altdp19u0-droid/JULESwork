@@ -122,7 +122,7 @@ def process_bleap_csv(df):
     progress_bar = st.progress(0)
     total_rows = len(df)
 
-    for idx, row in df.iterrows():
+    for i, (idx, row) in enumerate(df.iterrows()):
         # Parsing date
         dt_str = str(row.get("Created At", row.get("Completed At", "")))
         try:
@@ -213,7 +213,7 @@ def process_bleap_csv(df):
                 "Imposable": False
             })
 
-        progress_bar.progress((idx + 1) / total_rows)
+        progress_bar.progress((i + 1) / total_rows)
 
     return pd.DataFrame(new_rows)
 
