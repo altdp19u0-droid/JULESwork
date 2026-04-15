@@ -172,15 +172,24 @@ with t1:
 
     st.divider()
     st.subheader("📊 Contrôle & Observation (Journal en cours)")
+
+    # Barre de tri dynamique
+    df_fiat = st.session_state.fiat_journal.copy()
+    if not df_fiat.empty:
+        cs1, cs2 = st.columns([2, 1])
+        sort_col_f = cs1.selectbox("Trier par", options=df_fiat.columns, index=list(df_fiat.columns).index("Date"))
+        sort_order_f = cs2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_fiat_order", horizontal=True)
+        df_fiat = df_fiat.sort_values(by=sort_col_f, ascending=(sort_order_f == "Croissant"))
+
     st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
 
     # Type safety: force string type for text columns to avoid Streamlit FLOAT mismatch crash
     for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
-        if col in st.session_state.fiat_journal.columns:
-            st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].fillna("").astype(str)
+        if col in df_fiat.columns:
+            df_fiat[col] = df_fiat[col].fillna("").astype(str)
 
     st.session_state.fiat_journal = st.data_editor(
-        st.session_state.fiat_journal,
+        df_fiat,
         column_config={
             "Date": st.column_config.DateColumn("Date", required=True),
             "Account": st.column_config.TextColumn("Account"),
@@ -208,9 +217,10 @@ with t2:
         p_type = c2.selectbox("Type de position", ["Staking", "Vault (Compound/Aave)", "Lending", "CEX Balance", "Autre"])
         p_plat = c3.text_input("Protocole / Plateforme", placeholder="ex: Lido, Binance Earn")
 
-        c4, c5 = st.columns(2)
+        c4, c5, c_dir = st.columns([1, 1, 1])
         p_asset = c4.text_input("Asset", placeholder="ex: stETH, USDC")
         p_qty = c5.number_input("Quantité", min_value=0.0, format="%.8f")
+        p_direction = c_dir.radio("Sens", ["🔵 Dépôt (+)", "🔴 Sortie (-)"], horizontal=True)
 
         c_addr, c_hash_p = st.columns(2)
         p_addr = c_addr.text_input("Adresse Contrat / Memo", placeholder="0x... ou commentaire")
@@ -222,10 +232,13 @@ with t2:
             if p_date.year != target_year:
                 st.error(f"❌ La date doit impérativement être en {target_year}.")
             else:
+                # Application du sens (Négatif pour sortie)
+                final_qty = p_qty if "Dépôt" in p_direction else -p_qty
+
                 new_row = {
                     "Date": p_date, "Account": p_addr, "Counterparty": p_plat,
                     "Type Position": p_type, "Protocole/Plateforme": p_plat,
-                    "Asset": p_asset.upper(), "Quantité": p_qty,
+                    "Asset": p_asset.upper(), "Quantité": final_qty,
                     "Tx Hash": p_hash
                 }
                 st.session_state.positions_journal = pd.concat([st.session_state.positions_journal, pd.DataFrame([new_row])], ignore_index=True)
@@ -236,15 +249,24 @@ with t2:
 
     st.divider()
     st.subheader("📊 Contrôle & Observation (Positions en cours)")
+
+    # Barre de tri dynamique
+    df_pos = st.session_state.positions_journal.copy()
+    if not df_pos.empty:
+        ps1, ps2 = st.columns([2, 1])
+        sort_col_p = ps1.selectbox("Trier par", options=df_pos.columns, index=list(df_pos.columns).index("Date"))
+        sort_order_p = ps2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_pos_order", horizontal=True)
+        df_pos = df_pos.sort_values(by=sort_col_p, ascending=(sort_order_p == "Croissant"))
+
     st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
 
     # Type safety
     for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
-        if col in st.session_state.positions_journal.columns:
-            st.session_state.positions_journal[col] = st.session_state.positions_journal[col].fillna("").astype(str)
+        if col in df_pos.columns:
+            df_pos[col] = df_pos[col].fillna("").astype(str)
 
     st.session_state.positions_journal = st.data_editor(
-        st.session_state.positions_journal,
+        df_pos,
         column_config={
             "Date": st.column_config.DateColumn("Date", required=True),
             "Account": st.column_config.TextColumn("Account"),
@@ -313,11 +335,21 @@ with t3:
 
     st.divider()
     st.subheader("📊 Journal des Échanges & Autovirements")
+
+    # Barre de tri dynamique
+    df_swaps = st.session_state.swaps_journal.copy()
+    if not df_swaps.empty:
+        ss1, ss2 = st.columns([2, 1])
+        sort_col_s = ss1.selectbox("Trier par", options=df_swaps.columns, index=list(df_swaps.columns).index("Date"))
+        sort_order_s = ss2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_swap_order", horizontal=True)
+        df_swaps = df_swaps.sort_values(by=sort_col_s, ascending=(sort_order_s == "Croissant"))
+
     for col in ["Account", "Counterparty", "Asset", "Type", "Tx Hash", "Source Type"]:
-        st.session_state.swaps_journal[col] = st.session_state.swaps_journal[col].fillna("").astype(str)
+        if col in df_swaps.columns:
+            df_swaps[col] = df_swaps[col].fillna("").astype(str)
 
     st.session_state.swaps_journal = st.data_editor(
-        st.session_state.swaps_journal,
+        df_swaps,
         column_config={
             "Date": st.column_config.DateColumn("Date", required=True),
             "Account": st.column_config.TextColumn("Compte"),
