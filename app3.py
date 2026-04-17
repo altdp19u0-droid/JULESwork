@@ -263,29 +263,6 @@ with tab_accounts:
         derived_local = journal.groupby(['Account', 'Asset']).agg({'Amount': 'sum'}).reset_index()
         derived_local = derived_local[derived_local['Amount'].abs() > 1e-8]
 
-        # Valorisation Portefeuilles
-        if st.button("🚀 Valoriser les Positions (Prix de fin d'année)"):
-            with st.spinner("Recherche des prix..."):
-                eoy_date = datetime(target_year, 12, 31)
-                unique_assets = set(derived_local["Asset"].unique())
-                prices = {a: get_price_eur(a, eoy_date) for a in unique_assets}
-                derived_local["Prix (EUR)"] = derived_local["Asset"].map(prices)
-                derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
-                st.session_state.local_valued = derived_local
-
-                # Valorisation Protocoles (Simultanée)
-                if not df_protocols.empty:
-                    unique_assets_proto = set(df_protocols["Asset"].unique())
-                    prices_proto = {a: get_price_eur(a, eoy_date) for a in unique_assets_proto}
-                    df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(prices_proto)
-                    df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
-                    st.session_state.proto_valued = df_protocols
-
-                st.success("Valorisation terminée.")
-
-        if "local_valued" in st.session_state:
-            derived_local = st.session_state.local_valued
-
         # 3. Calcul des soldes Protocoles (Mapping Counterparty)
         # On cherche les flux vers des protocoles qui n'ont pas été retirés
         # Solde Protocole = Sum(Sent to Protocol) - Sum(Received from Protocol)
@@ -306,6 +283,31 @@ with tab_accounts:
                         })
 
         df_protocols = pd.DataFrame(protocol_rows)
+
+        # 4. Valorisation (Wallets + Protocoles)
+        if st.button("🚀 Valoriser les Positions (Prix de fin d'année)"):
+            with st.spinner("Recherche des prix..."):
+                eoy_date = datetime(target_year, 12, 31)
+
+                # Wallets
+                unique_assets = set(derived_local["Asset"].unique())
+                prices = {a: get_price_eur(a, eoy_date) for a in unique_assets}
+                derived_local["Prix (EUR)"] = derived_local["Asset"].map(prices)
+                derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
+                st.session_state.local_valued = derived_local
+
+                # Protocoles
+                if not df_protocols.empty:
+                    unique_assets_proto = set(df_protocols["Asset"].unique())
+                    prices_proto = {a: get_price_eur(a, eoy_date) for a in unique_assets_proto}
+                    df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(prices_proto)
+                    df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
+                    st.session_state.proto_valued = df_protocols
+
+                st.success("Valorisation terminée.")
+
+        if "local_valued" in st.session_state:
+            derived_local = st.session_state.local_valued
 
         # Valorisation Protocoles
         if "local_valued" in st.session_state and not df_protocols.empty:
