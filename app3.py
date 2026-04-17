@@ -31,14 +31,37 @@ POSITIONS_FILE = "position_labels.json"
 
 # --- Helpers ---
 def get_file_path(year, category):
-    # category: 'qualified', 'fiat', 'positions'
+    # category: 'qualified', 'fiat', 'positions', 'prices'
+    base = os.path.join(EXPORT_BASE_DIR, str(year))
     if category == 'qualified':
-        return os.path.join(EXPORT_BASE_DIR, str(year), f"qualified_journal_{year}.csv")
+        return os.path.join(base, f"qualified_journal_{year}.csv")
     if category == 'fiat':
-        return os.path.join(EXPORT_BASE_DIR, str(year), f"manual_fiat_{year}.csv")
+        return os.path.join(base, f"manual_fiat_{year}.csv")
     if category == 'positions':
-        return os.path.join(EXPORT_BASE_DIR, str(year), f"manual_positions_{year}.csv")
+        return os.path.join(base, f"manual_positions_{year}.csv")
+    if category == 'prices':
+        return os.path.join(base, f"eoy_prices_{year}.json")
     return None
+
+def load_eoy_prices(year):
+    path = get_file_path(year, 'prices')
+    if path and os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except: return {}
+    return {}
+
+def save_eoy_prices(year, prices_dict):
+    path = get_file_path(year, 'prices')
+    if path:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(prices_dict, f, indent=4)
+            return True
+        except: return False
+    return False
 
 PRICE_CACHE_FILE = "historical_prices_cache.json"
 
@@ -263,6 +286,13 @@ with tab_accounts:
         derived_local = journal.groupby(['Account', 'Asset']).agg({'Amount': 'sum'}).reset_index()
         derived_local = derived_local[derived_local['Amount'].abs() > 1e-8]
 
+        # Chargement des prix sanctuarisés
+        eoy_prices = load_eoy_prices(target_year)
+
+        if "Prix (EUR)" not in derived_local.columns:
+            derived_local["Prix (EUR)"] = derived_local["Asset"].map(eoy_prices).fillna(0.0)
+        derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
+
         # 3. Calcul des soldes Protocoles (Mapping Counterparty)
         # On cherche les flux vers des protocoles qui n'ont pas été retirés
         # Solde Protocole = Sum(Sent to Protocol) - Sum(Received from Protocol)
@@ -283,9 +313,14 @@ with tab_accounts:
                         })
 
         df_protocols = pd.DataFrame(protocol_rows)
+        if not df_protocols.empty:
+            if "Prix (EUR)" not in df_protocols.columns:
+                df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(eoy_prices).fillna(0.0)
+            df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
 
-        # 4. Valorisation (Wallets + Protocoles)
-        if st.button("🚀 Valoriser les Positions (Prix de fin d'année)"):
+        # 4. Valorisation & Sanctuarisation
+        col_v1, col_v2 = st.columns(2)
+        if col_v1.button("🚀 Valoriser les Positions (Auto)"):
             with st.spinner("Recherche des prix..."):
                 eoy_date = datetime(target_year, 12, 31)
 
@@ -306,16 +341,30 @@ with tab_accounts:
 
                 st.success("Valorisation terminée.")
 
+        if col_v2.button("💾 Sanctuariser les Prix"):
+            all_prices = {}
+            if "local_valued" in st.session_state:
+                df = st.session_state.local_valued
+                for _, r in df.iterrows():
+                    if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
+            if "proto_valued" in st.session_state:
+                df = st.session_state.proto_valued
+                for _, r in df.iterrows():
+                    if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
+
+            if all_prices:
+                if save_eoy_prices(target_year, all_prices):
+                    st.success(f"✅ {len(all_prices)} prix sanctuarisés pour {target_year}.")
+                else:
+                    st.error("Erreur lors de la sauvegarde.")
+            else:
+                st.warning("Aucun prix à sauvegarder.")
+
         if "local_valued" in st.session_state:
             derived_local = st.session_state.local_valued
 
-        # Valorisation Protocoles
-        if "local_valued" in st.session_state and not df_protocols.empty:
-            eoy_date = datetime(target_year, 12, 31)
-            unique_assets_proto = set(df_protocols["Asset"].unique())
-            prices_proto = {a: get_price_eur(a, eoy_date) for a in unique_assets_proto}
-            df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(prices_proto)
-            df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
+        if "proto_valued" in st.session_state and not df_protocols.empty:
+            df_protocols = st.session_state.proto_valued
 
         # UI Affichage
         st.write("**📱 Portefeuilles (Local) :**")
@@ -323,34 +372,44 @@ with tab_accounts:
             if derived_local[col].dtype == object:
                 derived_local[col] = derived_local[col].fillna("").astype(str)
 
-        st.data_editor(
+        # UI Affichage avec mode édition pour les prix
+        ed_local = st.data_editor(
             derived_local,
             column_config={
-                "Prix (EUR)": st.column_config.NumberColumn(format="%.2f €"),
-                "Valeur (EUR)": st.column_config.NumberColumn(format="%.2f €"),
-                "Amount": st.column_config.NumberColumn(format="%.6f")
+                "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €", help="Saisissez ou corrigez le prix manuellement"),
+                "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
+                "Amount": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                "Account": st.column_config.TextColumn(disabled=True),
+                "Asset": st.column_config.TextColumn(disabled=True),
             },
             use_container_width=True,
-            disabled=True,
             key="local_pos_ed"
         )
+
+        # Recalcul automatique des valeurs après édition manuelle des prix
+        ed_local["Valeur (EUR)"] = ed_local["Amount"] * ed_local["Prix (EUR)"].fillna(0.0)
+        st.session_state.local_valued = ed_local
 
         if not df_protocols.empty:
             st.write("**🏦 Protocoles & Staking (Déporté) :**")
             for col in df_protocols.columns:
                 if df_protocols[col].dtype == object:
                     df_protocols[col] = df_protocols[col].fillna("").astype(str)
-            st.data_editor(
+
+            ed_proto = st.data_editor(
                 df_protocols,
                 column_config={
-                    "Prix (EUR)": st.column_config.NumberColumn(format="%.2f €"),
-                    "Valeur (EUR)": st.column_config.NumberColumn(format="%.2f €"),
-                    "Amount": st.column_config.NumberColumn(format="%.6f")
+                    "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €", help="Saisissez ou corrigez le prix manuellement"),
+                    "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
+                    "Amount": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                    "Account": st.column_config.TextColumn(disabled=True),
+                    "Asset": st.column_config.TextColumn(disabled=True),
                 },
                 use_container_width=True,
-                disabled=True,
                 key="proto_pos_ed"
             )
+            ed_proto["Valeur (EUR)"] = ed_proto["Amount"] * ed_proto["Prix (EUR)"].fillna(0.0)
+            st.session_state.proto_valued = ed_proto
 
         st.divider()
         st.write("**Positions déclarées manuellement (Off-chain, CEX, etc.) :**")
