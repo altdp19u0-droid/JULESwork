@@ -8,6 +8,8 @@ import json
 import tempfile
 import unicodedata
 import traceback
+import time
+import requests
 
 # --- Helpers ---
 def pd_read_csv_safe(path):
@@ -37,6 +39,60 @@ def get_file_path(year, category):
     if category == 'positions':
         return os.path.join(EXPORT_BASE_DIR, str(year), f"manual_positions_{year}.csv")
     return None
+
+PRICE_CACHE_FILE = "historical_prices_cache.json"
+
+def load_price_cache():
+    if os.path.exists(PRICE_CACHE_FILE):
+        try:
+            with open(PRICE_CACHE_FILE, "r", encoding="utf-8", errors="replace") as f:
+                return json.load(f)
+        except: return {}
+    return {}
+
+def save_price_cache(cache):
+    with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f)
+
+def get_eur_usd_rate(date_obj):
+    date_str = date_obj.strftime("%Y-%m-%d")
+    try:
+        url = f"https://api.frankfurter.app/{date_str}?from=USD&to=EUR"
+        res = requests.get(url, timeout=5).json()
+        return res["rates"]["EUR"]
+    except: return 0.92
+
+def get_price_eur(asset, date_obj):
+    # Same logic as app2VGP for consistency
+    asset_clean = unicodedata.normalize('NFKC', str(asset)).upper().strip()
+    if asset_clean in ["EUR", "EURA", "AGEUR"]: return 1.0
+    if asset_clean in ["USDC", "USDT", "DAI", "USDC.E"]: return 0.92
+
+    d_str = date_obj.strftime("%d-%m-%Y")
+    cache = load_price_cache()
+    cache_key = f"{asset_clean}_{d_str}"
+    if cache_key in cache: return float(cache[cache_key])
+
+    asset_map = {
+        "ETH": "ethereum", "BTC": "bitcoin", "POL": "polygon-ecosystem-token",
+        "BNB": "binancecoin", "ARB": "arbitrum", "OP": "optimism", "WETH": "ethereum",
+        "SOL": "solana", "MATIC": "matic-network", "AVAX": "avalanche-2", "DOT": "polkadot",
+        "LINK": "chainlink", "UNI": "uniswap", "AAVE": "aave", "DAI": "dai"
+    }
+
+    cg_id = asset_map.get(asset_clean, asset_clean.lower())
+    url_cg = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
+    try:
+        time.sleep(1.2)
+        res = requests.get(url_cg, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            price = float(data["market_data"]["current_price"]["eur"])
+            cache[cache_key] = price
+            save_price_cache(cache)
+            return price
+    except: pass
+    return 0.0
 
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
@@ -207,6 +263,20 @@ with tab_accounts:
         derived_local = journal.groupby(['Account', 'Asset']).agg({'Amount': 'sum'}).reset_index()
         derived_local = derived_local[derived_local['Amount'].abs() > 1e-8]
 
+        # Valorisation Portefeuilles
+        if st.button("🚀 Valoriser les Positions (Prix de fin d'année)"):
+            with st.spinner("Recherche des prix..."):
+                eoy_date = datetime(target_year, 12, 31)
+                unique_assets = set(derived_local["Asset"].unique())
+                prices = {a: get_price_eur(a, eoy_date) for a in unique_assets}
+                derived_local["Prix (EUR)"] = derived_local["Asset"].map(prices)
+                derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
+                st.session_state.local_valued = derived_local
+                st.success("Valorisation terminée.")
+
+        if "local_valued" in st.session_state:
+            derived_local = st.session_state.local_valued
+
         # 3. Calcul des soldes Protocoles (Mapping Counterparty)
         # On cherche les flux vers des protocoles qui n'ont pas été retirés
         # Solde Protocole = Sum(Sent to Protocol) - Sum(Received from Protocol)
@@ -228,19 +298,48 @@ with tab_accounts:
 
         df_protocols = pd.DataFrame(protocol_rows)
 
+        # Valorisation Protocoles
+        if "local_valued" in st.session_state and not df_protocols.empty:
+            eoy_date = datetime(target_year, 12, 31)
+            unique_assets_proto = set(df_protocols["Asset"].unique())
+            prices_proto = {a: get_price_eur(a, eoy_date) for a in unique_assets_proto}
+            df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(prices_proto)
+            df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
+
         # UI Affichage
         st.write("**📱 Portefeuilles (Local) :**")
         for col in derived_local.columns:
             if derived_local[col].dtype == object:
                 derived_local[col] = derived_local[col].fillna("").astype(str)
-        st.data_editor(derived_local, use_container_width=True, disabled=True, key="local_pos_ed")
+
+        st.data_editor(
+            derived_local,
+            column_config={
+                "Prix (EUR)": st.column_config.NumberColumn(format="%.2f €"),
+                "Valeur (EUR)": st.column_config.NumberColumn(format="%.2f €"),
+                "Amount": st.column_config.NumberColumn(format="%.6f")
+            },
+            use_container_width=True,
+            disabled=True,
+            key="local_pos_ed"
+        )
 
         if not df_protocols.empty:
             st.write("**🏦 Protocoles & Staking (Déporté) :**")
             for col in df_protocols.columns:
                 if df_protocols[col].dtype == object:
                     df_protocols[col] = df_protocols[col].fillna("").astype(str)
-            st.data_editor(df_protocols, use_container_width=True, disabled=True, key="proto_pos_ed")
+            st.data_editor(
+                df_protocols,
+                column_config={
+                    "Prix (EUR)": st.column_config.NumberColumn(format="%.2f €"),
+                    "Valeur (EUR)": st.column_config.NumberColumn(format="%.2f €"),
+                    "Amount": st.column_config.NumberColumn(format="%.6f")
+                },
+                use_container_width=True,
+                disabled=True,
+                key="proto_pos_ed"
+            )
 
         st.divider()
         st.write("**Positions déclarées manuellement (Off-chain, CEX, etc.) :**")
@@ -430,15 +529,20 @@ with tab_bilan:
             pdf.set_font(main_font, 'B', 11)
             pdf.cell(0, 10, "Positions Portefeuilles (Local)", ln=True)
             pdf.set_fill_color(220, 220, 220)
-            cols_p = ["Account", "Asset", "Quantite"]
-            w_p = [140, 60, 60]
+
+            has_val = "Valeur (EUR)" in local_pos.columns
+            cols_p = ["Account", "Asset", "Quantite", "Valeur EUR"] if has_val else ["Account", "Asset", "Quantite"]
+            w_p = [100, 50, 55, 60] if has_val else [140, 60, 60]
+
             for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
             pdf.ln()
             pdf.set_font(main_font, '', 10)
             for _, r in local_pos.iterrows():
-                pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"], use_uni)[:60], border=1)
+                pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"], use_uni)[:45], border=1)
                 pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"], use_uni), border=1)
                 pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
+                if has_val:
+                    pdf.cell(w_p[3], 8, f"{r.get('Valeur (EUR)', 0):,.2f} EUR", border=1)
                 pdf.ln()
             pdf.ln(10)
 
@@ -453,6 +557,8 @@ with tab_bilan:
                     pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"], use_uni), border=1)
                     pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"], use_uni), border=1)
                     pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
+                    if has_val:
+                        pdf.cell(w_p[3], 8, f"{r.get('Valeur (EUR)', 0):,.2f} EUR", border=1)
                     pdf.ln()
                 pdf.ln(10)
 
