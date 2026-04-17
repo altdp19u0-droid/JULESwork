@@ -272,6 +272,15 @@ with tab_accounts:
                 derived_local["Prix (EUR)"] = derived_local["Asset"].map(prices)
                 derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
                 st.session_state.local_valued = derived_local
+
+                # Valorisation Protocoles (Simultanée)
+                if not df_protocols.empty:
+                    unique_assets_proto = set(df_protocols["Asset"].unique())
+                    prices_proto = {a: get_price_eur(a, eoy_date) for a in unique_assets_proto}
+                    df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(prices_proto)
+                    df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
+                    st.session_state.proto_valued = df_protocols
+
                 st.success("Valorisation terminée.")
 
         if "local_valued" in st.session_state:
@@ -360,8 +369,9 @@ with tab_acq:
 
     col_acq1, col_acq2 = st.columns(2)
     with col_acq1:
-        hist_acq = st.number_input("Prix d'acquisition historique (années précédentes)", value=0.0, step=100.0)
+        hist_acq = st.number_input("Prix d'acquisition historique (années précédentes)", value=0.0, step=100.0, key="hist_acq_input")
         total_acq_price = current_acq + hist_acq
+        st.session_state.total_acq_price_shared = total_acq_price
         st.metric("Prix d'acquisition Total (A)", f"{total_acq_price:,.2f} €")
 
     with col_acq2:
@@ -477,6 +487,23 @@ with tab_bilan:
 
         impot = pv_nette * flat_tax_rate if pv_nette > 0 else 0.0
         col_b3.metric(f"Impôt Estimé ({int(flat_tax_rate*100)}%)", f"{impot:,.2f} €", delta_color="inverse")
+
+        # --- AJOUT INFOS COMPLÉMENTAIRES ---
+        st.divider()
+        c_inf1, c_inf2 = st.columns(2)
+
+        # 1. Récupération du prix d'achat total (A)
+        total_acq = st.session_state.get("total_acq_price_shared", 0.0)
+        c_inf1.metric("Prix d'achat total (Capital investi)", f"{total_acq:,.2f} €")
+
+        # 2. Calcul de la VGP consolidée à fin de période
+        vgp_end = 0.0
+        if "local_valued" in st.session_state:
+            vgp_end += st.session_state.local_valued["Valeur (EUR)"].sum()
+        if "proto_valued" in st.session_state:
+            vgp_end += st.session_state.proto_valued["Valeur (EUR)"].sum()
+
+        c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €")
 
         st.divider()
         st.write("📝 **Montant à reporter dans la case 3AN (ou 3BN si moins-value) :**")
