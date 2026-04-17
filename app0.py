@@ -119,7 +119,8 @@ with st.sidebar:
 # --- Tabs ---
 t1, t2, t3 = st.tabs(["💶 Mouvements Fiat", "🔒 Positions", "🔄 Échanges & Autovirements"])
 
-with t1:
+@st.fragment
+def fragment_fiat():
     st.subheader(f"📝 Saisie des flux monétaires ({target_year})")
 
     # Utilisation de colonnes hors formulaire pour la réactivité
@@ -177,7 +178,7 @@ with t1:
     df_fiat = st.session_state.fiat_journal.copy()
     if not df_fiat.empty:
         cs1, cs2 = st.columns([2, 1])
-        sort_col_f = cs1.selectbox("Trier par", options=df_fiat.columns, index=list(df_fiat.columns).index("Date"))
+        sort_col_f = cs1.selectbox("Trier par", options=df_fiat.columns, index=list(df_fiat.columns).index("Date"), key="sort_col_fiat")
         sort_order_f = cs2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_fiat_order", horizontal=True)
         df_fiat = df_fiat.sort_values(by=sort_col_f, ascending=(sort_order_f == "Croissant"))
 
@@ -188,7 +189,7 @@ with t1:
         if col in df_fiat.columns:
             df_fiat[col] = df_fiat[col].fillna("").astype(str)
 
-    st.session_state.fiat_journal = st.data_editor(
+    edited_df = st.data_editor(
         df_fiat,
         column_config={
             "Date": st.column_config.DateColumn("Date", required=True),
@@ -207,8 +208,11 @@ with t1:
         num_rows="dynamic",
         key="fiat_editor"
     )
+    if not edited_df.equals(df_fiat):
+        st.session_state.fiat_journal = edited_df
 
-with t2:
+@st.fragment
+def fragment_pos():
     st.subheader(f"📝 Saisie des positions ({target_year})")
     with st.form("pos_form", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
@@ -246,6 +250,7 @@ with t2:
                 for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
                     st.session_state.positions_journal[col] = st.session_state.positions_journal[col].fillna("").astype(str)
                 st.success("Position enregistrée.")
+                st.rerun()
 
     st.divider()
     st.subheader("📊 Contrôle & Observation (Positions en cours)")
@@ -254,7 +259,7 @@ with t2:
     df_pos = st.session_state.positions_journal.copy()
     if not df_pos.empty:
         ps1, ps2 = st.columns([2, 1])
-        sort_col_p = ps1.selectbox("Trier par", options=df_pos.columns, index=list(df_pos.columns).index("Date"))
+        sort_col_p = ps1.selectbox("Trier par", options=df_pos.columns, index=list(df_pos.columns).index("Date"), key="sort_col_pos")
         sort_order_p = ps2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_pos_order", horizontal=True)
         df_pos = df_pos.sort_values(by=sort_col_p, ascending=(sort_order_p == "Croissant"))
 
@@ -265,7 +270,7 @@ with t2:
         if col in df_pos.columns:
             df_pos[col] = df_pos[col].fillna("").astype(str)
 
-    st.session_state.positions_journal = st.data_editor(
+    edited_df = st.data_editor(
         df_pos,
         column_config={
             "Date": st.column_config.DateColumn("Date", required=True),
@@ -281,9 +286,13 @@ with t2:
         num_rows="dynamic",
         key="pos_editor"
     )
+    if not edited_df.equals(df_pos):
+        st.session_state.positions_journal = edited_df
 
-with t3:
+@st.fragment
+def fragment_swaps():
     st.subheader(f"🔄 Saisie des Échanges et Transferts ({target_year})")
+    default_date = datetime.now() if target_year == datetime.now().year else datetime(target_year, 1, 1)
 
     col_s1, col_s2 = st.columns(2)
 
@@ -310,6 +319,7 @@ with t3:
                     row_in = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_in.upper(), "Amount": s_qty_in, "Type": "Swap In", "Tx Hash": s_hash, "Source Type": "Manual Swap"}
                     st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_out, row_in])], ignore_index=True)
                     st.success("Swap ajouté (2 lignes créées).")
+                    st.rerun()
 
     with col_s2:
         st.write("**🚚 Transfert Interne**")
@@ -332,6 +342,7 @@ with t3:
                     row_dst = {"Date": t_date, "Account": t_acc_dst, "Counterparty": t_acc_src, "Asset": t_asset.upper(), "Amount": t_qty, "Type": "Transfert Interne In", "Tx Hash": t_hash, "Source Type": "Manual Transfer"}
                     st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_src, row_dst])], ignore_index=True)
                     st.success("Transfert ajouté (2 lignes créées).")
+                    st.rerun()
 
     st.divider()
     st.subheader("📊 Journal des Échanges & Autovirements")
@@ -340,7 +351,7 @@ with t3:
     df_swaps = st.session_state.swaps_journal.copy()
     if not df_swaps.empty:
         ss1, ss2 = st.columns([2, 1])
-        sort_col_s = ss1.selectbox("Trier par", options=df_swaps.columns, index=list(df_swaps.columns).index("Date"))
+        sort_col_s = ss1.selectbox("Trier par", options=df_swaps.columns, index=list(df_swaps.columns).index("Date"), key="sort_col_swaps")
         sort_order_s = ss2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_swap_order", horizontal=True)
         df_swaps = df_swaps.sort_values(by=sort_col_s, ascending=(sort_order_s == "Croissant"))
 
@@ -348,7 +359,7 @@ with t3:
         if col in df_swaps.columns:
             df_swaps[col] = df_swaps[col].fillna("").astype(str)
 
-    st.session_state.swaps_journal = st.data_editor(
+    edited_df = st.data_editor(
         df_swaps,
         column_config={
             "Date": st.column_config.DateColumn("Date", required=True),
@@ -363,6 +374,12 @@ with t3:
         num_rows="dynamic",
         key="swaps_editor"
     )
+    if not edited_df.equals(df_swaps):
+        st.session_state.swaps_journal = edited_df
+
+with t1: fragment_fiat()
+with t2: fragment_pos()
+with t3: fragment_swaps()
 
 # --- Sanctuarisation ---
 # On affiche toujours la section de sauvegarde pour permettre d'écraser/effacer si besoin

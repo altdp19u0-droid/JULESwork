@@ -268,6 +268,13 @@ tab_accounts, tab_acq, tab_cessions, tab_bilan = st.tabs([
 with tab_accounts:
     st.subheader("🏦 Liste des Comptes Propriétaires Détectés")
     journal = data['journal']
+
+    # Initialize variables to avoid NameError in downstream tabs/PDF generation
+    accounts = []
+    derived_local = pd.DataFrame()
+    df_protocols = pd.DataFrame()
+    pos_df = data.get('positions', pd.DataFrame())
+
     if not journal.empty:
         accounts = list(journal['Account'].dropna().unique())
         st.write(f"Comptes identifiés dans le journal : `{', '.join(accounts)}`")
@@ -413,7 +420,6 @@ with tab_accounts:
 
         st.divider()
         st.write("**Positions déclarées manuellement (Off-chain, CEX, etc.) :**")
-        pos_df = data['positions']
         if not pos_df.empty:
             for col in pos_df.columns:
                 if pos_df[col].dtype == object:
