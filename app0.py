@@ -74,12 +74,15 @@ def load_manual_data(year):
         for col in text_cols:
             if col not in df.columns: df[col] = ""
             df[col] = df[col].fillna("").astype(str)
+        if 'Imposable' not in df.columns:
+            df['Imposable'] = False
         st.session_state.swaps_journal = df
     else:
-        cols = ["Date", "Account", "Counterparty", "Asset", "Amount", "Type", "Tx Hash", "Source Type"]
+        cols = ["Date", "Account", "Counterparty", "Asset", "Amount", "Type", "Tx Hash", "Source Type", "Imposable"]
         st.session_state.swaps_journal = pd.DataFrame(columns=cols)
         for col in ["Account", "Counterparty", "Asset", "Type", "Tx Hash", "Source Type"]:
             st.session_state.swaps_journal[col] = st.session_state.swaps_journal[col].astype(str)
+        st.session_state.swaps_journal["Imposable"] = st.session_state.swaps_journal["Imposable"].astype(bool)
 
 if "fiat_journal" not in st.session_state:
     load_manual_data(st.session_state.current_year)
@@ -104,9 +107,10 @@ with st.sidebar:
         for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
             st.session_state.positions_journal[col] = st.session_state.positions_journal[col].astype(str)
 
-        st.session_state.swaps_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Asset", "Amount", "Type", "Tx Hash", "Source Type"])
+        st.session_state.swaps_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Asset", "Amount", "Type", "Tx Hash", "Source Type", "Imposable"])
         for col in ["Account", "Counterparty", "Asset", "Type", "Tx Hash", "Source Type"]:
             st.session_state.swaps_journal[col] = st.session_state.swaps_journal[col].astype(str)
+        st.session_state.swaps_journal["Imposable"] = st.session_state.swaps_journal["Imposable"].astype(bool)
 
         st.toast("Saisie vidée (en session uniquement).")
         st.rerun()
@@ -308,15 +312,16 @@ def fragment_swaps():
             s_asset_in = c_s3.text_input("Asset Reçu", placeholder="ex: USDC")
             s_qty_in = c_s4.number_input("Quantité Reçue", min_value=0.0, format="%.8f")
             s_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...")
+            s_imp = st.checkbox("Imposable", value=False)
 
             if st.form_submit_button("➕ Ajouter le Swap"):
                 if s_date.year != target_year:
                     st.error("Année incorrecte.")
                 else:
                     # Ligne Sortie
-                    row_out = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_out.upper(), "Amount": -s_qty_out, "Type": "Swap Out", "Tx Hash": s_hash, "Source Type": "Manual Swap"}
+                    row_out = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_out.upper(), "Amount": -s_qty_out, "Type": "Swap Out", "Tx Hash": s_hash, "Source Type": "Manual Swap", "Imposable": s_imp}
                     # Ligne Entrée
-                    row_in = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_in.upper(), "Amount": s_qty_in, "Type": "Swap In", "Tx Hash": s_hash, "Source Type": "Manual Swap"}
+                    row_in = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_in.upper(), "Amount": s_qty_in, "Type": "Swap In", "Tx Hash": s_hash, "Source Type": "Manual Swap", "Imposable": s_imp}
                     st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_out, row_in])], ignore_index=True)
                     st.success("Swap ajouté (2 lignes créées).")
                     st.rerun()
@@ -331,15 +336,16 @@ def fragment_swaps():
             t_acc_src = c_t1.text_input("Compte Source", placeholder="ex: Wallet A")
             t_acc_dst = c_t2.text_input("Compte Destination", placeholder="ex: Wallet B")
             t_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...")
+            t_imp = st.checkbox("Imposable", value=False)
 
             if st.form_submit_button("➕ Ajouter le Transfert"):
                 if t_date.year != target_year:
                     st.error("Année incorrecte.")
                 else:
                     # Ligne Sortie Source
-                    row_src = {"Date": t_date, "Account": t_acc_src, "Counterparty": t_acc_dst, "Asset": t_asset.upper(), "Amount": -t_qty, "Type": "Transfert Interne Out", "Tx Hash": t_hash, "Source Type": "Manual Transfer"}
+                    row_src = {"Date": t_date, "Account": t_acc_src, "Counterparty": t_acc_dst, "Asset": t_asset.upper(), "Amount": -t_qty, "Type": "Transfert Interne Out", "Tx Hash": t_hash, "Source Type": "Manual Transfer", "Imposable": t_imp}
                     # Ligne Entrée Destination
-                    row_dst = {"Date": t_date, "Account": t_acc_dst, "Counterparty": t_acc_src, "Asset": t_asset.upper(), "Amount": t_qty, "Type": "Transfert Interne In", "Tx Hash": t_hash, "Source Type": "Manual Transfer"}
+                    row_dst = {"Date": t_date, "Account": t_acc_dst, "Counterparty": t_acc_src, "Asset": t_asset.upper(), "Amount": t_qty, "Type": "Transfert Interne In", "Tx Hash": t_hash, "Source Type": "Manual Transfer", "Imposable": t_imp}
                     st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_src, row_dst])], ignore_index=True)
                     st.success("Transfert ajouté (2 lignes créées).")
                     st.rerun()
@@ -369,6 +375,7 @@ def fragment_swaps():
             "Amount": st.column_config.NumberColumn("Montant", format="%.8f"),
             "Type": st.column_config.TextColumn("Type"),
             "Tx Hash": st.column_config.TextColumn("Tx Hash"),
+            "Imposable": st.column_config.CheckboxColumn("Imp."),
         },
         use_container_width=True,
         num_rows="dynamic",
