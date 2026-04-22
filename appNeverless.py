@@ -47,8 +47,13 @@ def process_neverless_csv(df):
         tx_type = str(row.get("Type", ""))
         raw_id = str(row.get("ID", ""))
         tx_hash = str(row.get("Blockchain transaction hash", ""))
+
+        # Robust synthetic Hash including timestamp and type to avoid collisions
+        ts_ms = int(dt.timestamp() * 1000)
         if tx_hash == "nan" or not tx_hash:
-            tx_hash = f"NVL-{raw_id}"
+            base_hash = f"NVL-{ts_ms}-{raw_id}"
+        else:
+            base_hash = tx_hash
 
         desc = str(row.get("Description", "")).lower()
         account = "Neverless_App"
@@ -68,12 +73,14 @@ def process_neverless_csv(df):
             if is_eur_withdrawal and raw_id in auto_withdrawal_ids:
                 is_imp = True
 
+            cat = "Vente" if tx_type == "Withdrawal" else ("Swap" if tx_type == "Trade" else "A vérifier")
+
             new_rows.append({
                 "Date": dt,
                 "Chain": "Neverless",
                 "Token": str(asset_sent), # Préservation nuance
                 "Token ID": "",
-                "Tx Hash": tx_hash,
+                "Tx Hash": f"OUT-{base_hash}",
                 "From": account,
                 "To": row.get("Blockchain address") or "Neverless_Internal",
                 "Value": amt_sent, # Positif en brut, app2 gère le signe
@@ -81,6 +88,7 @@ def process_neverless_csv(df):
                 "Rate ($)": price_sent,
                 "Account": account,
                 "Counterparty": "External" if tx_type == "Withdrawal" else "Swap",
+                "Category": cat,
                 "Imposable": is_imp
             })
 
@@ -91,12 +99,14 @@ def process_neverless_csv(df):
             price_rec = pd.to_numeric(row.get("USD price of asset received"), errors='coerce') or 0.0
             val_usd = amt_rec * price_rec
 
+            cat = "Achat" if tx_type == "Deposit" else ("Swap" if tx_type == "Trade" else "A vérifier")
+
             new_rows.append({
                 "Date": dt,
                 "Chain": "Neverless",
                 "Token": str(asset_rec), # Préservation nuance
                 "Token ID": "",
-                "Tx Hash": tx_hash,
+                "Tx Hash": f"IN-{base_hash}",
                 "From": "Neverless_Internal",
                 "To": account,
                 "Value": amt_rec,
@@ -104,6 +114,7 @@ def process_neverless_csv(df):
                 "Rate ($)": price_rec,
                 "Account": account,
                 "Counterparty": "Swap" if tx_type == "Trade" else ("Bank" if tx_type == "Deposit" and "auto-conversion" not in desc else "System"),
+                "Category": cat,
                 "Imposable": False
             })
 
@@ -119,15 +130,16 @@ def process_neverless_csv(df):
                 "Chain": "Neverless",
                 "Token": fee_asset,
                 "Token ID": "",
-                "Tx Hash": tx_hash,
+                "Tx Hash": f"FEE-{base_hash}",
                 "From": account,
                 "To": "Fees",
                 "Value": fee_amt,
                 "Value ($)": val_usd_fee,
                 "Rate ($)": price_fee,
                 "Account": account,
-                    "Counterparty": "Neverless_Fees",
-                    "Imposable": False
+                "Counterparty": "Neverless_Fees",
+                "Category": "Frais",
+                "Imposable": False
             })
 
         progress_bar.progress((i + 1) / total_rows)
