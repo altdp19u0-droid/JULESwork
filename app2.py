@@ -106,42 +106,34 @@ def merge_raw_data(year):
                 asset_name = str(r.get("Asset", "EUR")).upper()
                 f_type = str(r.get("Type", ""))
 
-                # --- LOGIQUE DOUBLE ÉCRITURE FIAT/CRYPTO ---
-                # 1. Le leg EUR (Mouvement de trésorerie pure, jamais imposable)
+                # Leg EUR (never imposable)
                 all_rows.append({
                     "Date": r.get("Date"),
-                    "Account": r.get("Account", r.get("Compte/Label", "Manual")),
-                    "Counterparty": r.get("Counterparty", r.get("Plateforme", "Bank")),
+                    "Account": str(r.get("Account", r.get("Compte/Label", "Manual"))),
+                    "Counterparty": str(r.get("Counterparty", r.get("Plateforme", "Bank"))),
                     "Asset": "EUR",
                     "Amount": m_eur if "Vente" in f_type else -m_eur,
                     "Value ($)": (m_eur if "Vente" in f_type else -m_eur) / 0.92,
                     "Network": "Fiat",
-                    "Tx Hash": r.get("Tx Hash", ""),
+                    "Tx Hash": str(r.get("Tx Hash", "")),
                     "Source Type": "Fiat",
                     "Category": "Vente (Fiat)" if "Vente" in f_type else ("Achat (Fiat)" if "Achat" in f_type else "Mouvement Fiat"),
                     "Status": "Valide",
                     "Imposable": False
                 })
 
-                # 2. Le leg Crypto (Achat/Vente d'actif, potentiellement imposable)
+                # Leg Crypto
                 if asset_name != "EUR" and asset_name != "NAN" and qty_asset > 0:
-                    # On utilise la valeur du journal manuel si présente, sinon fallback
-                    is_imp_manual = r.get("Imposable")
-                    if pd.isna(is_imp_manual) or is_imp_manual == "":
-                        is_imp = True if "Vente" in f_type else False
-                    else:
-                        # Conversion robuste du booléen
-                        is_imp = str(is_imp_manual).upper() in ["TRUE", "1", "1.0", "VRAI"]
-
+                    is_imp = is_imposable_robust(r.get("Imposable"))
                     all_rows.append({
                         "Date": r.get("Date"),
-                        "Account": r.get("Account", r.get("Compte/Label", "Manual")),
-                        "Counterparty": r.get("Counterparty", r.get("Plateforme", "Bank")),
+                        "Account": str(r.get("Account", r.get("Compte/Label", "Manual"))),
+                        "Counterparty": str(r.get("Counterparty", r.get("Plateforme", "Bank"))),
                         "Asset": asset_name,
                         "Amount": qty_asset if "Achat" in f_type else -qty_asset,
                         "Value ($)": m_eur / 0.92,
                         "Network": "Fiat",
-                        "Tx Hash": r.get("Tx Hash", ""),
+                        "Tx Hash": str(r.get("Tx Hash", "")),
                         "Source Type": "Fiat-to-Crypto",
                         "Category": "Achat" if "Achat" in f_type else "Vente",
                         "Status": "Valide",
@@ -155,29 +147,27 @@ def merge_raw_data(year):
         try:
             df_swap = pd_read_csv_safe(swap_path)
             for _, r in df_swap.iterrows():
+                is_imp = is_imposable_robust(r.get("Imposable", False))
                 all_rows.append({
                     "Date": r.get("Date"),
-                    "Account": r.get("Account"),
-                    "Counterparty": r.get("Counterparty"),
-                    "Asset": r.get("Asset"),
+                    "Account": str(r.get("Account", "")),
+                    "Counterparty": str(r.get("Counterparty", "")),
+                    "Asset": str(r.get("Asset", "")),
                     "Amount": float(r.get("Amount", 0.0)),
                     "Value ($)": 0.0,
                     "Network": "Manual",
-                    "Tx Hash": r.get("Tx Hash", ""),
-                    "Source Type": r.get("Source Type", "Manual"),
+                    "Tx Hash": str(r.get("Tx Hash", "")),
+                    "Source Type": "Manual",
                     "Category": "Transfert Interne" if "Transfert" in str(r.get("Type")) else "Swap",
                     "Status": "Valide",
-                    "Imposable": False
+                    "Imposable": is_imp
                 })
         except Exception: pass
 
     # 2. Load Blockchain Txs (app.py)
     files = os.listdir(year_dir)
-
     for f in files:
         f_path = os.path.join(year_dir, f)
-
-        # Extraction de l'adresse du propriétaire depuis le nom du fichier si possible
         file_addr = ""
         parts = f.split("_")
         for p in parts:
@@ -188,155 +178,102 @@ def merge_raw_data(year):
         if f.startswith("raw_transactions_") and os.path.getsize(f_path) > 0:
             try:
                 df = pd_read_csv_safe(f_path)
-            except Exception:
-                continue
-            for _, r in df.iterrows():
-                f_addr_full = str(r.get("From", ""))
-                t_addr_full = str(r.get("To", ""))
-                f_addr = resolve_raw_addr(f_addr_full)
-                t_addr = resolve_raw_addr(t_addr_full)
+                for _, r in df.iterrows():
+                    f_addr_full = str(r.get("From", ""))
+                    t_addr_full = str(r.get("To", ""))
+                    f_addr = resolve_raw_addr(f_addr_full)
+                    acc_low = str(r.get("Account", "")).lower()
+                    if not acc_low or acc_low in ["nan", "0x..."]: acc_low = file_addr if file_addr else "unknown"
 
-                acc_low = str(r.get("Account", "")).lower()
-                if not acc_low or acc_low == "nan" or acc_low == "0x...":
-                    acc_low = file_addr if file_addr else "unknown_account"
+                    cp = str(r.get("Counterparty", ""))
+                    if not cp or cp == "nan": cp = t_addr_full if f_addr == acc_low else f_addr_full
 
-                cp = str(r.get("Counterparty", ""))
-                if not cp or cp == "nan":
-                    cp = t_addr_full if f_addr == acc_low else f_addr_full
+                    amount = float(r.get("Value ETH", 0.0))
+                    if f_addr == acc_low: amount = -amount
 
-                amount = float(r.get("Value ETH", 0.0))
-                if f_addr == acc_low:
-                    amount = -amount
-
-                # Check spam on raw address OR Asset name
-                cp_raw = resolve_raw_addr(cp)
-                asset_name = str(r.get("Chain", "ETH")).lower()
-                status = "Spam" if (cp_raw in spam_list or asset_name in spam_list) else "A vérifier"
-
-                all_rows.append({
-                    "Date": r.get("Date"),
-                    "Account": acc_low,
-                    "Counterparty": cp,
-                    "Asset": r.get("Chain", "ETH"),
-                    "Amount": amount,
-                    "Value ($)": float(r.get("Value ($)") or 0.0),
-                    "Network": r.get("Chain"),
-                    "Tx Hash": r.get("Tx Hash"),
-                    "Source Type": "Native",
-                    "Category": "Transfert Interne" if "Discovery" in str(r.get("Type")) else "A vérifier",
-                    "Status": status,
-                    "Imposable": is_imposable_robust(r.get("Imposable", False))
-                })
+                    status = "Spam" if (resolve_raw_addr(cp) in spam_list or str(r.get("Chain", "")).lower() in spam_list) else "A vérifier"
+                    all_rows.append({
+                        "Date": r.get("Date"), "Account": acc_low, "Counterparty": cp, "Asset": r.get("Chain", "ETH"),
+                        "Amount": amount, "Value ($)": float(r.get("Value ($)") or 0.0), "Network": r.get("Chain"),
+                        "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Native",
+                        "Category": "Transfert Interne" if "Discovery" in str(r.get("Type")) else "A vérifier",
+                        "Status": status, "Imposable": is_imposable_robust(r.get("Imposable", False))
+                    })
+            except Exception: pass
 
         if f.startswith("raw_token_transfers_") and os.path.getsize(f_path) > 0:
             try:
                 df = pd_read_csv_safe(f_path)
-            except Exception:
-                continue
-            for _, r in df.iterrows():
-                f_addr_full = str(r.get("From", ""))
-                t_addr_full = str(r.get("To", ""))
-                f_addr = resolve_raw_addr(f_addr_full)
-                t_addr = resolve_raw_addr(t_addr_full)
+                for _, r in df.iterrows():
+                    f_addr_full = str(r.get("From", ""))
+                    f_addr = resolve_raw_addr(f_addr_full)
+                    acc_low = str(r.get("Account", "")).lower()
+                    if not acc_low or acc_low in ["nan", "0x..."]: acc_low = file_addr if file_addr else "unknown"
 
-                acc_low = str(r.get("Account", "")).lower()
-                if not acc_low or acc_low == "nan" or acc_low == "0x...":
-                    acc_low = file_addr if file_addr else "unknown_account"
+                    cp = str(r.get("Counterparty", ""))
+                    if not cp or cp == "nan": cp = str(r.get("To", "")) if f_addr == acc_low else f_addr_full
 
-                cp = str(r.get("Counterparty", ""))
-                if not cp or cp == "nan":
-                    cp = t_addr_full if f_addr == acc_low else f_addr_full
+                    amount = float(r.get("Value", 0.0))
+                    if f_addr == acc_low: amount = -amount
 
-                amount = float(r.get("Value", 0.0))
-                if f_addr == acc_low:
-                    amount = -amount
-
-                # Check spam on raw address OR Asset name
-                cp_raw = resolve_raw_addr(cp)
-                asset_name = str(r.get("Token", "TOKEN")).lower()
-                status = "Spam" if (cp_raw in spam_list or asset_name in spam_list) else "A vérifier"
-
-                all_rows.append({
-                    "Date": r.get("Date"),
-                    "Account": acc_low,
-                    "Counterparty": cp,
-                    "Asset": r.get("Token"),
-                    "Amount": amount,
-                    "Value ($)": float(r.get("Value ($)") or 0.0),
-                    "Network": r.get("Chain"),
-                    "Tx Hash": r.get("Tx Hash"),
-                    "Source Type": "Token",
-                    "Category": r.get("Category", "A vérifier"),
-                    "Status": status,
-                    "Imposable": is_imposable_robust(r.get("Imposable", False))
-                })
+                    status = "Spam" if (resolve_raw_addr(cp) in spam_list or str(r.get("Token", "")).lower() in spam_list) else "A vérifier"
+                    all_rows.append({
+                        "Date": r.get("Date"), "Account": acc_low, "Counterparty": cp, "Asset": r.get("Token"),
+                        "Amount": amount, "Value ($)": float(r.get("Value ($)") or 0.0), "Network": r.get("Chain"),
+                        "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Token",
+                        "Category": r.get("Category", "A vérifier"), "Status": status, "Imposable": is_imposable_robust(r.get("Imposable", False))
+                    })
+            except Exception: pass
 
     df_final = pd.DataFrame(all_rows)
     if not df_final.empty:
         df_final["Date"] = pd.to_datetime(df_final["Date"], utc=True, errors="coerce", format="ISO8601")
 
-        # --- SMART DEDUPLICATION BETWEEN MANUAL AND HARVESTED ---
-        # Logic: If a manual entry (Source Type: Fiat, Fiat-to-Crypto, Manual) lacks a Tx Hash
-        # or has a synthetic one, but matches a harvested native/token transaction on:
-        # Day, Asset, Amount (abs), and Account.
-        # We replace the manual entry's hash/date with the harvested one to allow drop_duplicates.
-
-        # Split into Manual (candidates for replacement) and Harvested (providers of hashes)
+        # --- SMART DEDUPLICATION ---
         manual_mask = df_final["Source Type"].isin(["Fiat", "Fiat-to-Crypto", "Manual", "Manual Swap", "Manual Transfer"])
         df_manual = df_final[manual_mask].copy()
         df_harvested = df_final[~manual_mask].copy()
 
         if not df_manual.empty and not df_harvested.empty:
-            # Create matching keys
-            df_manual["_day"] = df_manual["Date"].dt.date
-            df_manual["_amt_abs"] = df_manual["Amount"].abs().round(8)
+            # Normalize for matching
+            df_harvested["_acc"] = df_harvested["Account"].astype(str).str.lower()
+            df_harvested["_asset"] = df_harvested["Asset"].astype(str).str.upper()
             df_harvested["_day"] = df_harvested["Date"].dt.date
-            df_harvested["_amt_abs"] = df_harvested["Amount"].abs().round(8)
+            df_harvested["_amt"] = df_harvested["Amount"].abs().round(8)
 
-            # Prepare harvested reference map
-            # We take the first match for each unique combination
-            harvest_ref = df_harvested.drop_duplicates(subset=["_day", "Asset", "_amt_abs", "Account"])
+            harvest_ref = df_harvested.drop_duplicates(subset=["_day", "_asset", "_amt", "_acc"])
 
-            def find_harvest_match(row):
-                if row["Tx Hash"] and not row["Tx Hash"].startswith(("BLP-", "NVL-", "OUT-", "IN-", "FEE-")):
-                    return row # Already has a real hash
+            def find_match(row):
+                tx_h = str(row.get("Tx Hash", ""))
+                if tx_h and not tx_h.startswith(("BLP-", "NVL-", "OUT-", "IN-", "FEE-")) and tx_h != "nan":
+                    return row
 
-                matches = harvest_ref[
-                    (harvest_ref["_day"] == row["_day"]) &
-                    (harvest_ref["Asset"] == row["Asset"]) &
-                    (harvest_ref["_amt_abs"] == row["_amt_abs"]) &
-                    (harvest_ref["Account"] == row["Account"])
-                ]
+                day = pd.to_datetime(row["Date"]).date()
+                amt = abs(float(row["Amount"]))
+                asset = str(row["Asset"]).upper()
+                acc = str(row["Account"]).lower()
+
+                matches = harvest_ref[(harvest_ref["_day"] == day) & (harvest_ref["_asset"] == asset) &
+                                      (harvest_ref["_amt"] == round(amt, 8)) & (harvest_ref["_acc"] == acc)]
 
                 if not matches.empty:
-                    match = matches.iloc[0]
-                    row["Tx Hash"] = match["Tx Hash"]
-                    row["Date"] = match["Date"] # Precise timestamp
+                    m = matches.iloc[0]
+                    row["Tx Hash"] = m["Tx Hash"]
+                    row["Date"] = m["Date"]
+                    if pd.isna(row.get("Value ($)")) or row.get("Value ($)") == 0: row["Value ($)"] = m.get("Value ($)", 0.0)
+                    if pd.isna(row.get("Network")) or row["Network"] == "Fiat": row["Network"] = m.get("Network", "Fiat")
                 return row
 
-            df_manual = df_manual.apply(find_harvest_match, axis=1)
-
-            # Drop helper columns
-            df_manual = df_manual.drop(columns=["_day", "_amt_abs"])
-            df_harvested = df_harvested.drop(columns=["_day", "_amt_abs"])
-
-            # Recombine
+            df_manual = df_manual.apply(find_match, axis=1)
+            df_harvested = df_harvested.drop(columns=["_acc", "_asset", "_day", "_amt"])
             df_final = pd.concat([df_manual, df_harvested])
 
-        # Standard Deduplication
-        # Now that manual entries have 'inherited' real hashes, this will remove the redundant raw rows
-        # while keeping the manual one (because manual entries were concatenated first or prioritized).
-        # We prioritize Source Type that isn't 'Native' or 'Token' if hash is same.
-        df_final["_priority"] = df_final["Source Type"].apply(lambda x: 0 if x in ["Native", "Token"] else 1)
-        df_final["_day_only"] = df_final["Date"].dt.date
-        df_final = df_final.sort_values(["Date", "_priority"], ascending=[False, False])
-
-        # We use a combined subset: if hash exists, it's the primary key.
-        # If hash is empty (rare now), we fallback to day/asset/amount/account.
-        df_final = df_final.drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account", "_day_only"], keep="first")
-        df_final = df_final.drop(columns=["_priority", "_day_only"])
-
-        # Application automatique des labels de protocoles
+        # Priority Deduplication
+        df_final["_pri"] = df_final["Source Type"].apply(lambda x: 0 if x in ["Native", "Token"] else 1)
+        df_final["_d"] = df_final["Date"].dt.date
+        df_final = df_final.sort_values(["Date", "_pri"], ascending=[False, False])
+        df_final = df_final.drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account", "_d"], keep="first")
+        df_final = df_final.drop(columns=["_pri", "_d"])
         df_final = apply_position_labels(df_final)
 
     return df_final
@@ -395,18 +332,25 @@ with st.sidebar:
         sync_data(target_year)
         st.session_state.last_year = target_year
 
-    if st.button("🏷️ Appliquer les Labels de Protocoles"):
+    if st.button("🏷️ Appliquer les Labels de Protocoles", use_container_width=True):
         if "journal_qualifie" in st.session_state:
             st.session_state.journal_qualifie = apply_position_labels(st.session_state.journal_qualifie)
             st.success("Labels appliqués au journal en mémoire.")
             st.rerun()
 
     st.divider()
-    if st.button("🔄 Actualiser & Fusionner les Brutes"):
+    if st.button("🔄 Actualiser & Fusionner les Brutes", use_container_width=True):
         sync_data(target_year)
         st.success("Fusion terminée.")
 
-    if st.button("🛡️ Nettoyer les Spams (Auto)"):
+    if st.button("🚨 Réinitialiser depuis les Brutes", use_container_width=True, help="ATTENTION : Écrase tout le travail de qualification effectué pour repartir du journal brut."):
+        new_df = merge_raw_data(target_year)
+        if not new_df.empty:
+            st.session_state.journal_qualifie = new_df.sort_values("Date", ascending=False)
+            st.warning("Journal réinitialisé. N'oubliez pas de Sanctuariser pour enregistrer sur disque.")
+            st.rerun()
+
+    if st.button("🛡️ Nettoyer les Spams (Auto)", use_container_width=True):
         if "journal_qualifie" in st.session_state:
             spam_list = load_spam_list()
             df = st.session_state.journal_qualifie
@@ -536,10 +480,13 @@ with st.sidebar:
                 st.rerun()
 
 # --- Main App ---
-st.subheader(f"📋 Journal de Qualification {target_year}")
-if "journal_qualifie" not in st.session_state or st.session_state.journal_qualifie.empty:
-    st.warning("Aucune donnée trouvée. Utilisez 'Actualiser & Fusionner' dans le sidebar.")
-else:
+@st.fragment
+def main_journal_fragment():
+    st.subheader(f"📋 Journal de Qualification {target_year}")
+    if "journal_qualifie" not in st.session_state or st.session_state.journal_qualifie.empty:
+        st.warning("Aucune donnée trouvée. Utilisez 'Actualiser & Fusionner' dans le sidebar.")
+        return
+
     # Application des filtres d'affichage (sans modifier la session state)
     df_display = st.session_state.journal_qualifie.copy()
 
@@ -553,9 +500,9 @@ else:
         df_display = df_display[df_display["Counterparty"].astype(str).str.contains(f_cp_search, case=False, na=False)]
 
     # 1. Barre d'outils
-    col_t1, col_t2, col_save = st.columns([1, 1, 1])
+    col_t1, col_t2, col_save = st.columns([1.5, 0.5, 1])
 
-    if col_t1.button("🔍 Détecter Transferts Internes"):
+    if col_t1.button("🔍 Détecter Transferts Internes", use_container_width=True):
         df = st.session_state.journal_qualifie
 
         # 1. Detection by Tx Hash (existing)
@@ -570,14 +517,14 @@ else:
                 count_h += 1
 
         # 2. Detection by Owned Account/Counterparty (Cross-Account)
-        my_accounts = set(df["Account"].str.lower().unique())
+        my_accounts = set(df["Account"].astype(str).str.lower().unique())
         count_ca = 0
 
         def is_internal(cp_str):
             raw = resolve_raw_addr(cp_str)
             return raw in my_accounts
 
-        mask_internal = df["Counterparty"].apply(is_internal)
+        mask_internal = df["Counterparty"].fillna("").apply(is_internal)
         if mask_internal.any():
             df.loc[mask_internal, "Category"] = "Transfert Interne"
             df.loc[mask_internal, "Status"] = "Valide"
@@ -585,6 +532,7 @@ else:
 
         st.session_state.journal_qualifie = df
         st.success(f"Transferts identifiés : {count_h} par Hash, {count_ca} par Compte Propriétaire.")
+        st.rerun()
 
     # 2. Data Editor
     categories = ["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense Staking", "Airdrop", "Frais", "Perte/Vol", "Autre"]
@@ -610,6 +558,9 @@ else:
         num_rows="dynamic",
         key="qual_editor"
     )
+
+    # Sync back from editor to session state immediately?
+    # Streamlit fragments handle this well. We sync only on explicit save button.
 
     # 3. Save Logic
     if st.button(f"💾 Sanctuariser la Sélection {target_year}", type="primary", use_container_width=True):
@@ -645,6 +596,8 @@ else:
         st.session_state.journal_qualifie.to_csv(get_qualified_path(target_year), index=False, encoding="utf-8-sig")
         st.balloons()
         st.success(f"Journal qualifié enregistré dans {year_dir}")
+
+main_journal_fragment()
 
 st.sidebar.divider()
 st.sidebar.caption("Qualification v1.0 - app2")
