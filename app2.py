@@ -274,7 +274,68 @@ def merge_raw_data(year):
     df_final = pd.DataFrame(all_rows)
     if not df_final.empty:
         df_final["Date"] = pd.to_datetime(df_final["Date"], utc=True, errors="coerce", format="ISO8601")
-        df_final = df_final.drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account"], keep="first")
+
+        # --- SMART DEDUPLICATION BETWEEN MANUAL AND HARVESTED ---
+        # Logic: If a manual entry (Source Type: Fiat, Fiat-to-Crypto, Manual) lacks a Tx Hash
+        # or has a synthetic one, but matches a harvested native/token transaction on:
+        # Day, Asset, Amount (abs), and Account.
+        # We replace the manual entry's hash/date with the harvested one to allow drop_duplicates.
+
+        # Split into Manual (candidates for replacement) and Harvested (providers of hashes)
+        manual_mask = df_final["Source Type"].isin(["Fiat", "Fiat-to-Crypto", "Manual", "Manual Swap", "Manual Transfer"])
+        df_manual = df_final[manual_mask].copy()
+        df_harvested = df_final[~manual_mask].copy()
+
+        if not df_manual.empty and not df_harvested.empty:
+            # Create matching keys
+            df_manual["_day"] = df_manual["Date"].dt.date
+            df_manual["_amt_abs"] = df_manual["Amount"].abs().round(8)
+            df_harvested["_day"] = df_harvested["Date"].dt.date
+            df_harvested["_amt_abs"] = df_harvested["Amount"].abs().round(8)
+
+            # Prepare harvested reference map
+            # We take the first match for each unique combination
+            harvest_ref = df_harvested.drop_duplicates(subset=["_day", "Asset", "_amt_abs", "Account"])
+
+            def find_harvest_match(row):
+                if row["Tx Hash"] and not row["Tx Hash"].startswith(("BLP-", "NVL-", "OUT-", "IN-", "FEE-")):
+                    return row # Already has a real hash
+
+                matches = harvest_ref[
+                    (harvest_ref["_day"] == row["_day"]) &
+                    (harvest_ref["Asset"] == row["Asset"]) &
+                    (harvest_ref["_amt_abs"] == row["_amt_abs"]) &
+                    (harvest_ref["Account"] == row["Account"])
+                ]
+
+                if not matches.empty:
+                    match = matches.iloc[0]
+                    row["Tx Hash"] = match["Tx Hash"]
+                    row["Date"] = match["Date"] # Precise timestamp
+                return row
+
+            df_manual = df_manual.apply(find_harvest_match, axis=1)
+
+            # Drop helper columns
+            df_manual = df_manual.drop(columns=["_day", "_amt_abs"])
+            df_harvested = df_harvested.drop(columns=["_day", "_amt_abs"])
+
+            # Recombine
+            df_final = pd.concat([df_manual, df_harvested])
+
+        # Standard Deduplication
+        # Now that manual entries have 'inherited' real hashes, this will remove the redundant raw rows
+        # while keeping the manual one (because manual entries were concatenated first or prioritized).
+        # We prioritize Source Type that isn't 'Native' or 'Token' if hash is same.
+        df_final["_priority"] = df_final["Source Type"].apply(lambda x: 0 if x in ["Native", "Token"] else 1)
+        df_final["_day_only"] = df_final["Date"].dt.date
+        df_final = df_final.sort_values(["Date", "_priority"], ascending=[False, False])
+
+        # We use a combined subset: if hash exists, it's the primary key.
+        # If hash is empty (rare now), we fallback to day/asset/amount/account.
+        df_final = df_final.drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account", "_day_only"], keep="first")
+        df_final = df_final.drop(columns=["_priority", "_day_only"])
+
         # Application automatique des labels de protocoles
         df_final = apply_position_labels(df_final)
 
