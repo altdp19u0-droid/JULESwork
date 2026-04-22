@@ -266,7 +266,7 @@ def merge_raw_data(year):
                     "Network": r.get("Chain"),
                     "Tx Hash": r.get("Tx Hash"),
                     "Source Type": "Token",
-                    "Category": "A vérifier",
+                    "Category": r.get("Category", "A vérifier"),
                     "Status": status,
                     "Imposable": is_imposable_robust(r.get("Imposable", False))
                 })
@@ -496,17 +496,34 @@ else:
 
     if col_t1.button("🔍 Détecter Transferts Internes"):
         df = st.session_state.journal_qualifie
+
+        # 1. Detection by Tx Hash (existing)
         hashes = df[df["Tx Hash"].duplicated(keep=False)]["Tx Hash"].unique()
-        count = 0
+        count_h = 0
         for h in hashes:
             if not h or len(str(h)) < 10: continue
             mask = df["Tx Hash"] == h
             if len(df[mask]) >= 2:
                 df.loc[mask, "Category"] = "Transfert Interne"
                 df.loc[mask, "Status"] = "Valide"
-                count += 1
+                count_h += 1
+
+        # 2. Detection by Owned Account/Counterparty (Cross-Account)
+        my_accounts = set(df["Account"].str.lower().unique())
+        count_ca = 0
+
+        def is_internal(cp_str):
+            raw = resolve_raw_addr(cp_str)
+            return raw in my_accounts
+
+        mask_internal = df["Counterparty"].apply(is_internal)
+        if mask_internal.any():
+            df.loc[mask_internal, "Category"] = "Transfert Interne"
+            df.loc[mask_internal, "Status"] = "Valide"
+            count_ca = mask_internal.sum()
+
         st.session_state.journal_qualifie = df
-        st.success(f"{count} transferts identifiés.")
+        st.success(f"Transferts identifiés : {count_h} par Hash, {count_ca} par Compte Propriétaire.")
 
     # 2. Data Editor
     categories = ["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense Staking", "Airdrop", "Frais", "Perte/Vol", "Autre"]

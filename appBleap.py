@@ -178,13 +178,17 @@ def process_bleap_csv(df):
         eur_rate = get_eur_usd_rate(dt)
         val_usd = val_eur / eur_rate if eur_rate > 0 else val_eur / 0.92
 
+        # Robust synthetic Hash including timestamp to avoid collisions
+        ts_ms = int(dt.timestamp() * 1000)
+        safe_hash = f"BLP-{ts_ms}-{idx}"
+
         # Create row
         new_rows.append({
             "Date": dt,
             "Chain": "Bleap",
             "Token": currency, # Preserve nuances
             "Token ID": "",
-            "Tx Hash": f"BLP-{idx}",
+            "Tx Hash": safe_hash,
             "From": cp if val > 0 else account,
             "To": account if val > 0 else cp,
             "Value": abs(val),
@@ -192,6 +196,7 @@ def process_bleap_csv(df):
             "Rate ($)": (val_usd / abs(val)) if val != 0 else 0.0,
             "Account": account,
             "Counterparty": cp,
+            "Category": cat,
             "Imposable": is_imp
         })
 
@@ -202,7 +207,7 @@ def process_bleap_csv(df):
                 "Chain": "Bleap",
                 "Token": currency,
                 "Token ID": "",
-                "Tx Hash": f"BLP-FEE-{idx}",
+                "Tx Hash": f"FEE-{safe_hash}",
                 "From": account,
                 "To": "Fees",
                 "Value": fees,
