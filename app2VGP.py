@@ -289,22 +289,23 @@ else:
 
     journal = st.session_state.journal_active
 
-    # --- Vérification d'Intégrité (Zéro Fallback) ---
-    mask_cessions_check = (journal["Imposable"].apply(is_imposable_robust) | journal["Category"].fillna("").str.contains("Vente", case=False)) & (journal["Asset"] != "EUR") & (journal["Status"] != "Spam")
-    if mask_cessions_check.any():
-        # On vérifie si des cessions ont une VGP à 0
-        missing_vgp_count = len(journal[mask_cessions_check & (journal["VGP (EUR)"] == 0)])
-        if missing_vgp_count > 0:
-            st.error(f"🚨 **Attention :** {missing_vgp_count} cessions n'ont pas encore de VGP calculée ou validée. Les rapports fiscaux seront incomplets.")
-            if st.button("🔍 Résoudre les prix manquants (AppPriceFix)", use_container_width=True):
-                st.info("Basculez sur l'onglet **AppPriceFix** dans le menu principal pour collecter les prix manquants.")
-
-    # Force numeric conversion
+    # Force numeric conversion & initialization
     for col in ["Amount", "Value ($)", "VGP (EUR)"]:
         if col in journal.columns:
             journal[col] = pd.to_numeric(journal[col], errors="coerce").fillna(0.0)
         else:
             journal[col] = 0.0
+
+    # --- Vérification d'Intégrité (Zéro Fallback) ---
+    mask_cessions_check = (journal["Imposable"].apply(is_imposable_robust) | journal["Category"].fillna("").str.contains("Vente", case=False)) & (journal["Asset"] != "EUR") & (journal["Status"] != "Spam")
+    if mask_cessions_check.any():
+        # On vérifie si des cessions ont une VGP à 0
+        # Maintenant sûr car la colonne est initialisée juste au-dessus
+        missing_vgp_count = len(journal[mask_cessions_check & (journal["VGP (EUR)"] == 0)])
+        if missing_vgp_count > 0:
+            st.error(f"🚨 **Attention :** {missing_vgp_count} cessions n'ont pas encore de VGP calculée ou validée. Les rapports fiscaux seront incomplets.")
+            if st.button("🔍 Résoudre les prix manquants (AppPriceFix)", use_container_width=True):
+                st.info("Basculez sur l'onglet **AppPriceFix** dans le menu principal pour collecter les prix manquants.")
 
     # Construction du masque de détection (Exclude manual duplicates and Spam)
     mask_valid = (journal["Status"] != "Spam") & (journal.get("Category", "") != "Doublon à ignorer")

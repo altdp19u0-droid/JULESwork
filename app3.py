@@ -300,7 +300,7 @@ if 'journal' in data and not data['journal'].empty:
     j = data['journal']
     def is_imp_check(v): return str(v).upper().strip() in ["TRUE", "1", "1.0", "VRAI"]
     mask_cess_check = (j['Imposable'].apply(is_imp_check) | j['Category'].fillna("").str.contains("Vente", case=False)) & (j['Asset'] != 'EUR')
-    if mask_cess_check.any():
+    if mask_cess_check.any() and 'VGP (EUR)' in j.columns:
         missing_vgp = j[mask_cess_check & (j['VGP (EUR)'].fillna(0) == 0)]
         if not missing_vgp.empty:
             st.error(f"🚨 **Incohérence Fiscale :** {len(missing_vgp)} cessions ont une VGP à 0.00. Le calcul de la plus-value sera erroné. Veuillez régulariser dans l'**App 2 (VGP)** ou l'**AppPriceFix**.")
