@@ -90,6 +90,11 @@ def get_price_eur_engine(asset, date_obj, cache):
 
     return 0.0
 
+# --- Sidebar ---
+with st.sidebar:
+    st.header("⚙️ Paramètres de Scan")
+    exclude_spam = st.checkbox("🛡️ Exclure les Spams (Statut App 2)", value=True, help="Ignore les assets et dates liés uniquement à des transactions marquées comme Spam dans le journal qualifié.")
+
 # --- Scanner ---
 def load_all_verified_prices():
     """Loads prices from both global cache and all annual sanctuarised files."""
@@ -105,7 +110,7 @@ def load_all_verified_prices():
                 except: pass
     return combined
 
-def scan_needed_prices():
+def scan_needed_prices(exclude_spams=True):
     all_needed = [] # List of dicts: {'Year', 'Asset', 'Date', 'Type'}
     years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
 
@@ -116,6 +121,10 @@ def scan_needed_prices():
         if os.path.exists(qual_path):
             df = pd_read_csv_safe(qual_path)
             if not df.empty:
+                # Filtrage Spam si demandé
+                if exclude_spams and "Status" in df.columns:
+                    df = df[df["Status"] != "Spam"]
+
                 df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
                 # Identify cessions
                 def is_imp(v): return str(v).upper().strip() in ["TRUE", "1", "1.0", "VRAI"]
@@ -128,11 +137,24 @@ def scan_needed_prices():
 
         # 2. End of year
         # Find all unique assets ever held in this year
-        # (Actually, we should scan all files in the year dir for assets)
         assets_in_year = set()
         y_dir = os.path.join(EXPORT_BASE_DIR, y)
+
+        # We prioritize assets from the qualified journal if it exists,
+        # as it contains the spam status.
+        qual_path = os.path.join(y_dir, f"qualified_journal_{y}.csv")
+        if os.path.exists(qual_path):
+            df_q = pd_read_csv_safe(qual_path)
+            if not df_q.empty:
+                if exclude_spams and "Status" in df_q.columns:
+                    df_q = df_q[df_q["Status"] != "Spam"]
+                assets_in_year.update(df_q["Asset"].dropna().unique())
+
+        # Complement with other files if they are not already covered
+        # (Note: we can't reliably check spam on raw files, so we only add
+        # if the qualified journal scan didn't happen or we want to be exhaustive)
         for f in os.listdir(y_dir):
-            if f.endswith(".csv"):
+            if f.endswith(".csv") and not f.startswith("qualified_"):
                 try:
                     tmp = pd_read_csv_safe(os.path.join(y_dir, f))
                     if "Asset" in tmp.columns:
@@ -156,7 +178,7 @@ st.subheader("📋 État de la collecte des prix")
 
 if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)"):
     with st.spinner("Analyse des fichiers sanctuarisés..."):
-        df_needed = scan_needed_prices()
+        df_needed = scan_needed_prices(exclude_spams=exclude_spam)
         cache = load_all_verified_prices()
 
         results = []
