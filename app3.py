@@ -66,12 +66,25 @@ def save_eoy_prices(year, prices_dict):
 PRICE_CACHE_FILE = "historical_prices_cache.json"
 
 def load_price_cache():
+    """Loads prices from both global cache and all annual sanctuarised files."""
+    combined = {}
     if os.path.exists(PRICE_CACHE_FILE):
         try:
             with open(PRICE_CACHE_FILE, "r", encoding="utf-8", errors="replace") as f:
-                return json.load(f)
-        except: return {}
-    return {}
+                combined = json.load(f)
+        except: pass
+
+    # Merge with annual verified prices
+    if os.path.exists(EXPORT_BASE_DIR):
+        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
+        for y in years:
+            path = os.path.join(EXPORT_BASE_DIR, y, f"verified_prices_{y}.json")
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        combined.update(json.load(f))
+                except: pass
+    return combined
 
 def save_price_cache(cache):
     with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:

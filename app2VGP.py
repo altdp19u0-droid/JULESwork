@@ -17,12 +17,25 @@ POSITIONS_FILE = "position_labels.json"
 
 # --- Cache Engine ---
 def load_price_cache():
+    """Loads prices from both global cache and all annual sanctuarised files."""
+    combined = {}
     if os.path.exists(PRICE_CACHE_FILE):
         try:
             with open(PRICE_CACHE_FILE, "r", encoding="utf-8", errors="replace") as f:
-                return json.load(f)
-        except: return {}
-    return {}
+                combined = json.load(f)
+        except: pass
+
+    # Merge with annual verified prices
+    if os.path.exists(EXPORT_BASE_DIR):
+        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
+        for y in years:
+            path = os.path.join(EXPORT_BASE_DIR, y, f"verified_prices_{y}.json")
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        combined.update(json.load(f))
+                except: pass
+    return combined
 
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
@@ -57,7 +70,6 @@ def get_qualified_path(year):
 
 def get_price_eur(asset, date_obj):
     # CRUCIAL: On normalise pour l'API tout en gardant l'original pour l'affichage UI
-    # Aggressive mapping of Cyrillic/Lisu/Other look-alikes back to ASCII for API search
     nuance_map = {
         "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
         "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
@@ -70,53 +82,55 @@ def get_price_eur(asset, date_obj):
         asset_clean = asset_clean.replace(k, v)
     asset_clean = unicodedata.normalize('NFKC', asset_clean).upper().strip()
 
-    if asset_clean in ["EUR", "EURA", "AGEUR"]: return 1.0
-    if asset_clean in ["USDC", "USDT", "DAI", "USDC.E"]: return 0.92 # Approximation par défaut
+    # 1. Stables & Direct Mappings
+    if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]:
+        return 1.0
+    if asset_clean in ["USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS", "TWCOMPOUNDUSDC"]:
+        return 0.92 # Approximation stable USD/EUR
 
     d_str = date_obj.strftime("%d-%m-%Y")
     cache = load_price_cache()
     cache_key = f"{asset_clean}_{d_str}"
 
-    # Priorité au cache persistant
     if cache_key in cache:
         return float(cache[cache_key])
 
-    # Sinon API CoinGecko
+    # 2. CoinGecko Mapping
     asset_map = {
         "ETH": "ethereum", "BTC": "bitcoin", "POL": "polygon-ecosystem-token",
         "BNB": "binancecoin", "ARB": "arbitrum", "OP": "optimism", "WETH": "ethereum",
         "SOL": "solana", "MATIC": "matic-network", "AVAX": "avalanche-2", "DOT": "polkadot",
-        "LINK": "chainlink", "UNI": "uniswap", "AAVE": "aave", "DAI": "dai"
+        "LINK": "chainlink", "UNI": "uniswap", "AAVE": "aave", "DAI": "dai",
+        "ZCHF": "cryptofranc", "BCH": "bitcoin-cash", "HBAR": "hedera-hashgraph",
+        "TWT": "trust-wallet-token", "ME": "magic-eden", "ORDER": "orderly-network",
+        "IP": "story-ip", "AUNT": "auntie-whale"
     }
 
-    # 1. Tentative CoinGecko
     cg_id = asset_map.get(asset_clean, asset_clean.lower())
     url_cg = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
 
     try:
-        time.sleep(1.5) # Protection API gratuite
+        time.sleep(1.2)
         res = requests.get(url_cg, timeout=10)
         if res.status_code == 200:
             data = res.json()
-            price = float(data["market_data"]["current_price"]["eur"])
-            cache[cache_key] = price
-            save_price_cache(cache)
-            return price
+            if "market_data" in data:
+                price = float(data["market_data"]["current_price"]["eur"])
+                cache[cache_key] = price
+                save_price_cache(cache)
+                return price
     except: pass
 
-    # 2. Fallback DefiLlama (Prix spot ou historique par timestamp)
+    # 3. Fallback DefiLlama
     try:
         ts = int(date_obj.timestamp())
-        # Note: DefiLlama utilise souvent coingecko:id comme préfixe
-        url_llama = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{cg_id}?searchWidth=4h"
+        url_llama = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{cg_id}?searchWidth=12h"
         res = requests.get(url_llama, timeout=10)
         if res.status_code == 200:
-            data = res.json()
-            coins = data.get("coins", {})
+            coins = res.json().get("coins", {})
             if coins:
-                # Récupère le premier prix trouvé
                 price_usd = float(next(iter(coins.values()))["price"])
-                price = price_usd * 0.92 # Conversion simplifiée EUR/USD
+                price = price_usd * 0.92
                 cache[cache_key] = price
                 save_price_cache(cache)
                 return price
@@ -351,8 +365,42 @@ else:
             snapshot_df, total_val = get_portfolio_snapshot(journal, selected_date)
             if not snapshot_df.empty:
                 st.write(f"Composition du portefeuille au **{selected_date}** :")
-                st.dataframe(snapshot_df, use_container_width=True)
-                st.metric("VGP Totale Calculée", f"{total_val:,.2f} €")
+
+                # Highlight 0 prices
+                zero_prices = snapshot_df[snapshot_df["Prix (EUR)"] == 0]
+                if not zero_prices.empty:
+                    st.warning(f"⚠️ {len(zero_prices)} actifs n'ont pas pu être valorisés automatiquement (Prix = 0).")
+
+                # Interactive Editor for Audit
+                ed_snapshot = st.data_editor(
+                    snapshot_df,
+                    column_config={
+                        "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
+                        "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
+                        "Quantité": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                        "Asset": st.column_config.TextColumn(disabled=True),
+                        "Location": st.column_config.TextColumn(disabled=True),
+                    },
+                    use_container_width=True,
+                    key=f"audit_ed_{selected_date}"
+                )
+
+                # Recalculate Total with manual edits
+                ed_snapshot["Valeur (EUR)"] = ed_snapshot["Quantité"] * ed_snapshot["Prix (EUR)"].fillna(0.0)
+                new_total = ed_snapshot["Valeur (EUR)"].sum()
+                st.metric("VGP Totale Corrigée", f"{new_total:,.2f} €")
+
+                if st.button("💾 Enregistrer ces prix dans le cache"):
+                    cache = load_price_cache()
+                    d_str = selected_date.strftime("%d-%m-%Y")
+                    count = 0
+                    for _, r in ed_snapshot.iterrows():
+                        a_clean = unicodedata.normalize('NFKC', str(r["Asset"])).upper().strip()
+                        cache[f"{a_clean}_{d_str}"] = float(r["Prix (EUR)"])
+                        count += 1
+                    save_price_cache(cache)
+                    st.success(f"{count} prix enregistrés. Relancez le calcul global pour appliquer.")
+
             else:
                 st.warning("Aucun historique trouvé pour cette date.")
 
