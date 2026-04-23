@@ -13,8 +13,17 @@ st.title("🔍 Explorateur & Collecteur de Prix")
 
 EXPORT_BASE_DIR = "sanctuarisation"
 PRICE_CACHE_FILE = "historical_prices_cache.json"
+SPAM_FILE = "spam_blacklist.json"
 
 # --- Helpers ---
+def load_spam_list():
+    if os.path.exists(SPAM_FILE):
+        try:
+            with open(SPAM_FILE, "r", encoding="utf-8", errors="replace") as f:
+                return set(json.load(f))
+        except: return set()
+    return set()
+
 def load_price_cache():
     if os.path.exists(PRICE_CACHE_FILE):
         try:
@@ -93,6 +102,13 @@ def get_price_eur_engine(asset, date_obj, cache):
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres de Scan")
+
+    # Discovery of available years
+    available_years = sorted([y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))], reverse=True)
+    if not available_years: available_years = [str(datetime.now().year)]
+
+    selected_years = st.multiselect("Années à traiter", options=available_years, default=available_years, help="Sélectionnez une ou plusieurs années pour limiter le scan.")
+
     exclude_spam = st.checkbox("🛡️ Exclure les Spams (Statut App 2)", value=True, help="Ignore les assets et dates liés uniquement à des transactions marquées comme Spam dans le journal qualifié.")
 
 # --- Scanner ---
@@ -110,11 +126,11 @@ def load_all_verified_prices():
                 except: pass
     return combined
 
-def scan_needed_prices(exclude_spams=True):
+def scan_needed_prices(target_years, exclude_spams=True):
     all_needed = [] # List of dicts: {'Year', 'Asset', 'Date', 'Type'}
-    years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
+    spam_list = load_spam_list() if exclude_spams else set()
 
-    for y in years:
+    for y in target_years:
         y_int = int(y)
         # 1. Cession dates
         qual_path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
@@ -143,24 +159,39 @@ def scan_needed_prices(exclude_spams=True):
         # We prioritize assets from the qualified journal if it exists,
         # as it contains the spam status.
         qual_path = os.path.join(y_dir, f"qualified_journal_{y}.csv")
+        assets_from_qual = set()
         if os.path.exists(qual_path):
             df_q = pd_read_csv_safe(qual_path)
             if not df_q.empty:
                 if exclude_spams and "Status" in df_q.columns:
                     df_q = df_q[df_q["Status"] != "Spam"]
-                assets_in_year.update(df_q["Asset"].dropna().unique())
+                assets_from_qual = set(df_q["Asset"].dropna().unique())
+                assets_in_year.update(assets_from_qual)
 
-        # Complement with other files if they are not already covered
-        # (Note: we can't reliably check spam on raw files, so we only add
-        # if the qualified journal scan didn't happen or we want to be exhaustive)
+        # Complement with other files ONLY IF we want to be exhaustive
+        # OR if the qualified journal doesn't exist yet for that year.
+        # But we filter them against the global spam list if exclude_spams is active.
         for f in os.listdir(y_dir):
             if f.endswith(".csv") and not f.startswith("qualified_"):
                 try:
                     tmp = pd_read_csv_safe(os.path.join(y_dir, f))
-                    if "Asset" in tmp.columns:
-                        assets_in_year.update(tmp["Asset"].dropna().unique())
-                    if "Token" in tmp.columns:
-                        assets_in_year.update(tmp["Token"].dropna().unique())
+                    found = set()
+                    if "Asset" in tmp.columns: found.update(tmp["Asset"].dropna().unique())
+                    if "Token" in tmp.columns: found.update(tmp["Token"].dropna().unique())
+
+                    for a in found:
+                        a_str = str(a).upper().strip()
+                        if exclude_spams:
+                            # 1. Global Blacklist check
+                            if a_str.lower() in spam_list: continue
+
+                            # 2. Local Veto check: if a qualified journal exists and this asset
+                            # is NOT in the non-spam assets, it means it's either spam
+                            # or wasn't qualified (spam by default in some views).
+                            if os.path.exists(qual_path) and a not in assets_from_qual:
+                                continue
+
+                        assets_in_year.add(a)
                 except: pass
 
         eoy_date = datetime(y_int, 12, 31).date()
@@ -178,7 +209,7 @@ st.subheader("📋 État de la collecte des prix")
 
 if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)"):
     with st.spinner("Analyse des fichiers sanctuarisés..."):
-        df_needed = scan_needed_prices(exclude_spams=exclude_spam)
+        df_needed = scan_needed_prices(target_years=selected_years, exclude_spams=exclude_spam)
         cache = load_all_verified_prices()
 
         results = []
@@ -189,6 +220,7 @@ if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)"):
 
             price = float(cache.get(cache_key, 0.0))
             results.append({
+                "Année": row["Year"],
                 "Asset": row["Asset"],
                 "Date": row["Date"],
                 "Type": row["Type"],
@@ -216,6 +248,7 @@ if "price_explorer_df" in st.session_state:
             "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.6f €"),
             "Date": st.column_config.DateColumn(disabled=True),
             "Asset": st.column_config.TextColumn(disabled=True),
+            "Année": st.column_config.TextColumn(disabled=True),
             "Type": st.column_config.TextColumn(disabled=True),
             "Status": st.column_config.TextColumn(disabled=True),
         },
