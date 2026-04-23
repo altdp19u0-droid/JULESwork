@@ -94,7 +94,7 @@ with st.sidebar:
         is_fpdf2 = int(f_ver.split(".")[0]) >= 2 if f_ver != "Inconnue" else False
         st.write(f"Bibliothèque : `fpdf2` {'✅' if is_fpdf2 else '❌ (Installez fpdf2)'}")
         st.write(f"Version : `{f_ver}`")
-        if st.button("🧹 Nettoyer Cache Polices (.pkl)"):
+        if st.button("🧹 Nettoyer Cache Polices (.pkl)", key="btn_clean_font_cache_cons"):
             import glob
             pkl_files = glob.glob("*.pkl")
             for pf in pkl_files:

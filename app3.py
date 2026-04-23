@@ -274,7 +274,7 @@ with st.sidebar:
         else:
             st.success("Police DejaVuSans.ttf : OK")
 
-        if st.button("🧹 Nettoyer Cache Polices (.pkl)"):
+        if st.button("🧹 Nettoyer Cache Polices (.pkl)", key="btn_clean_font_cache"):
             import glob
             pkl_files = glob.glob("*.pkl")
             for pf in pkl_files:
@@ -289,7 +289,7 @@ with st.sidebar:
     abattement = st.number_input("Abattement annuel (EUR)", value=305.0)
 
     st.divider()
-    if st.button("🔄 Recalculer tout"):
+    if st.button("🔄 Recalculer tout", key="btn_recalc_all"):
         st.cache_data.clear()
         st.rerun()
 
@@ -386,7 +386,7 @@ with tab_accounts:
 
         # 4. Valorisation & Sanctuarisation
         col_v1, col_v2 = st.columns(2)
-        if col_v1.button("🚀 Valoriser les Positions (Auto)"):
+        if col_v1.button("🚀 Valoriser les Positions (Auto)", key="btn_valoriser"):
             with st.spinner("Recherche des prix..."):
                 eoy_date = datetime(target_year, 12, 31)
 
@@ -415,7 +415,7 @@ with tab_accounts:
 
                 st.success("Valorisation terminée.")
 
-        if col_v2.button("💾 Sanctuariser les Prix"):
+        if col_v2.button("💾 Sanctuariser les Prix", key="btn_sanctuariser_prix"):
             all_prices = {}
             if "local_valued" in st.session_state:
                 df = st.session_state.local_valued
@@ -589,7 +589,7 @@ with tab_cessions:
                 key="cessions_ed"
             )
 
-            if st.button("🧮 Calculer les Plus-Values"):
+            if st.button("🧮 Calculer les Plus-Values", key="btn_calc_pv"):
                 # Formule: PV = Prix Cession - [Total Acq * (Prix Cession / VGP)]
                 # Note: Le Total Acq doit théoriquement être mis à jour après chaque cession.
                 # Crucial: Le calcul doit être fait dans l'ordre chronologique (Ascendant).
@@ -656,7 +656,7 @@ with tab_bilan:
 
         # 1. Récupération du prix d'achat total (A)
         total_acq = st.session_state.get("total_acq_price_shared", 0.0)
-        col_inf1.metric("Prix d'achat total (A)", f"{total_acq:,.2f} €", help="Capital investi (A) : Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
+        c_inf1.metric("Prix d'achat total (A)", f"{total_acq:,.2f} €", help="Capital investi (A) : Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
 
         # 2. Calcul de la VGP consolidée à fin de période
         vgp_end = 0.0
@@ -825,7 +825,7 @@ with tab_bilan:
             return bytes(pdf.output())
 
         # Explicit trigger for PDF generation to ensure data is present
-        if st.button("📊 Préparer le Rapport PDF Complet", use_container_width=True):
+        if st.button("📊 Préparer le Rapport PDF Complet", use_container_width=True, key="btn_gen_pdf"):
             if df_bilan.empty:
                 st.error("Le bilan est vide, impossible de générer le PDF.")
             else:
