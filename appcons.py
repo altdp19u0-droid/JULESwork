@@ -202,9 +202,12 @@ if df_raw.empty:
 # --- Post-Processing & Filtering ---
 df = df_raw.copy()
 
-# 1. Spam filter
+# 1. Spam & Duplicate filter
 if exclude_spam and "Status" in df.columns:
     df = df[df["Status"].fillna("").astype(str).str.lower() != "spam"]
+
+if "Category" in df.columns:
+    df = df[df["Category"].fillna("").astype(str) != "Doublon à ignorer"]
 
 # 2. Date Filter
 if "Date" in df.columns:
@@ -292,6 +295,9 @@ with tab_vgp:
         df_snapshot_base = df_raw.copy()
         if exclude_spam and "Status" in df_snapshot_base.columns:
             df_snapshot_base = df_snapshot_base[df_snapshot_base["Status"].fillna("").astype(str).str.lower() != "spam"]
+
+        if "Category" in df_snapshot_base.columns:
+            df_snapshot_base = df_snapshot_base[df_snapshot_base["Category"].fillna("").astype(str) != "Doublon à ignorer"]
 
         df_at_date = df_snapshot_base[df_snapshot_base["Date"] <= end_date]
 

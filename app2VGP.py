@@ -136,9 +136,10 @@ def get_portfolio_snapshot(journal, target_date):
             return pos_labels[cp_raw]
         return "Wallet"
 
-    # 2. Filtrage de base
+    # 2. Filtrage de base (Exclude Spam and manual duplicates)
     df = journal[
         (journal["Status"] != "Spam") &
+        (journal.get("Category", "") != "Doublon à ignorer") &
         (journal["Asset"] != "EUR") &
         (journal["Date"] <= target_date)
     ].copy()
@@ -264,9 +265,10 @@ else:
         else:
             journal[col] = 0.0
 
-    # Construction du masque de détection
-    mask_imposable = journal["Imposable"].apply(is_imposable_robust) if use_imposable_col else pd.Series(False, index=journal.index)
-    mask_category = journal["Category"].fillna("").str.contains("Vente", case=False) if use_category_vente else pd.Series(False, index=journal.index)
+    # Construction du masque de détection (Exclude manual duplicates and Spam)
+    mask_valid = (journal["Status"] != "Spam") & (journal.get("Category", "") != "Doublon à ignorer")
+    mask_imposable = (journal["Imposable"].apply(is_imposable_robust)) & mask_valid if use_imposable_col else pd.Series(False, index=journal.index)
+    mask_category = (journal["Category"].fillna("").str.contains("Vente", case=False)) & mask_valid if use_category_vente else pd.Series(False, index=journal.index)
 
     mask_cessions = (mask_imposable | mask_category) & (journal["Asset"] != "EUR")
     cessions_all = journal[mask_cessions].copy()

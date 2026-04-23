@@ -349,6 +349,11 @@ def sync_data(year):
             new_df["Tx Hash"] = new_df["Tx Hash"].apply(norm_hash)
 
         # 1. First Pass: Deduplication by Exact Hash
+        # Proactive pruning: We remove rows marked as 'Doublon à ignorer' from old_df
+        # so they don't block new, potentially better data from new_df.
+        if not old_df.empty and "Category" in old_df.columns:
+            old_df = old_df[old_df["Category"] != "Doublon à ignorer"]
+
         combined = pd.concat([old_df, new_df])
         combined["_d"] = combined["Date"].dt.date
         combined = combined.drop_duplicates(subset=["Tx Hash", "Asset", "Account", "Amount", "_d"], keep="first")
@@ -434,6 +439,12 @@ with st.sidebar:
         f_asset = st.multiselect("Filtrer par Asset", options=get_safe_options(df_for_filters, "Asset"))
         f_acc = st.multiselect("Filtrer par Compte (Account)", options=get_safe_options(df_for_filters, "Account"))
         f_status = st.multiselect("Filtrer par Statut", options=get_safe_options(df_for_filters, "Status"), default=[])
+        f_cat = st.multiselect("Filtrer par Catégorie", options=get_safe_options(df_for_filters, "Category"), default=[])
+
+        # Filtre Imposable avec labels lisibles
+        f_imp_options = {"Oui": True, "Non": False}
+        f_imp_sel = st.multiselect("Filtrer par Imposable", options=list(f_imp_options.keys()))
+        f_imp = [f_imp_options[x] for x in f_imp_sel]
 
         f_cp_search = st.text_input("Filtrer par Counterparty (0x...)", "")
 
@@ -556,6 +567,10 @@ def main_journal_fragment():
         df_display = df_display[df_display["Account"].isin(f_acc)]
     if f_status:
         df_display = df_display[df_display["Status"].isin(f_status)]
+    if f_cat:
+        df_display = df_display[df_display["Category"].isin(f_cat)]
+    if f_imp_sel:
+        df_display = df_display[df_display["Imposable"].isin(f_imp)]
     if f_cp_search:
         df_display = df_display[df_display["Counterparty"].astype(str).str.contains(f_cp_search, case=False, na=False)]
 
@@ -626,7 +641,7 @@ def main_journal_fragment():
     if st.button(f"💾 Sanctuariser la Sélection {target_year}", type="primary", use_container_width=True):
         # On fusionne les modifications du data_editor (filtré) dans la session_state (complète)
         # Pour simplifier, si on est en mode filtré, on prévient l'utilisateur
-        if f_asset or f_acc or f_status:
+        if f_asset or f_acc or f_status or f_cat or f_imp_sel:
             st.warning("⚠️ Attention: Vous êtes en mode filtré. Seules les lignes visibles seront mises à jour dans la session state.")
 
         # Mise à jour de la session state avec les lignes éditées
@@ -635,7 +650,7 @@ def main_journal_fragment():
         # (C'est notre subset de dédoublonnage)
         # On remplace les lignes de full_df par celles de edited_df
         # Pour faire simple ici, on écrase tout le journal par edited_df si non filtré
-        if not (f_asset or f_acc or f_status):
+        if not (f_asset or f_acc or f_status or f_cat or f_imp_sel):
             new_journal = edited_df
         else:
             # Fusion complexe si filtré : on retire les anciennes lignes filtrées et on ajoute les nouvelles
@@ -643,6 +658,8 @@ def main_journal_fragment():
             if f_asset: mask_filtered &= full_df["Asset"].isin(f_asset)
             if f_acc: mask_filtered &= full_df["Account"].isin(f_acc)
             if f_status: mask_filtered &= full_df["Status"].isin(f_status)
+            if f_cat: mask_filtered &= full_df["Category"].isin(f_cat)
+            if f_imp_sel: mask_filtered &= full_df["Imposable"].isin(f_imp)
 
             non_filtered_df = full_df[~mask_filtered]
             new_journal = pd.concat([non_filtered_df, edited_df]).sort_values("Date", ascending=False)

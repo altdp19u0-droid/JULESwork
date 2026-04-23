@@ -1,4 +1,3 @@
-  Stopping...
 
 Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
 
@@ -9,4 +8,8 @@ Collecting usage statistics. To deactivate, set browser.gatherUsageStats to fals
   Network URL: http://192.168.0.2:8501
   External URL: http://34.134.215.5:8501
 
-  Stopping...
+2026-04-23 02:12:16.992 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
