@@ -17,14 +17,15 @@ EXPORT_BASE_DIR = "sanctuarisation"
 # --- Cache & APIs ---
 @st.cache_data(ttl=86400)
 def get_eur_usd_rate(date_obj):
-    """Récupère le taux EUR/USD pour une date donnée via Frankfurter API."""
+    """Récupère le taux EUR/USD pour une date donnée via Frankfurter API (BCE)."""
     date_str = date_obj.strftime("%Y-%m-%d")
     try:
         url = f"https://api.frankfurter.app/{date_str}?from=USD&to=EUR"
         res = requests.get(url, timeout=5).json()
-        return res["rates"]["EUR"]
-    except:
-        return 0.92
+        if "rates" in res and "EUR" in res["rates"]:
+            return float(res["rates"]["EUR"])
+    except: pass
+    return 0.0
 
 # --- Logic: Neverless Expansion ---
 def process_neverless_csv(df):

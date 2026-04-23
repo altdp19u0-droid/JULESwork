@@ -30,14 +30,15 @@ def save_price_cache(cache):
 
 @st.cache_data(ttl=86400)
 def get_eur_usd_rate(date_obj):
-    """Récupère le taux EUR/USD pour une date donnée via Frankfurter API."""
+    """Récupère le taux EUR/USD pour une date donnée via Frankfurter API (BCE)."""
     date_str = date_obj.strftime("%Y-%m-%d")
     try:
         url = f"https://api.frankfurter.app/{date_str}?from=USD&to=EUR"
         res = requests.get(url, timeout=5).json()
-        return res["rates"]["EUR"]
-    except:
-        return 0.92
+        if "rates" in res and "EUR" in res["rates"]:
+            return float(res["rates"]["EUR"])
+    except: pass
+    return 0.0
 
 def get_price_eur(asset, date_obj):
     # Normalisation pour l'API
@@ -53,8 +54,18 @@ def get_price_eur(asset, date_obj):
         asset_clean = asset_clean.replace(k, v)
     asset_clean = unicodedata.normalize('NFKC', asset_clean).upper().strip()
 
-    if asset_clean in ["EUR", "EURA", "AGEUR"]: return 1.0
-    if asset_clean in ["USDC", "USDT", "DAI", "USDC.E"]: return 0.92
+    if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]: return 1.0
+
+    if asset_clean in ["USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS"]:
+        return get_eur_usd_rate(date_obj)
+
+    if asset_clean == "ZCHF":
+        date_str = date_obj.strftime("%Y-%m-%d")
+        try:
+            url = f"https://api.frankfurter.app/{date_str}?from=CHF&to=EUR"
+            res = requests.get(url, timeout=5).json()
+            return float(res["rates"]["EUR"])
+        except: return 0.0
 
     d_str = date_obj.strftime("%d-%m-%Y")
     cache = load_price_cache()
@@ -91,9 +102,11 @@ def get_price_eur(asset, date_obj):
             coins = data.get("coins", {})
             if coins:
                 price_usd = float(next(iter(coins.values()))["price"])
-                price = price_usd * 0.92
-                cache[cache_key] = price
-                save_price_cache(cache)
+                rate = get_eur_usd_rate(date_obj)
+                price = price_usd * rate
+                if price > 0:
+                    cache[cache_key] = price
+                    save_price_cache(cache)
                 return price
     except: pass
 
@@ -176,7 +189,7 @@ def process_bleap_csv(df):
         price_eur = get_price_eur(currency, dt)
         val_eur = abs(val) * price_eur
         eur_rate = get_eur_usd_rate(dt)
-        val_usd = val_eur / eur_rate if eur_rate > 0 else val_eur / 0.92
+        val_usd = val_eur / eur_rate if eur_rate > 0 else 0.0
 
         # Robust synthetic Hash including timestamp to avoid collisions
         ts_ms = int(dt.timestamp() * 1000)
@@ -211,8 +224,8 @@ def process_bleap_csv(df):
                 "From": account,
                 "To": "Fees",
                 "Value": fees,
-                "Value ($)": (fees * price_eur) / eur_rate if eur_rate > 0 else (fees * price_eur) / 0.92,
-                "Rate ($)": price_eur / eur_rate if eur_rate > 0 else price_eur / 0.92,
+                "Value ($)": (fees * price_eur) / eur_rate if eur_rate > 0 else 0.0,
+                "Rate ($)": price_eur / eur_rate if eur_rate > 0 else 0.0,
                 "Account": account,
                 "Counterparty": "Bleap_Fees",
                 "Imposable": False

@@ -317,6 +317,19 @@ with tab_vgp:
             # Mock/Import logic from app2VGP for pricing
             PRICE_CACHE_FILE = "historical_prices_cache.json"
 
+            def get_fiat_rate(from_currency, date_obj):
+                """Fetches official BCE exchange rates via Frankfurter API."""
+                from_currency = from_currency.upper().strip()
+                if from_currency == "EUR": return 1.0
+                date_str = date_obj.strftime("%Y-%m-%d")
+                try:
+                    url = f"https://api.frankfurter.app/{date_str}?from={from_currency}&to=EUR"
+                    res = requests.get(url, timeout=5).json()
+                    if "rates" in res and "EUR" in res["rates"]:
+                        return float(res["rates"]["EUR"])
+                except: pass
+                return 0.0
+
             def get_price_eur_cached(asset, date_obj):
                 # Normalisation pour la recherche (API/Cache)
                 nuance_map = {
@@ -331,11 +344,15 @@ with tab_vgp:
                     asset_clean = asset_clean.replace(k, v)
                 asset_clean = unicodedata.normalize('NFKC', asset_clean).upper().strip()
 
-                # 1. Stables & Direct Mappings
+                # 1. Stables & Direct Mappings (BCE Forex Data)
                 if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]:
                     return 1.0
+
                 if asset_clean in ["USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS", "TWCOMPOUNDUSDC"]:
-                    return 0.92 # Approximation stable USD/EUR
+                    return get_fiat_rate("USD", date_obj)
+
+                if asset_clean == "ZCHF":
+                    return get_fiat_rate("CHF", date_obj)
 
                 d_str = date_obj.strftime("%d-%m-%Y")
                 cache = {}
@@ -395,7 +412,8 @@ with tab_vgp:
                         coins = data.get("coins", {})
                         if coins:
                             price_usd = float(next(iter(coins.values()))["price"])
-                            price = price_usd * 0.92
+                            rate = get_fiat_rate("USD", date_obj)
+                            price = price_usd * rate
                             cache[cache_key] = price
                             with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f: json.dump(cache, f)
                             return price
@@ -419,6 +437,11 @@ with tab_vgp:
 
             if "vgp_df" in st.session_state:
                 res_df = st.session_state.vgp_df
+
+                # Vérification d'intégrité
+                zero_prices = res_df[res_df["Prix (EUR)"] == 0]
+                if not zero_prices.empty:
+                    st.error(f"🚨 **Calcul Compromis :** {len(zero_prices)} actifs ont un prix de 0.00. La VGP totale est sous-estimée. Veuillez utiliser l'**AppPriceFix**.")
 
                 # Total par compte
                 st.write("🔍 **Détail par Compte et Asset**")

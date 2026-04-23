@@ -38,12 +38,15 @@ if 'spam_addresses' not in st.session_state:
 
 @st.cache_data(ttl=86400)
 def get_eur_usd_rate(date_obj):
+    """Récupère le taux EUR/USD via Frankfurter API (BCE). Zero Fallback."""
     date_str = date_obj.strftime("%Y-%m-%d")
     try:
         url = f"https://api.frankfurter.app/{date_str}?from=USD&to=EUR"
         res = requests.get(url, timeout=5).json()
-        return res["rates"]["EUR"]
-    except: return 0.92
+        if "rates" in res and "EUR" in res["rates"]:
+            return float(res["rates"]["EUR"])
+    except: pass
+    return 0.0
 
 @st.cache_data(ttl=3600)
 def get_price_usd(asset, date_obj):
@@ -76,7 +79,14 @@ def get_price_usd(asset, date_obj):
     except: pass
 
     if asset in ["USDT", "USDC", "DAI"]: return 1.0
-    if asset in ["EURA", "AGEUR", "STEUR"]: return 1.08
+    if asset in ["EURA", "AGEUR", "STEUR"]:
+        # Zéro Fallback : on récupère le taux inverse EUR/USD via Frankfurter
+        date_str = date_obj.strftime("%Y-%m-%d")
+        try:
+            url = f"https://api.frankfurter.app/{date_str}?from=EUR&to=USD"
+            res = requests.get(url, timeout=5).json()
+            return float(res["rates"]["USD"])
+        except: return 0.0
     return 0.0
 
 def get_price_eur(asset, date_obj):

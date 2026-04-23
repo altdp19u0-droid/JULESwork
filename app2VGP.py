@@ -68,6 +68,18 @@ def pd_read_csv_safe(path):
 def get_qualified_path(year):
     return os.path.join(EXPORT_BASE_DIR, str(year), f"qualified_journal_{year}.csv")
 
+def get_fiat_rate(from_currency, date_obj):
+    """Fetches official BCE exchange rates via Frankfurter API."""
+    from_currency = from_currency.upper().strip()
+    if from_currency == "EUR": return 1.0
+    date_str = date_obj.strftime("%Y-%m-%d")
+    try:
+        url = f"https://api.frankfurter.app/{date_str}?from={from_currency}&to=EUR"
+        res = requests.get(url, timeout=5).json()
+        return float(res["rates"]["EUR"])
+    except:
+        return 0.0
+
 def get_price_eur(asset, date_obj):
     # CRUCIAL: On normalise pour l'API tout en gardant l'original pour l'affichage UI
     nuance_map = {
@@ -82,11 +94,15 @@ def get_price_eur(asset, date_obj):
         asset_clean = asset_clean.replace(k, v)
     asset_clean = unicodedata.normalize('NFKC', asset_clean).upper().strip()
 
-    # 1. Stables & Direct Mappings
+    # 1. Stables & Direct Mappings (BCE Forex Data)
     if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]:
         return 1.0
+
     if asset_clean in ["USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS", "TWCOMPOUNDUSDC"]:
-        return 0.92 # Approximation stable USD/EUR
+        return get_fiat_rate("USD", date_obj)
+
+    if asset_clean == "ZCHF":
+        return get_fiat_rate("CHF", date_obj)
 
     d_str = date_obj.strftime("%d-%m-%Y")
     cache = load_price_cache()
@@ -130,7 +146,8 @@ def get_price_eur(asset, date_obj):
             coins = res.json().get("coins", {})
             if coins:
                 price_usd = float(next(iter(coins.values()))["price"])
-                price = price_usd * 0.92
+                rate = get_fiat_rate("USD", date_obj)
+                price = price_usd * rate
                 cache[cache_key] = price
                 save_price_cache(cache)
                 return price
@@ -271,6 +288,16 @@ else:
         st.session_state.active_path = path
 
     journal = st.session_state.journal_active
+
+    # --- Vérification d'Intégrité (Zéro Fallback) ---
+    mask_cessions_check = (journal["Imposable"].apply(is_imposable_robust) | journal["Category"].fillna("").str.contains("Vente", case=False)) & (journal["Asset"] != "EUR") & (journal["Status"] != "Spam")
+    if mask_cessions_check.any():
+        # On vérifie si des cessions ont une VGP à 0
+        missing_vgp_count = len(journal[mask_cessions_check & (journal["VGP (EUR)"] == 0)])
+        if missing_vgp_count > 0:
+            st.error(f"🚨 **Attention :** {missing_vgp_count} cessions n'ont pas encore de VGP calculée ou validée. Les rapports fiscaux seront incomplets.")
+            if st.button("🔍 Résoudre les prix manquants (AppPriceFix)", use_container_width=True):
+                st.info("Basculez sur l'onglet **AppPriceFix** dans le menu principal pour collecter les prix manquants.")
 
     # Force numeric conversion
     for col in ["Amount", "Value ($)", "VGP (EUR)"]:

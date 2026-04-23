@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import requests
 import pandas as pd
 import streamlit as st
 from datetime import datetime
@@ -60,6 +61,19 @@ def save_position_labels(labels_dict):
 def get_qualified_path(year):
     return os.path.join(EXPORT_BASE_DIR, str(year), f"qualified_journal_{year}.csv")
 
+def get_fiat_rate(from_currency, date_obj):
+    """Fetches official BCE exchange rates via Frankfurter API."""
+    from_currency = from_currency.upper().strip()
+    if from_currency == "EUR": return 1.0
+    try:
+        date_str = date_obj.strftime("%Y-%m-%d")
+        url = f"https://api.frankfurter.app/{date_str}?from={from_currency}&to=EUR"
+        res = requests.get(url, timeout=5).json()
+        if "rates" in res and "EUR" in res["rates"]:
+            return float(res["rates"]["EUR"])
+    except: pass
+    return 0.0
+
 # --- Engine: Merging & Cleaning ---
 def apply_position_labels(df):
     """Remplace l'adresse Counterparty par 'Label (0x...)' si un mapping existe."""
@@ -106,6 +120,9 @@ def merge_raw_data(year):
                 asset_name = str(r.get("Asset", "EUR")).upper()
                 f_type = str(r.get("Type", ""))
 
+                dt_obj = pd.to_datetime(r.get("Date"), utc=True)
+                rate_usd_eur = get_fiat_rate("USD", dt_obj)
+
                 # Leg EUR (never imposable)
                 all_rows.append({
                     "Date": r.get("Date"),
@@ -113,7 +130,7 @@ def merge_raw_data(year):
                     "Counterparty": str(r.get("Counterparty", r.get("Plateforme", "Bank"))),
                     "Asset": "EUR",
                     "Amount": m_eur if "Vente" in f_type else -m_eur,
-                    "Value ($)": (m_eur if "Vente" in f_type else -m_eur) / 0.92,
+                    "Value ($)": ((m_eur if "Vente" in f_type else -m_eur) / rate_usd_eur) if rate_usd_eur > 0 else 0.0,
                     "Network": "Fiat",
                     "Tx Hash": str(r.get("Tx Hash", "")),
                     "Source Type": "Fiat",
@@ -131,7 +148,7 @@ def merge_raw_data(year):
                         "Counterparty": str(r.get("Counterparty", r.get("Plateforme", "Bank"))),
                         "Asset": asset_name,
                         "Amount": qty_asset if "Achat" in f_type else -qty_asset,
-                        "Value ($)": m_eur / 0.92,
+                        "Value ($)": (m_eur / rate_usd_eur) if rate_usd_eur > 0 else 0.0,
                         "Network": "Fiat",
                         "Tx Hash": str(r.get("Tx Hash", "")),
                         "Source Type": "Fiat-to-Crypto",

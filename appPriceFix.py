@@ -42,21 +42,30 @@ def pd_read_csv_safe(path):
         try: return pd.read_csv(path, encoding="latin-1")
         except: return pd.read_csv(path, encoding="utf-8", errors="replace")
 
-def get_eur_usd_rate(date_obj):
+def get_fiat_rate(from_currency, date_obj):
+    """Fetches official BCE exchange rates via Frankfurter API."""
+    from_currency = from_currency.upper().strip()
+    if from_currency == "EUR": return 1.0
     date_str = date_obj.strftime("%Y-%m-%d")
     try:
-        url = f"https://api.frankfurter.app/{date_str}?from=USD&to=EUR"
+        url = f"https://api.frankfurter.app/{date_str}?from={from_currency}&to=EUR"
         res = requests.get(url, timeout=5).json()
-        return res["rates"]["EUR"]
-    except: return 0.92
+        if "rates" in res and "EUR" in res["rates"]:
+            return float(res["rates"]["EUR"])
+    except: pass
+    return 0.0
 
 def get_price_eur_engine(asset, date_obj, cache):
     asset_clean = unicodedata.normalize('NFKC', str(asset)).upper().strip()
 
-    # 1. Stables & Direct Mappings
+    # 1. Stables & Direct Mappings (BCE Forex Data)
     if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]: return 1.0
+
     if asset_clean in ["USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS", "TWCOMPOUNDUSDC"]:
-        return 0.92 # Approximation USD/EUR
+        return get_fiat_rate("USD", date_obj)
+
+    if asset_clean == "ZCHF":
+        return get_fiat_rate("CHF", date_obj)
 
     d_str = date_obj.strftime("%d-%m-%Y")
     cache_key = f"{asset_clean}_{d_str}"
@@ -94,7 +103,8 @@ def get_price_eur_engine(asset, date_obj, cache):
             coins = res.json().get("coins", {})
             if coins:
                 price_usd = float(next(iter(coins.values()))["price"])
-                return price_usd * 0.92
+                rate = get_fiat_rate("USD", date_obj)
+                return price_usd * rate
     except: pass
 
     return 0.0
@@ -207,7 +217,14 @@ def scan_needed_prices(target_years, exclude_spams=True):
 # --- Logic ---
 st.subheader("📋 État de la collecte des prix")
 
-if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)"):
+# Alerte de conformité
+st.warning("""
+**⚠️ Règle d'Intégrité Strict :** Les calculs de VGP et de fiscalité n'autorisent aucune valeur de repli (approximation).
+Tout prix affiché à **0.000000** bloquera la validation de l'année concernée.
+Vous devez soit obtenir le prix via le bouton **Collecte Automatique**, soit le **saisir manuellement** dans le tableau ci-dessous.
+""")
+
+if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)", use_container_width=True):
     with st.spinner("Analyse des fichiers sanctuarisés..."):
         df_needed = scan_needed_prices(target_years=selected_years, exclude_spams=exclude_spam)
         cache = load_all_verified_prices()
@@ -233,13 +250,19 @@ if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)"):
 if "price_explorer_df" in st.session_state:
     df = st.session_state.price_explorer_df
 
-    col_t1, col_t2 = st.columns([2, 1])
+    col_t1, col_t2, col_t3 = st.columns([2, 1, 1])
     col_t1.write(f"Nombre de prix identifiés : **{len(df)}**")
 
     missing_count = len(df[df["Prix (EUR)"] == 0])
     col_t2.metric("Prix manquants", missing_count, delta=-missing_count if missing_count == 0 else missing_count, delta_color="inverse")
 
-    st.info("💡 Vous pouvez lancer une collecte automatique pour les prix manquants ou les saisir manuellement dans le tableau.")
+    # Indicateur de blocage
+    if missing_count > 0:
+        col_t3.error("🚨 Intervention Requise")
+    else:
+        col_t3.success("✨ Prêt pour VGP")
+
+    st.info("💡 **Instructions :** 1. Cliquez sur 'Collecte Automatique'. 2. Saisissez manuellement les prix restant à 0 (⚠️). 3. Cliquez sur 'Sanctuariser'.")
 
     # Data Editor
     ed_prices = st.data_editor(
@@ -275,6 +298,7 @@ if "price_explorer_df" in st.session_state:
             pbar = st.progress(0)
             cache = load_price_cache()
             updated_count = 0
+            fail_count = 0
 
             for idx, (i, row) in enumerate(to_fetch.iterrows()):
                 dt_obj = datetime.combine(row["Date"], datetime.min.time())
@@ -284,11 +308,17 @@ if "price_explorer_df" in st.session_state:
                     ed_prices.at[i, "Prix (EUR)"] = new_price
                     ed_prices.at[i, "Status"] = "✅ Récupéré"
                     updated_count += 1
+                else:
+                    ed_prices.at[i, "Status"] = "🚨 ÉCHEC (Saisie Manuelle Obligatoire)"
+                    fail_count += 1
 
                 pbar.progress((idx + 1) / len(to_fetch))
 
             st.session_state.price_explorer_df = ed_prices
-            st.success(f"Collecte terminée : {updated_count} prix récupérés.")
+            if fail_count > 0:
+                st.error(f"Collecte partielle : {updated_count} récupérés, {fail_count} restants à saisir manuellement.")
+            else:
+                st.success(f"Collecte terminée : {updated_count} prix récupérés.")
             st.rerun()
 
     if col_btn2.button("🛡️ Sanctuariser (Global & Annuel)", use_container_width=True):

@@ -90,25 +90,32 @@ def save_price_cache(cache):
     with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f)
 
-def get_eur_usd_rate(date_obj):
+def get_fiat_rate(from_currency, date_obj):
+    """Fetches official BCE exchange rates via Frankfurter API."""
+    from_currency = from_currency.upper().strip()
+    if from_currency == "EUR": return 1.0
+
     date_str = date_obj.strftime("%Y-%m-%d")
     try:
-        url = f"https://api.frankfurter.app/{date_str}?from=USD&to=EUR"
+        url = f"https://api.frankfurter.app/{date_str}?from={from_currency}&to=EUR"
         res = requests.get(url, timeout=5).json()
-        return res["rates"]["EUR"]
-    except: return 0.92
+        return float(res["rates"]["EUR"])
+    except:
+        return 0.0
 
 def get_price_eur(asset, date_obj):
     # Same logic as app2VGP for consistency
     asset_clean = unicodedata.normalize('NFKC', str(asset)).upper().strip()
 
-    # 1. Stables & Direct Mappings (Fixed or Proxy)
+    # 1. Stables & Direct Mappings (BCE Forex Data)
     if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]:
         return 1.0
+
     if asset_clean in ["USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS", "TWCOMPOUNDUSDC"]:
-        # On utilise une approximation du taux USD/EUR (0.92) si l'API échoue
-        rate = get_eur_usd_rate(date_obj)
-        return rate if rate > 0 else 0.92
+        return get_fiat_rate("USD", date_obj)
+
+    if asset_clean == "ZCHF":
+        return get_fiat_rate("CHF", date_obj)
 
     d_str = date_obj.strftime("%d-%m-%Y")
     cache = load_price_cache()
@@ -150,8 +157,8 @@ def get_price_eur(asset, date_obj):
             coins = res.json().get("coins", {})
             if coins:
                 price_usd = float(next(iter(coins.values()))["price"])
-                rate = get_eur_usd_rate(date_obj)
-                price = price_usd * (rate if rate > 0 else 0.92)
+                rate = get_fiat_rate("USD", date_obj)
+                price = price_usd * rate
                 cache[cache_key] = price
                 save_price_cache(cache)
                 return price
@@ -287,6 +294,16 @@ with st.sidebar:
         st.rerun()
 
 data = load_data(target_year)
+
+# --- Vérification d'Intégrité (Zéro Fallback) ---
+if 'journal' in data and not data['journal'].empty:
+    j = data['journal']
+    def is_imp_check(v): return str(v).upper().strip() in ["TRUE", "1", "1.0", "VRAI"]
+    mask_cess_check = (j['Imposable'].apply(is_imp_check) | j['Category'].fillna("").str.contains("Vente", case=False)) & (j['Asset'] != 'EUR')
+    if mask_cess_check.any():
+        missing_vgp = j[mask_cess_check & (j['VGP (EUR)'].fillna(0) == 0)]
+        if not missing_vgp.empty:
+            st.error(f"🚨 **Incohérence Fiscale :** {len(missing_vgp)} cessions ont une VGP à 0.00. Le calcul de la plus-value sera erroné. Veuillez régulariser dans l'**App 2 (VGP)** ou l'**AppPriceFix**.")
 
 # --- Logic: Fiscal calculations ---
 def calculate_acquisition_price(year):
@@ -451,6 +468,9 @@ with tab_accounts:
         ed_local["Valeur (EUR)"] = ed_local["Amount"] * ed_local["Prix (EUR)"].fillna(0.0)
         st.session_state.local_valued = ed_local
 
+        if (ed_local["Prix (EUR)"] == 0).any():
+            st.warning("⚠️ Certains prix de portefeuilles locaux sont à 0.00.")
+
         if not df_protocols.empty:
             st.write("**🏦 Protocoles & Staking (Déporté) :**")
             for col in df_protocols.columns:
@@ -471,6 +491,8 @@ with tab_accounts:
             )
             ed_proto["Valeur (EUR)"] = ed_proto["Amount"] * ed_proto["Prix (EUR)"].fillna(0.0)
             st.session_state.proto_valued = ed_proto
+            if (ed_proto["Prix (EUR)"] == 0).any():
+                st.warning("⚠️ Certains prix de protocoles sont à 0.00.")
 
         st.divider()
         st.write("**Positions déclarées manuellement (Off-chain, CEX, etc.) :**")
@@ -540,7 +562,9 @@ with tab_cessions:
             st.write("Pour chaque cession, saisissez la **Valeur Globale du Portefeuille (VGP)** à la date de l'opération.")
 
             # On ajoute des colonnes pour le calcul fiscal
-            cessions['Prix de Cession (EUR)'] = cessions['Value ($)'] * 0.92 # Conversion simplifiée ou saisie
+            # Note: Le prix de cession en EUR doit être vérifié (basé sur Value ($) convertie via BCE ou saisi manuellement)
+            if 'Prix de Cession (EUR)' not in cessions.columns:
+                cessions['Prix de Cession (EUR)'] = 0.0
 
             # Récupération automatique de la VGP calculée dans app2VGP si elle existe
             if 'VGP (EUR)' not in cessions.columns:
