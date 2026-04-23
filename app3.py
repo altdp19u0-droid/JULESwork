@@ -88,33 +88,62 @@ def get_eur_usd_rate(date_obj):
 def get_price_eur(asset, date_obj):
     # Same logic as app2VGP for consistency
     asset_clean = unicodedata.normalize('NFKC', str(asset)).upper().strip()
-    if asset_clean in ["EUR", "EURA", "AGEUR"]: return 1.0
-    if asset_clean in ["USDC", "USDT", "DAI", "USDC.E"]: return 0.92
+
+    # 1. Stables & Direct Mappings (Fixed or Proxy)
+    if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]:
+        return 1.0
+    if asset_clean in ["USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS", "TWCOMPOUNDUSDC"]:
+        # On utilise une approximation du taux USD/EUR (0.92) si l'API échoue
+        rate = get_eur_usd_rate(date_obj)
+        return rate if rate > 0 else 0.92
 
     d_str = date_obj.strftime("%d-%m-%Y")
     cache = load_price_cache()
     cache_key = f"{asset_clean}_{d_str}"
     if cache_key in cache: return float(cache[cache_key])
 
+    # 2. CoinGecko Mapping
     asset_map = {
         "ETH": "ethereum", "BTC": "bitcoin", "POL": "polygon-ecosystem-token",
         "BNB": "binancecoin", "ARB": "arbitrum", "OP": "optimism", "WETH": "ethereum",
         "SOL": "solana", "MATIC": "matic-network", "AVAX": "avalanche-2", "DOT": "polkadot",
-        "LINK": "chainlink", "UNI": "uniswap", "AAVE": "aave", "DAI": "dai"
+        "LINK": "chainlink", "UNI": "uniswap", "AAVE": "aave", "DAI": "dai",
+        "ZCHF": "cryptofranc", "BCH": "bitcoin-cash", "HBAR": "hedera-hashgraph",
+        "TWT": "trust-wallet-token", "ME": "magic-eden", "ORDER": "orderly-network",
+        "IP": "story-ip", "AUNT": "auntie-whale" # Fallback guess for AUNT
     }
 
     cg_id = asset_map.get(asset_clean, asset_clean.lower())
     url_cg = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
+
     try:
         time.sleep(1.2)
         res = requests.get(url_cg, timeout=10)
         if res.status_code == 200:
             data = res.json()
-            price = float(data["market_data"]["current_price"]["eur"])
-            cache[cache_key] = price
-            save_price_cache(cache)
-            return price
+            if "market_data" in data:
+                price = float(data["market_data"]["current_price"]["eur"])
+                cache[cache_key] = price
+                save_price_cache(cache)
+                return price
     except: pass
+
+    # 3. Fallback DefiLlama (Prix Spot approximation pour les petites capitalisations)
+    try:
+        ts = int(date_obj.timestamp())
+        url_llama = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{cg_id}?searchWidth=12h"
+        res = requests.get(url_llama, timeout=10)
+        if res.status_code == 200:
+            coins = res.json().get("coins", {})
+            if coins:
+                price_usd = float(next(iter(coins.values()))["price"])
+                rate = get_eur_usd_rate(date_obj)
+                price = price_usd * (rate if rate > 0 else 0.92)
+                cache[cache_key] = price
+                save_price_cache(cache)
+                return price
+    except: pass
+
     return 0.0
 
 def load_position_labels():
@@ -346,6 +375,14 @@ with tab_accounts:
                     df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
                     st.session_state.proto_valued = df_protocols
 
+                # Positions Manuelles
+                if not pos_df.empty:
+                    unique_assets_man = set(pos_df["Asset"].unique())
+                    prices_man = {a: get_price_eur(a, eoy_date) for a in unique_assets_man}
+                    pos_df["Prix (EUR)"] = pos_df["Asset"].map(prices_man)
+                    pos_df["Valeur (EUR)"] = pos_df["Quantité"] * pos_df["Prix (EUR)"]
+                    st.session_state.manual_pos_valued = pos_df
+
                 st.success("Valorisation terminée.")
 
         if col_v2.button("💾 Sanctuariser les Prix"):
@@ -356,6 +393,10 @@ with tab_accounts:
                     if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
             if "proto_valued" in st.session_state:
                 df = st.session_state.proto_valued
+                for _, r in df.iterrows():
+                    if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
+            if "manual_pos_valued" in st.session_state:
+                df = st.session_state.manual_pos_valued
                 for _, r in df.iterrows():
                     if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
 
@@ -424,7 +465,24 @@ with tab_accounts:
             for col in pos_df.columns:
                 if pos_df[col].dtype == object:
                     pos_df[col] = pos_df[col].fillna("").astype(str)
-            st.data_editor(pos_df, use_container_width=True, key="manual_pos_ed")
+
+            if "Prix (EUR)" not in pos_df.columns:
+                pos_df["Prix (EUR)"] = pos_df["Asset"].map(eoy_prices).fillna(0.0)
+
+            ed_manual = st.data_editor(
+                pos_df,
+                column_config={
+                    "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
+                    "Quantité": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                    "Asset": st.column_config.TextColumn(disabled=True),
+                    "Account": st.column_config.TextColumn(disabled=True),
+                },
+                use_container_width=True,
+                key="manual_pos_ed"
+            )
+            # Recalcul de la valeur pour ces positions
+            ed_manual["Valeur (EUR)"] = ed_manual["Quantité"] * ed_manual["Prix (EUR)"].fillna(0.0)
+            st.session_state.manual_pos_valued = ed_manual
         else:
             st.info("Aucune position manuelle saisie dans l'App 0.")
 
@@ -541,7 +599,7 @@ with tab_bilan:
         total_cessions = df_bilan['Prix Cession'].sum()
 
         col_b1, col_b2, col_b3 = st.columns(3)
-        col_b1.metric("Plus-Value Totale Brute", f"{total_pv:,.2f} €")
+        col_b1.metric("Plus-Value Totale Brute", f"{total_pv:,.2f} €", help="Somme des plus-values unitaires calculées par cession selon la formule du formulaire 2086.")
 
         # Logique fiscale : exonération si total des prix de cession <= abattement (305€)
         if total_cessions <= abattement:
@@ -550,10 +608,10 @@ with tab_bilan:
         else:
             pv_nette = total_pv
 
-        col_b2.metric("Plus-Value Nette Imposable", f"{pv_nette:,.2f} €")
+        col_b2.metric("Plus-Value Nette Imposable", f"{pv_nette:,.2f} €", help="Plus-value brute après application de l'abattement annuel de 305€ si applicable.")
 
         impot = pv_nette * flat_tax_rate if pv_nette > 0 else 0.0
-        col_b3.metric(f"Impôt Estimé ({int(flat_tax_rate*100)}%)", f"{impot:,.2f} €", delta_color="inverse")
+        col_b3.metric(f"Impôt Estimé ({int(flat_tax_rate*100)}%)", f"{impot:,.2f} €", delta_color="inverse", help="Calculé selon le taux du Prélèvement Forfaitaire Unique (PFU) en vigueur.")
 
         # --- AJOUT INFOS COMPLÉMENTAIRES ---
         st.divider()
@@ -561,7 +619,7 @@ with tab_bilan:
 
         # 1. Récupération du prix d'achat total (A)
         total_acq = st.session_state.get("total_acq_price_shared", 0.0)
-        c_inf1.metric("Prix d'achat total (Capital investi)", f"{total_acq:,.2f} €")
+        col_inf1.metric("Prix d'achat total (A)", f"{total_acq:,.2f} €", help="Capital investi (A) : Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
 
         # 2. Calcul de la VGP consolidée à fin de période
         vgp_end = 0.0
@@ -569,8 +627,10 @@ with tab_bilan:
             vgp_end += st.session_state.local_valued["Valeur (EUR)"].sum()
         if "proto_valued" in st.session_state:
             vgp_end += st.session_state.proto_valued["Valeur (EUR)"].sum()
+        if "manual_pos_valued" in st.session_state:
+            vgp_end += st.session_state.manual_pos_valued["Valeur (EUR)"].sum()
 
-        c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €")
+        c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme des Wallets + Protocoles + Positions Manuelles.")
 
         st.divider()
         st.write("📝 **Montant à reporter dans la case 3AN (ou 3BN si moins-value) :**")
