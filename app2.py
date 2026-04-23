@@ -229,29 +229,44 @@ def merge_raw_data(year):
     if not df_final.empty:
         df_final["Date"] = pd.to_datetime(df_final["Date"], utc=True, errors="coerce", format="ISO8601")
 
+        # Unified hash normalization
+        def norm_hash(h):
+            s = str(h).strip().lower()
+            if s in ["nan", "none", "", "0"]: return ""
+            return str(h).strip()
+        df_final["Tx Hash"] = df_final["Tx Hash"].apply(norm_hash)
+
         # --- SMART DEDUPLICATION ---
-        manual_mask = df_final["Source Type"].isin(["Fiat", "Fiat-to-Crypto", "Manual", "Manual Swap", "Manual Transfer"])
+        # 1. Identify Manual or Synthetic entries
+        def is_synthetic(h):
+            return any(str(h).startswith(p) for p in ["BLP-", "NVL-", "OUT-", "IN-", "FEE-"])
+
+        manual_types = ["Fiat", "Fiat-to-Crypto", "Manual", "Manual Swap", "Manual Transfer"]
+        manual_mask = df_final["Source Type"].isin(manual_types) | df_final["Tx Hash"].apply(is_synthetic) | (df_final["Tx Hash"] == "")
+
         df_manual = df_final[manual_mask].copy()
         df_harvested = df_final[~manual_mask].copy()
 
         if not df_manual.empty and not df_harvested.empty:
-            # Normalize for matching
+            # Normalize harvested for matching
             df_harvested["_acc"] = df_harvested["Account"].astype(str).str.lower()
             df_harvested["_asset"] = df_harvested["Asset"].astype(str).str.upper()
             df_harvested["_day"] = df_harvested["Date"].dt.date
             df_harvested["_amt"] = df_harvested["Amount"].abs().round(8)
 
+            # Reference map of real blockchain transactions
             harvest_ref = df_harvested.drop_duplicates(subset=["_day", "_asset", "_amt", "_acc"])
 
             def find_match(row):
-                tx_h = str(row.get("Tx Hash", ""))
-                if tx_h and not tx_h.startswith(("BLP-", "NVL-", "OUT-", "IN-", "FEE-")) and tx_h != "nan":
+                # If it already has a real hash, skip
+                h = str(row.get("Tx Hash", ""))
+                if h and not is_synthetic(h):
                     return row
 
                 day = pd.to_datetime(row["Date"]).date()
                 amt = abs(float(row["Amount"]))
-                asset = str(row["Asset"]).upper()
-                acc = str(row["Account"]).lower()
+                asset = str(row.get("Asset", "")).upper()
+                acc = str(row.get("Account", "")).lower()
 
                 matches = harvest_ref[(harvest_ref["_day"] == day) & (harvest_ref["_asset"] == asset) &
                                       (harvest_ref["_amt"] == round(amt, 8)) & (harvest_ref["_acc"] == acc)]
@@ -260,8 +275,11 @@ def merge_raw_data(year):
                     m = matches.iloc[0]
                     row["Tx Hash"] = m["Tx Hash"]
                     row["Date"] = m["Date"]
-                    if pd.isna(row.get("Value ($)")) or row.get("Value ($)") == 0: row["Value ($)"] = m.get("Value ($)", 0.0)
-                    if pd.isna(row.get("Network")) or row["Network"] == "Fiat": row["Network"] = m.get("Network", "Fiat")
+                    # Inherit missing data
+                    if pd.isna(row.get("Value ($)")) or row.get("Value ($)") == 0:
+                         row["Value ($)"] = m.get("Value ($)", 0.0)
+                    if pd.isna(row.get("Network")) or row.get("Network") == "Fiat":
+                         row["Network"] = m.get("Network", "Fiat")
                 return row
 
             df_manual = df_manual.apply(find_match, axis=1)
@@ -269,10 +287,25 @@ def merge_raw_data(year):
             df_final = pd.concat([df_manual, df_harvested])
 
         # Priority Deduplication
-        df_final["_pri"] = df_final["Source Type"].apply(lambda x: 0 if x in ["Native", "Token"] else 1)
+        # If hashes match (real or synthetic), we prioritize rows with user-defined semantic context
+        df_final["_pri"] = df_final["Source Type"].apply(lambda x: 1 if x in manual_types else 0)
         df_final["_d"] = df_final["Date"].dt.date
         df_final = df_final.sort_values(["Date", "_pri"], ascending=[False, False])
+
+        # 1. Standard Deduplication (Exact Hash match)
         df_final = df_final.drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account", "_d"], keep="first")
+
+        # 2. Legacy/Synthetic Collapse (Same transaction, different synthetic hash format)
+        # We only apply this to rows that are considered synthetic or manual
+        is_synth = df_final["Tx Hash"].apply(is_synthetic) | (df_final["Tx Hash"] == "")
+        df_real = df_final[~is_synth]
+        df_synth = df_final[is_synth]
+
+        # For synthetic/manual ones, we ignore the hash in the uniqueness check to catch formatting changes
+        if not df_synth.empty:
+            df_synth = df_synth.drop_duplicates(subset=["Asset", "Amount", "Account", "_d"], keep="first")
+
+        df_final = pd.concat([df_real, df_synth]).sort_values("Date", ascending=False)
         df_final = df_final.drop(columns=["_pri", "_d"])
         df_final = apply_position_labels(df_final)
 
@@ -283,10 +316,18 @@ def sync_data(year):
     qual_path = get_qualified_path(year)
     new_df = merge_raw_data(year)
 
+    # Unified normalization for hashes
+    def norm_hash(h):
+        s = str(h).strip()
+        if s.lower() in ["nan", "none", "", "0"]: return ""
+        return s
+
     if os.path.exists(qual_path) and os.path.getsize(qual_path) > 0:
         try:
             old_df = pd_read_csv_safe(qual_path)
             old_df["Date"] = pd.to_datetime(old_df["Date"], utc=True, errors="coerce", format="ISO8601")
+            if "Tx Hash" in old_df.columns:
+                old_df["Tx Hash"] = old_df["Tx Hash"].apply(norm_hash)
 
             # --- AUTO-REPAIR : Nettoyage des lignes Fiat corrompues (v1 legacy) ---
             # Si Source Type est 'Fiat' mais Asset n'est pas 'EUR', c'est une erreur de transposition ancienne.
@@ -304,10 +345,29 @@ def sync_data(year):
             old_df = pd.DataFrame(columns=COLUMNS)
 
         # Fusion : On privilégie old_df (données déjà qualifiées) sur new_df (données brutes).
-        # On utilise keep="first" avec old_df en premier pour ne pas écraser le travail de qualification
-        # déjà effectué par l'utilisateur.
-        # Dédoublonnage incluant Amount pour éviter de fusionner des transactions différentes sans hash.
-        combined = pd.concat([old_df, new_df]).drop_duplicates(subset=["Tx Hash", "Asset", "Account", "Amount"], keep="first")
+        if "Tx Hash" in new_df.columns:
+            new_df["Tx Hash"] = new_df["Tx Hash"].apply(norm_hash)
+
+        # 1. First Pass: Deduplication by Exact Hash
+        combined = pd.concat([old_df, new_df])
+        combined["_d"] = combined["Date"].dt.date
+        combined = combined.drop_duplicates(subset=["Tx Hash", "Asset", "Account", "Amount", "_d"], keep="first")
+
+        # 2. Second Pass: Collapse Legacy/Synthetic Hashes
+        # We identify synthetic rows in the combined set
+        def is_synthetic(h):
+            return any(str(h).startswith(p) for p in ["BLP-", "NVL-", "OUT-", "IN-", "FEE-"]) or str(h) == ""
+
+        mask_synth = combined["Tx Hash"].apply(is_synthetic)
+        df_real = combined[~mask_synth]
+        df_synth = combined[mask_synth]
+
+        if not df_synth.empty:
+            # Collapse synthetic duplicates by ignoring the hash itself
+            df_synth = df_synth.drop_duplicates(subset=["Asset", "Account", "Amount", "_d"], keep="first")
+
+        combined = pd.concat([df_real, df_synth]).sort_values("Date", ascending=False)
+        combined = combined.drop(columns=["_d"])
 
         if not combined.empty and "Date" in combined.columns:
             combined = combined.sort_values("Date", ascending=False)
@@ -535,7 +595,7 @@ def main_journal_fragment():
         st.rerun()
 
     # 2. Data Editor
-    categories = ["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense Staking", "Airdrop", "Frais", "Perte/Vol", "Autre"]
+    categories = ["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense Staking", "Airdrop", "Frais", "Perte/Vol", "Autre", "Doublon à ignorer"]
     statuses = ["A vérifier", "Valide", "Spam"]
 
     # Type safety
@@ -576,7 +636,7 @@ def main_journal_fragment():
         # On remplace les lignes de full_df par celles de edited_df
         # Pour faire simple ici, on écrase tout le journal par edited_df si non filtré
         if not (f_asset or f_acc or f_status):
-            st.session_state.journal_qualifie = edited_df
+            new_journal = edited_df
         else:
             # Fusion complexe si filtré : on retire les anciennes lignes filtrées et on ajoute les nouvelles
             mask_filtered = pd.Series(True, index=full_df.index)
@@ -585,8 +645,16 @@ def main_journal_fragment():
             if f_status: mask_filtered &= full_df["Status"].isin(f_status)
 
             non_filtered_df = full_df[~mask_filtered]
-            st.session_state.journal_qualifie = pd.concat([non_filtered_df, edited_df]).sort_values("Date", ascending=False)
+            new_journal = pd.concat([non_filtered_df, edited_df]).sort_values("Date", ascending=False)
 
+        # Nettoyage automatique des Doublons marqués manuellement
+        if not new_journal.empty and "Category" in new_journal.columns:
+            count_dup = (new_journal["Category"] == "Doublon à ignorer").sum()
+            if count_dup > 0:
+                new_journal = new_journal[new_journal["Category"] != "Doublon à ignorer"]
+                st.info(f"🗑️ {count_dup} doublons manuels supprimés avant sauvegarde.")
+
+        st.session_state.journal_qualifie = new_journal
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
 
