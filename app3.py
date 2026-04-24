@@ -348,6 +348,45 @@ with tab_accounts:
         accounts = list(journal['Account'].dropna().unique())
         st.write(f"Comptes identifiés dans le journal : `{', '.join(accounts)}`")
 
+        # --- NEW: Report from Previous Year ---
+        st.divider()
+        with st.expander(f"📦 Report de l'année précédente ({target_year - 1})", expanded=False):
+            st.info(f"Calcul des soldes au 31/12/{target_year - 1} pour initialiser l'année {target_year}.")
+            prev_date = datetime(target_year - 1, 12, 31)
+
+            # Use the same logic as VGP calculation but for the previous year-end
+            journals_prev = []
+            for y_p in range(2020, target_year):
+                path_p = get_file_path(y_p, 'qualified')
+                if os.path.exists(path_p):
+                    try: journals_prev.append(pd_read_csv_safe(path_p))
+                    except: pass
+
+            if journals_prev:
+                full_prev = pd.concat(journals_prev)
+                full_prev = full_prev[full_prev["Asset"] != "EUR"]
+                # Filter Spam/Dup
+                if 'Status' in full_prev.columns: full_prev = full_prev[full_prev['Status'] != 'Spam']
+
+                # Internal neutralization (simplified for report view)
+                my_accs_prev = set(full_prev['Account'].dropna().unique())
+                def is_neut_p(r):
+                    if str(r.get('Category')) == "Transfert Interne": return True
+                    if resolve_raw_addr(r.get('Counterparty', "")) in my_accs_prev: return True
+                    return False
+
+                # Sum of everything up to end of previous year
+                eoy_prev_bals = full_prev.groupby(['Asset'])['Amount'].sum().reset_index()
+                eoy_prev_bals = eoy_prev_bals[eoy_prev_bals['Amount'].abs() > 1e-8]
+
+                if not eoy_prev_bals.empty:
+                    st.write(f"**Soldes reportables au 01/01/{target_year} :**")
+                    st.table(eoy_prev_bals)
+                else:
+                    st.write("Aucun solde à reporter.")
+            else:
+                st.write("Aucun historique trouvé avant cette année.")
+
         st.divider()
         st.subheader("📍 Positions de Fin d'Année")
 
@@ -359,7 +398,39 @@ with tab_accounts:
         st.info("Ces positions servent à calculer la Valeur Globale du Portefeuille (VGP).")
 
         # 2. Calcul des soldes Locaux (Wallets)
-        derived_local = journal.groupby(['Account', 'Asset']).agg({'Amount': 'sum'}).reset_index()
+        # NEW: Accumulate from full history (journals from all years)
+        journals_all = []
+        for y in range(2020, target_year + 1):
+            path_y = get_file_path(y, 'qualified')
+            if os.path.exists(path_y):
+                try:
+                    df_y = pd_read_csv_safe(path_y)
+                    # Filter Spam and Duplicates for accuracy
+                    if 'Status' in df_y.columns: df_y = df_y[df_y['Status'] != 'Spam']
+                    if 'Category' in df_y.columns: df_y = df_y[df_y['Category'] != 'Doublon à ignorer']
+                    journals_all.append(df_y)
+                except: pass
+
+        full_history = pd.concat(journals_all) if journals_all else journal
+        # Filter out Fiat legs (EUR) for crypto VGP
+        full_history = full_history[full_history["Asset"] != "EUR"]
+
+        # Internal transfer neutralization
+        # We assume any row with 'Transfert Interne' category is neutral
+        # OR if counterparty is one of our accounts.
+        my_accounts = set(full_history['Account'].dropna().unique())
+
+        def is_neutral(row):
+            if str(row.get('Category')) == "Transfert Interne": return True
+            cp = resolve_raw_addr(row.get('Counterparty', ""))
+            if cp in my_accounts: return True
+            return False
+
+        # We only keep rows that are NOT neutral for the consolidated balance
+        df_wealth = full_history[~full_history.apply(is_neutral, axis=1)]
+
+        # Consolidated balance per account/asset
+        derived_local = full_history.groupby(['Account', 'Asset']).agg({'Amount': 'sum'}).reset_index()
         derived_local = derived_local[derived_local['Amount'].abs() > 1e-8]
 
         # Chargement des prix sanctuarisés
@@ -372,14 +443,12 @@ with tab_accounts:
         # 3. Calcul des soldes Protocoles (Mapping Counterparty)
         # On cherche les flux vers des protocoles qui n'ont pas été retirés
         # Solde Protocole = Sum(Sent to Protocol) - Sum(Received from Protocol)
+        # NEW: Uses full history to calculate cumulative protocol balances
         protocol_rows = []
         for addr, label in pos_labels.items():
-            # Flux ENVOYÉS au protocole (Amount négatif dans le journal car sort du wallet)
-            # Mais pour le solde du protocole, c'est une entrée.
-            # On simplifie : Solde = - (Somme des Amount du journal dont Counterparty est le protocole)
-            mask_prot = journal["Counterparty"].fillna("").apply(resolve_raw_addr) == addr
+            mask_prot = full_history["Counterparty"].fillna("").apply(resolve_raw_addr) == addr
             if mask_prot.any():
-                df_prot = journal[mask_prot].groupby("Asset")["Amount"].sum().reset_index()
+                df_prot = full_history[mask_prot].groupby("Asset")["Amount"].sum().reset_index()
                 for _, r in df_prot.iterrows():
                     if abs(r["Amount"]) > 1e-8:
                         protocol_rows.append({

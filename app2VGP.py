@@ -156,10 +156,27 @@ def get_price_eur(asset, date_obj):
     return 0.0
 
 def get_portfolio_snapshot(journal, target_date):
+    """Calculates consolidated VGP by aggregating all journals since 2020."""
     # 1. Chargement des référentiels
     pos_labels = load_position_labels()
     protocol_addrs = set(pos_labels.keys())
-    my_accounts = set(journal["Account"].dropna().unique())
+
+    # NEW: Load ALL qualified journals from 2020 to current target year
+    journals_all = []
+    target_year = target_date.year
+    for y in range(2020, target_year + 1):
+        path_y = get_qualified_path(y)
+        if os.path.exists(path_y):
+            try:
+                df_y = pd_read_csv_safe(path_y)
+                df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
+                journals_all.append(df_y)
+            except: pass
+
+    if not journals_all: return pd.DataFrame(), 0.0
+
+    full_history = pd.concat(journals_all, ignore_index=True)
+    my_accounts = set(full_history["Account"].dropna().unique())
 
     # NEW: Include Manual Positions from all years up to target_date
     manual_all = []
@@ -183,29 +200,27 @@ def get_portfolio_snapshot(journal, target_date):
         return "Wallet"
 
     # 2. Filtrage de base (Exclude Spam and manual duplicates)
-    df = journal[
-        (journal["Status"] != "Spam") &
-        (journal.get("Category", "") != "Doublon à ignorer") &
-        (journal["Asset"] != "EUR") &
-        (journal["Date"] <= target_date)
+    df = full_history[
+        (full_history["Status"] != "Spam") &
+        (full_history.get("Category", "") != "Doublon à ignorer") &
+        (full_history["Asset"] != "EUR") &
+        (full_history["Date"] <= target_date)
     ].copy()
 
     if df.empty: return pd.DataFrame(), 0.0
 
     # 3. Identification des flux internes (qui ne changent pas la VGP globale)
-    # Un flux est interne si :
-    # - La contrepartie est un de mes comptes OU un protocole identifié
-    # AND
-    # - La catégorie est 'Transfert Interne' ou 'A vérifier' (par défaut pour les flux techniques)
+    # CRITICAL: Any row categorized as 'Transfert Interne' is neutral by definition,
+    # as its counter-leg exists (or should exist) elsewhere in the consolidated set.
     def is_vgp_neutral(row):
-        cp_raw = resolve_raw_addr(row["Counterparty"])
         cat = str(row["Category"])
+        if cat == "Transfert Interne":
+            return True
 
-        # Si c'est un transfert entre mes wallets ou vers un protocole
+        cp_raw = resolve_raw_addr(row["Counterparty"])
+        # Fallback detection for unlabeled transfers
         if cp_raw in my_accounts or cp_raw in protocol_addrs:
-            # On neutralise seulement si c'est marqué comme transfert/technique
-            # On garde si c'est un Reward, Airdrop, Frais, etc.
-            if cat in ["Transfert Interne", "A vérifier", ""]:
+            if cat in ["A vérifier", "", "nan"]:
                 return True
         return False
 
@@ -244,6 +259,7 @@ def get_portfolio_snapshot(journal, target_date):
             })
 
     # B. Balances in Protocols (Label-based)
+    # Note: We filter on the full history for the protocol balance calculation
     for addr, label in pos_labels.items():
         mask_prot = df["Counterparty"].fillna("").apply(resolve_raw_addr) == addr
         if mask_prot.any():

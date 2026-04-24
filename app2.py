@@ -594,7 +594,7 @@ def main_journal_fragment():
     # 1. Barre d'outils
     col_t1, col_t2, col_save = st.columns([1.5, 0.5, 1])
 
-    if col_t1.button("🔍 Détecter Transferts Internes", use_container_width=True):
+    if col_t1.button("🔍 Détecter Transferts Internes", use_container_width=True, key="btn_detect_internal"):
         df = st.session_state.journal_qualifie
 
         # 1. Detection by Tx Hash (existing)
@@ -608,13 +608,24 @@ def main_journal_fragment():
                 df.loc[mask, "Status"] = "Valide"
                 count_h += 1
 
-        # 2. Detection by Owned Account/Counterparty (Cross-Account)
-        my_accounts = set(df["Account"].astype(str).str.lower().unique())
-        count_ca = 0
+        # 2. Detection by Owned Account/Counterparty (Cross-Account Global)
+        # We look for accounts across ALL years to be exhaustive
+        all_my_accounts = set()
+        for y_scan in range(2020, datetime.now().year + 1):
+            p_scan = get_qualified_path(y_scan)
+            if os.path.exists(p_scan):
+                try:
+                    tmp_acc = pd_read_csv_safe(p_scan)["Account"].dropna().unique()
+                    all_my_accounts.update([str(a).lower() for a in tmp_acc])
+                except: pass
 
+        # Add current session accounts
+        all_my_accounts.update(df["Account"].astype(str).str.lower().unique())
+
+        count_ca = 0
         def is_internal(cp_str):
             raw = resolve_raw_addr(cp_str)
-            return raw in my_accounts
+            return raw in all_my_accounts
 
         mask_internal = df["Counterparty"].fillna("").apply(is_internal)
         if mask_internal.any():
@@ -623,7 +634,7 @@ def main_journal_fragment():
             count_ca = mask_internal.sum()
 
         st.session_state.journal_qualifie = df
-        st.success(f"Transferts identifiés : {count_h} par Hash, {count_ca} par Compte Propriétaire.")
+        st.success(f"Transferts identifiés : {count_h} par Hash, {count_ca} par Compte Propriétaire (Global Scan).")
         st.rerun()
 
     # 2. Data Editor
