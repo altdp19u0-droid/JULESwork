@@ -447,6 +447,13 @@ else:
                                "Vous devriez soit ajouter ces comptes dans 'Mapping des Protocoles' (App 2), "
                                "soit vérifier vos types de transactions.")
 
+                    with st.expander("📋 Liste des comptes 'External/CEX' à mapper"):
+                        # Extract addresses from "External/CEX: 0x..."
+                        cp_list = unlabeled["Location"].unique()
+                        clean_list = [cp.replace("External/CEX: ", "").strip() for cp in cp_list]
+                        st.code("\n".join(clean_list), language="text")
+                        st.info("💡 Copiez ces adresses pour les ajouter à votre mapping de protocoles ou pour investiguer les transferts manquants.")
+
                 # Highlight 0 prices
                 zero_prices = snapshot_df[snapshot_df["Prix (EUR)"] == 0]
                 if not zero_prices.empty:

@@ -79,7 +79,9 @@ def get_price_eur_engine(asset, date_obj, cache):
         "LINK": "chainlink", "UNI": "uniswap", "AAVE": "aave", "DAI": "dai",
         "ZCHF": "cryptofranc", "BCH": "bitcoin-cash", "HBAR": "hedera-hashgraph",
         "TWT": "trust-wallet-token", "ME": "magic-eden", "ORDER": "orderly-network",
-        "IP": "story-ip", "AUNT": "auntie-whale"
+        "IP": "story-ip", "AUNT": "auntie-whale", "LDO": "lido-finance", "NEAR": "near",
+        "FTM": "fantom", "STX": "blockstack", "RUNE": "thorchain", "GRT": "the-graph",
+        "MKR": "maker", "RNDR": "render-token", "FET": "fetch-ai", "INJ": "injective-protocol"
     }
 
     cg_id = asset_map.get(asset_clean, asset_clean.lower())
@@ -97,6 +99,7 @@ def get_price_eur_engine(asset, date_obj, cache):
     # 3. Fallback DefiLlama
     try:
         ts = int(date_obj.timestamp())
+        # Try with coingecko ID
         url_llama = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{cg_id}?searchWidth=12h"
         res = requests.get(url_llama, timeout=10)
         if res.status_code == 200:

@@ -447,16 +447,17 @@ with tab_accounts:
         ]).reset_index()
 
         merged_ext = pd.merge(ext_pre, ext_period, on=["Counterparty", "Asset"], how="outer").fillna(0.0)
-        merged_ext["Amount"] = -(merged_ext["Amount"] + merged_ext["In"] + merged_ext["Out"]) # Inverted leg
+        merged_ext = merged_ext.rename(columns={"Amount": "Reported"})
+        merged_ext["Final_Bal"] = -(merged_ext["Reported"] + merged_ext["In"] + merged_ext["Out"]) # Inverted leg
 
         protocol_rows = []
         for _, r in merged_ext.iterrows():
-            if abs(r["Amount"]) > 1e-8:
+            if abs(r["Final_Bal"]) > 1e-8:
                 raw_cp = resolve_raw_addr(r["Counterparty"])
                 label = pos_labels.get(raw_cp, f"External/CEX: {r['Counterparty']}")
                 # Sign inversion for receivables (we report our assets held there)
                 protocol_rows.append({
-                    "Account": label, "Asset": r["Asset"], "Amount": r["Amount"],
+                    "Account": label, "Asset": r["Asset"], "Amount": r["Final_Bal"],
                     "In": abs(r["In"]), "Out": abs(r["Out"]), "Report": -r["Reported"]
                 })
 
