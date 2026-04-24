@@ -175,9 +175,14 @@ def load_position_labels():
     return {}
 
 def resolve_raw_addr(addr_str):
-    if "(" in str(addr_str) and ")" in str(addr_str):
-        return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
-    return str(addr_str).strip().lower()
+    s = str(addr_str).strip().lower()
+    if "(" in s and ")" in s:
+        return s.split("(")[-1].split(")")[0].strip()
+    parts = s.split()
+    for p in parts:
+        if p.startswith("0x") and len(p) >= 40: return p
+    return s
+
 
 def apply_position_labels(df):
     """Remplace l'adresse Counterparty par 'Label (0x...)' si un mapping existe."""

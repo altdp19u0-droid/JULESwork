@@ -46,9 +46,14 @@ def load_position_labels():
     return {}
 
 def resolve_raw_addr(addr_str):
-    if "(" in str(addr_str) and ")" in str(addr_str):
-        return str(addr_str).split("(")[-1].split(")")[0].strip().lower()
-    return str(addr_str).strip().lower()
+    s = str(addr_str).strip().lower()
+    if "(" in s and ")" in s:
+        return s.split("(")[-1].split(")")[0].strip()
+    parts = s.split()
+    for p in parts:
+        if p.startswith("0x") and len(p) >= 40: return p
+    return s
+
 
 def save_price_cache(cache):
     with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
@@ -486,13 +491,41 @@ else:
                 if col_save_audit1.button("💾 Enregistrer ces prix dans le cache"):
                     cache = load_price_cache()
                     d_str = selected_date.strftime("%d-%m-%Y")
+
+                    # On identifie les prix modifiés par rapport au cache actuel
                     count = 0
                     for _, r in ed_snapshot.iterrows():
                         a_clean = unicodedata.normalize('NFKC', str(r["Asset"])).upper().strip()
-                        cache[f"{a_clean}_{d_str}"] = float(r["Prix (EUR)"])
-                        count += 1
+                        p_val = float(r["Prix (EUR)"])
+                        if p_val > 0:
+                            cache[f"{a_clean}_{d_str}"] = p_val
+                            count += 1
+
                     save_price_cache(cache)
-                    st.success(f"{count} prix enregistrés. Relancez le calcul global pour appliquer.")
+
+                    # Sanctuarisation annuelle automatique pour pérennité
+                    y = str(selected_date.year)
+                    y_dir = os.path.join(EXPORT_BASE_DIR, y)
+                    os.makedirs(y_dir, exist_ok=True)
+                    ann_path = os.path.join(y_dir, f"verified_prices_{y}.json")
+
+                    existing_ann = {}
+                    if os.path.exists(ann_path):
+                        try:
+                            with open(ann_path, "r", encoding="utf-8") as f: existing_ann = json.load(f)
+                        except: pass
+
+                    # Update with new values
+                    for _, r in ed_snapshot.iterrows():
+                        a_clean = unicodedata.normalize('NFKC', str(r["Asset"])).upper().strip()
+                        p_val = float(r["Prix (EUR)"])
+                        if p_val > 0:
+                            existing_ann[f"{a_clean}_{d_str}"] = p_val
+
+                    with open(ann_path, "w", encoding="utf-8") as f:
+                        json.dump(existing_ann, f, indent=4)
+
+                    st.success(f"{count} prix enregistrés (Global & Annuel). Relancez le calcul pour rafraîchir.")
 
                 if col_save_audit2.button("🛡️ Sanctuariser l'Inventaire (Complet)", use_container_width=True):
                     y_dir = os.path.join(EXPORT_BASE_DIR, str(selected_date.year))

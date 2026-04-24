@@ -56,7 +56,18 @@ def get_fiat_rate(from_currency, date_obj):
     return 0.0
 
 def get_price_eur_engine(asset, date_obj, cache):
-    asset_clean = unicodedata.normalize('NFKC', str(asset)).upper().strip()
+    # CRUCIAL: Unify normalization with other apps (nuance_map)
+    nuance_map = {
+        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
+        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
+        "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
+        "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
+        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
+    }
+    asset_clean = str(asset)
+    for k, v in nuance_map.items():
+        asset_clean = asset_clean.replace(k, v)
+    asset_clean = unicodedata.normalize('NFKC', asset_clean).upper().strip()
 
     # 1. Stables & Direct Mappings (BCE Forex Data)
     if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]: return 1.0
@@ -253,6 +264,20 @@ if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)", use_contain
 if "price_explorer_df" in st.session_state:
     df = st.session_state.price_explorer_df
 
+    # Pre-calculate normalization for check
+    nuance_map = {
+        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
+        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
+        "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
+        "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
+        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
+    }
+
+    def normalize_asset(a):
+        s = str(a)
+        for k, v in nuance_map.items(): s = s.replace(k, v)
+        return unicodedata.normalize('NFKC', s).upper().strip()
+
     col_t1, col_t2, col_t3 = st.columns([2, 1, 1])
     col_t1.write(f"Nombre de prix identifiés : **{len(df)}**")
 
@@ -332,7 +357,7 @@ if "price_explorer_df" in st.session_state:
         for _, r in ed_prices.iterrows():
             if r["Prix (EUR)"] > 0:
                 y = str(r["Date"].year)
-                a_clean = unicodedata.normalize('NFKC', str(r["Asset"])).upper().strip()
+                a_clean = normalize_asset(r["Asset"])
                 d_str = r["Date"].strftime("%d-%m-%Y")
                 key = f"{a_clean}_{d_str}"
                 val = float(r["Prix (EUR)"])
