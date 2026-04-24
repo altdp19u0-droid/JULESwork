@@ -156,114 +156,138 @@ def get_price_eur(asset, date_obj):
     return 0.0
 
 def get_portfolio_snapshot(journal, target_date):
-    """Factual Account-based calculation of VGP."""
-    # 1. Chargement des référentiels
+    """
+    Factual Account-based calculation of VGP.
+    Strictly follows: Starting Balance + Period Entries - Period Exits = Final Balance.
+    """
     pos_labels = load_position_labels()
-    protocol_addrs = set(pos_labels.keys())
-
-    # NEW: Load ALL qualified journals from 2020 to current target year
-    journals_all = []
     target_year = target_date.year
-    for y in range(2020, target_year + 1):
-        path_y = get_qualified_path(y)
-        if os.path.exists(path_y):
-            try:
-                df_y = pd_read_csv_safe(path_y)
-                df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
-                journals_all.append(df_y)
-            except: pass
+    start_of_year = datetime(target_year, 1, 1, tzinfo=target_date.tzinfo)
 
-    if not journals_all: return pd.DataFrame(), 0.0
-
-    full_history = pd.concat(journals_all, ignore_index=True)
-
-    # Filter by date and exclude Spam/Duplicates
-    df = full_history[
-        (full_history["Status"] != "Spam") &
-        (full_history.get("Category", "") != "Doublon à ignorer") &
-        (full_history["Asset"] != "EUR") &
-        (full_history["Date"] <= target_date)
-    ].copy()
-
-    if df.empty: return pd.DataFrame(), 0.0
-
-    # 2. COLLECT ALL ASSETS FOR PRICING
-    all_assets = set(df["Asset"].unique())
-    asset_prices = {a: get_price_eur(a, target_date) for a in all_assets}
-
-    details = []
-
-    # A. Balances of known OWNED ACCOUNTS
-    # These are factual legs from harvested wallets
-    local_bals = df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
-    for _, row in local_bals.iterrows():
-        if abs(row["Amount"]) > 1e-8:
-            p = asset_prices.get(row["Asset"], 0.0)
-            details.append({
-                "Location": f"Account: {row['Account']}",
-                "Asset": row["Asset"],
-                "Quantité": row["Amount"],
-                "Prix (EUR)": p,
-                "Valeur (EUR)": row["Amount"] * p
-            })
-
-    # B. Balances of INTERNAL TRANSFER OFFSET LEGS
-    # These are counterparts of transactions marked 'Transfert Interne'
-    # where the counterparty is NOT a harvested account (Unlabeled accounts, CEX, Apps).
-    owned_accs = set(df["Account"].dropna().unique())
-    mask_internal = df["Category"] == "Transfert Interne"
-    df_internal = df[mask_internal].copy()
-
-    # Normalize counterparty addresses for grouping
-    df_internal["cp_clean"] = df_internal["Counterparty"].apply(resolve_raw_addr)
-
-    # We only care about counterparts that are NOT in our local accounts list
-    # (Because the harvested leg of local-to-local is already in local_bals)
-    df_external_legs = df_internal[~df_internal["cp_clean"].isin(owned_accs)]
-
-    if not df_external_legs.empty:
-        # Factual summation of movements towards these 'virtual' counterparties
-        # LEG 1 (Harvested) says -1 ETH to CP. So LEG 2 (CP) is +1 ETH.
-        # We group by the raw counterparty address
-        ext_bals = df_external_legs.groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
-        for _, row in ext_bals.iterrows():
-            if abs(row["Amount"]) > 1e-8:
-                raw_cp = resolve_raw_addr(row["Counterparty"])
-                # Resolve label if exists (Protocol or platform)
-                label = pos_labels.get(raw_cp, f"External/CEX: {row['Counterparty']}")
-
-                p = asset_prices.get(row["Asset"], 0.0)
-                details.append({
-                    "Location": label,
-                    "Asset": row["Asset"],
-                    "Quantité": -row["Amount"], # Inverted leg
-                    "Prix (EUR)": p,
-                    "Valeur (EUR)": (-row["Amount"]) * p
-                })
-
-    # C. Balances in Manual Positions (Off-chain/CEX entries from app0)
+    # 1. Load History (2020 -> target_date)
+    journals_all = []
     manual_all = []
     for y in range(2020, target_year + 1):
-        p_path = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
-        if os.path.exists(p_path):
+        path_j = get_qualified_path(y)
+        if os.path.exists(path_j):
             try:
-                tmp_m = pd_read_csv_safe(p_path)
+                df_y = pd_read_csv_safe(path_j)
+                df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
+                journals_all.append(df_y[df_y["Date"] <= target_date])
+            except: pass
+
+        path_m = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
+        if os.path.exists(path_m):
+            try:
+                tmp_m = pd_read_csv_safe(path_m)
                 tmp_m["Date"] = pd.to_datetime(tmp_m["Date"], utc=True, errors="coerce")
                 manual_all.append(tmp_m[tmp_m["Date"] <= target_date])
             except: pass
 
-    if manual_all:
-        df_manual_cumul = pd.concat(manual_all)
-        man_bals = df_manual_cumul.groupby(["Account", "Asset"])["Quantité"].sum().reset_index()
-        for _, row in man_bals.iterrows():
-            if abs(row["Quantité"]) > 1e-8:
-                p = get_price_eur(row["Asset"], target_date)
+    if not journals_all and not manual_all: return pd.DataFrame(), 0.0
+
+    df_j = pd.concat(journals_all) if journals_all else pd.DataFrame()
+    df_m = pd.concat(manual_all) if manual_all else pd.DataFrame()
+
+    # Filtering Spam/Duplicates/EUR
+    if not df_j.empty:
+        df_j = df_j[(df_j["Status"] != "Spam") & (df_j.get("Category", "") != "Doublon à ignorer") & (df_j["Asset"] != "EUR")]
+    if not df_m.empty:
+        df_m = df_m[df_m["Asset"] != "EUR"]
+
+    # 2. Pricing
+    all_assets = set()
+    if not df_j.empty: all_assets.update(df_j["Asset"].unique())
+    if not df_m.empty: all_assets.update(df_m["Asset"].unique())
+    asset_prices = {a: get_price_eur(a, target_date) for a in all_assets}
+
+    details = []
+    owned_accs = set(df_j["Account"].dropna().unique()) if not df_j.empty else set()
+
+    # --- A. OWNED ACCOUNTS ---
+    if not df_j.empty:
+        # Breakdown into Reported (pre-year) and Period (YTD)
+        # 1. Reported
+        df_pre = df_j[df_j["Date"] < start_of_year]
+        pre_bals = df_pre.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
+
+        # 2. Period
+        df_ytd = df_j[df_j["Date"] >= start_of_year]
+        ytd_stats = df_ytd.groupby(["Account", "Asset"])["Amount"].agg([
+            ('In', lambda s: s[s > 0].sum()),
+            ('Out', lambda s: s[s < 0].sum())
+        ]).reset_index()
+
+        # Merge for final view
+        merged = pd.merge(pre_bals, ytd_stats, on=["Account", "Asset"], how="outer").fillna(0.0)
+        # Rename 'Amount' to 'Reported' for clarity
+        merged = merged.rename(columns={"Amount": "Reported"})
+        merged["Final_Bal"] = merged["Reported"] + merged["In"] + merged["Out"]
+
+        for _, r in merged.iterrows():
+            if abs(r["Final_Bal"]) > 1e-8:
+                p = asset_prices.get(r["Asset"], 0.0)
                 details.append({
-                    "Location": f"Manual Position: {row['Account']}",
-                    "Asset": row["Asset"],
-                    "Quantité": row["Quantité"],
-                    "Prix (EUR)": p,
-                    "Valeur (EUR)": row["Quantité"] * p
+                    "Location": f"Account: {r['Account']}", "Asset": r["Asset"],
+                    "Report": r["Reported"], "Entrées": r["In"], "Sorties": abs(r["Out"]),
+                    "Solde": r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": r["Final_Bal"] * p
+                })
+
+    # --- B. INTERNAL TRANSFER OFFSET LEGS ---
+    if not df_j.empty:
+        mask_int = (df_j["Category"] == "Transfert Interne")
+        df_ext = df_j[mask_int].copy()
+        df_ext["cp_low"] = df_ext["Counterparty"].apply(resolve_raw_addr)
+        df_ext = df_ext[~df_ext["cp_low"].isin(owned_accs)]
+
+        if not df_ext.empty:
+            df_ext_pre = df_ext[df_ext["Date"] < start_of_year]
+            ext_pre = df_ext_pre.groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
+
+            df_ext_ytd = df_ext[df_ext["Date"] >= start_of_year]
+            ext_ytd = df_ext_ytd.groupby(["Counterparty", "Asset"])["Amount"].agg([
+                ('In', lambda s: s[s < 0].sum()), # negative for us = in for them
+                ('Out', lambda s: s[s > 0].sum()) # positive for us = out for them
+            ]).reset_index()
+
+            merged_ext = pd.merge(ext_pre, ext_ytd, on=["Counterparty", "Asset"], how="outer").fillna(0.0)
+            merged_ext = merged_ext.rename(columns={"Amount": "Reported"})
+            merged_ext["Final_Bal"] = merged_ext["Reported"] + merged_ext["In"] + merged_ext["Out"]
+
+            for _, r in merged_ext.iterrows():
+                if abs(r["Final_Bal"]) > 1e-8:
+                    raw_cp = resolve_raw_addr(r["Counterparty"])
+                    label = pos_labels.get(raw_cp, f"External/CEX: {r['Counterparty']}")
+                    p = asset_prices.get(r["Asset"], 0.0)
+                    # For them, signs are inverted
+                    details.append({
+                        "Location": label, "Asset": r["Asset"],
+                        "Report": -r["Reported"], "Entrées": abs(r["In"]), "Sorties": abs(r["Out"]),
+                        "Solde": -r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": (-r["Final_Bal"]) * p
+                    })
+
+    # --- C. MANUAL POSITIONS ---
+    if not df_m.empty:
+        df_m_pre = df_m[df_m["Date"] < start_of_year]
+        m_pre = df_m_pre.groupby(["Account", "Asset"])["Quantité"].sum().reset_index()
+
+        df_m_ytd = df_m[df_m["Date"] >= start_of_year]
+        m_ytd = df_m_ytd.groupby(["Account", "Asset"])["Quantité"].agg([
+            ('In', lambda s: s[s > 0].sum()),
+            ('Out', lambda s: s[s < 0].sum())
+        ]).reset_index()
+
+        merged_m = pd.merge(m_pre, m_ytd, on=["Account", "Asset"], how="outer").fillna(0.0)
+        merged_m = merged_m.rename(columns={"Quantité": "Reported"})
+        merged_m["Final_Bal"] = merged_m["Reported"] + merged_m["In"] + merged_m["Out"]
+
+        for _, r in merged_m.iterrows():
+            if abs(r["Final_Bal"]) > 1e-8:
+                p = asset_prices.get(r["Asset"], 0.0)
+                details.append({
+                    "Location": f"Manual Position: {r['Account']}", "Asset": r["Asset"],
+                    "Report": r["Reported"], "Entrées": r["In"], "Sorties": abs(r["Out"]),
+                    "Solde": r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": r["Final_Bal"] * p
                 })
 
     full_details = pd.DataFrame(details)
@@ -434,7 +458,10 @@ else:
                     column_config={
                         "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
                         "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
-                        "Quantité": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                        "Solde": st.column_config.NumberColumn("Solde Final", format="%.6f", disabled=True),
+                        "Report": st.column_config.NumberColumn("Report (Initial)", format="%.6f", disabled=True),
+                        "Entrées": st.column_config.NumberColumn("Total Entrées", format="%.6f", disabled=True),
+                        "Sorties": st.column_config.NumberColumn("Total Sorties", format="%.6f", disabled=True),
                         "Asset": st.column_config.TextColumn(disabled=True),
                         "Location": st.column_config.TextColumn(disabled=True),
                     },
@@ -443,11 +470,13 @@ else:
                 )
 
                 # Recalculate Total with manual edits
-                ed_snapshot["Valeur (EUR)"] = ed_snapshot["Quantité"] * ed_snapshot["Prix (EUR)"].fillna(0.0)
+                ed_snapshot["Valeur (EUR)"] = ed_snapshot["Solde"] * ed_snapshot["Prix (EUR)"].fillna(0.0)
                 new_total = ed_snapshot["Valeur (EUR)"].sum()
                 st.metric("VGP Totale Corrigée", f"{new_total:,.2f} €")
 
-                if st.button("💾 Enregistrer ces prix dans le cache"):
+                col_save_audit1, col_save_audit2 = st.columns(2)
+
+                if col_save_audit1.button("💾 Enregistrer ces prix dans le cache"):
                     cache = load_price_cache()
                     d_str = selected_date.strftime("%d-%m-%Y")
                     count = 0
@@ -457,6 +486,14 @@ else:
                         count += 1
                     save_price_cache(cache)
                     st.success(f"{count} prix enregistrés. Relancez le calcul global pour appliquer.")
+
+                if col_save_audit2.button("🛡️ Sanctuariser l'Inventaire (Complet)", use_container_width=True):
+                    y_dir = os.path.join(EXPORT_BASE_DIR, str(selected_date.year))
+                    os.makedirs(y_dir, exist_ok=True)
+                    inv_path = os.path.join(y_dir, f"inventory_{selected_date.year}.csv")
+                    ed_snapshot.to_csv(inv_path, index=False, encoding="utf-8-sig")
+                    st.success(f"Inventaire sanctuarisé dans : {inv_path}")
+                    st.balloons()
 
             else:
                 st.warning("Aucun historique trouvé pour cette date.")

@@ -397,58 +397,72 @@ with tab_accounts:
 
         st.info("Ces positions servent à calculer la Valeur Globale du Portefeuille (VGP).")
 
-        # 2. Factual Balance Calculation (Cumulative from 2020)
+        # 2. Factual Balance Calculation (Report + In - Out = Final)
+        # 1. Load History (2020 -> 31/12/target_year)
         journals_all = []
         for y in range(2020, target_year + 1):
             path_y = get_file_path(y, 'qualified')
             if os.path.exists(path_y):
                 try:
                     df_y = pd_read_csv_safe(path_y)
+                    df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
                     if 'Status' in df_y.columns: df_y = df_y[df_y['Status'] != 'Spam']
                     if 'Category' in df_y.columns: df_y = df_y[df_y['Category'] != 'Doublon à ignorer']
-                    journals_all.append(df_y)
+                    journals_all.append(df_y[df_y["Asset"] != "EUR"])
                 except: pass
 
-        full_history = pd.concat(journals_all) if journals_all else journal
-        full_history = full_history[full_history["Asset"] != "EUR"]
+        df_full = pd.concat(journals_all) if journals_all else journal[journal["Asset"] != "EUR"]
+        owned_accs = set(df_full["Account"].dropna().unique())
+        start_of_period = datetime(target_year, 1, 1, tzinfo=df_full["Date"].iloc[0].tzinfo if not df_full.empty else None)
 
-        owned_accs = set(full_history["Account"].dropna().unique())
+        # --- A. OWNED ACCOUNTS ---
+        df_pre = df_full[df_full["Date"] < start_of_period]
+        pre_bals = df_pre.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
-        # A. Balances of known OWNED ACCOUNTS
-        derived_local = full_history.groupby(['Account', 'Asset']).agg({'Amount': 'sum'}).reset_index()
-        derived_local = derived_local[derived_local['Amount'].abs() > 1e-8]
+        df_period = df_full[df_full["Date"] >= start_of_period]
+        period_stats = df_period.groupby(["Account", "Asset"])["Amount"].agg([
+            ('In', lambda s: s[s > 0].sum()),
+            ('Out', lambda s: s[s < 0].sum())
+        ]).reset_index()
 
-        # Chargement des prix sanctuarisés
+        merged_local = pd.merge(pre_bals, period_stats, on=["Account", "Asset"], how="outer").fillna(0.0)
+        merged_local["Amount"] = merged_local["Amount"] + merged_local["In"] + merged_local["Out"]
+
+        derived_local = merged_local[merged_local["Amount"].abs() > 1e-8].copy()
+        # Price mapping
         eoy_prices = load_eoy_prices(target_year)
-
-        if "Prix (EUR)" not in derived_local.columns:
-            derived_local["Prix (EUR)"] = derived_local["Asset"].map(eoy_prices).fillna(0.0)
+        derived_local["Prix (EUR)"] = derived_local["Asset"].map(eoy_prices).fillna(0.0)
         derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
 
-        # 3. INTERNAL TRANSFER OFFSET LEGS (The "Receivables")
-        # Sum of movements towards non-harvested counterparties categorized as 'Transfert Interne'
-        mask_internal = full_history["Category"] == "Transfert Interne"
-        df_ext_legs = full_history[mask_internal].copy()
-        df_ext_legs["cp_clean"] = df_ext_legs["Counterparty"].apply(resolve_raw_addr)
-        df_ext_legs = df_ext_legs[~df_ext_legs["cp_clean"].isin(owned_accs)]
+        # --- B. INTERNAL TRANSFER OFFSET LEGS (Virtual Accounts) ---
+        mask_int = (df_full["Category"] == "Transfert Interne")
+        df_ext = df_full[mask_int].copy()
+        df_ext["cp_low"] = df_ext["Counterparty"].apply(resolve_raw_addr)
+        df_ext = df_ext[~df_ext["cp_low"].isin(owned_accs)]
+
+        ext_pre = df_ext[df_ext["Date"] < start_of_period].groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
+        ext_period = df_ext[df_ext["Date"] >= start_of_period].groupby(["Counterparty", "Asset"])["Amount"].agg([
+            ('In', lambda s: s[s < 0].sum()),
+            ('Out', lambda s: s[s > 0].sum())
+        ]).reset_index()
+
+        merged_ext = pd.merge(ext_pre, ext_period, on=["Counterparty", "Asset"], how="outer").fillna(0.0)
+        merged_ext["Amount"] = -(merged_ext["Amount"] + merged_ext["In"] + merged_ext["Out"]) # Inverted leg
 
         protocol_rows = []
-        if not df_ext_legs.empty:
-            ext_bals = df_ext_legs.groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
-            for _, r in ext_bals.iterrows():
-                if abs(r["Amount"]) > 1e-8:
-                    raw_cp = resolve_raw_addr(r["Counterparty"])
-                    label = pos_labels.get(raw_cp, f"External/CEX: {r['Counterparty']}")
-                    protocol_rows.append({
-                        "Account": label,
-                        "Asset": r["Asset"],
-                        "Amount": -r["Amount"] # Inverted leg
-                    })
+        for _, r in merged_ext.iterrows():
+            if abs(r["Amount"]) > 1e-8:
+                raw_cp = resolve_raw_addr(r["Counterparty"])
+                label = pos_labels.get(raw_cp, f"External/CEX: {r['Counterparty']}")
+                # Sign inversion for receivables (we report our assets held there)
+                protocol_rows.append({
+                    "Account": label, "Asset": r["Asset"], "Amount": r["Amount"],
+                    "In": abs(r["In"]), "Out": abs(r["Out"]), "Report": -r["Reported"]
+                })
 
         df_protocols = pd.DataFrame(protocol_rows)
         if not df_protocols.empty:
-            if "Prix (EUR)" not in df_protocols.columns:
-                df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(eoy_prices).fillna(0.0)
+            df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(eoy_prices).fillna(0.0)
             df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
 
         # 4. Valorisation & Sanctuarisation
@@ -521,9 +535,12 @@ with tab_accounts:
         ed_local = st.data_editor(
             derived_local,
             column_config={
-                "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €", help="Saisissez ou corrigez le prix manuellement"),
+                "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
                 "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
-                "Amount": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                "Amount": st.column_config.NumberColumn("Solde Final", format="%.6f", disabled=True),
+                "Report": st.column_config.NumberColumn("Report (Initial)", format="%.6f", disabled=True),
+                "In": st.column_config.NumberColumn("Entrées (YTD)", format="%.6f", disabled=True),
+                "Out": st.column_config.NumberColumn("Sorties (YTD)", format="%.6f", disabled=True),
                 "Account": st.column_config.TextColumn(disabled=True),
                 "Asset": st.column_config.TextColumn(disabled=True),
             },
@@ -547,9 +564,12 @@ with tab_accounts:
             ed_proto = st.data_editor(
                 df_protocols,
                 column_config={
-                    "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €", help="Saisissez ou corrigez le prix manuellement"),
+                    "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
                     "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
-                    "Amount": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                    "Amount": st.column_config.NumberColumn("Solde Final", format="%.6f", disabled=True),
+                    "Report": st.column_config.NumberColumn("Report (Initial)", format="%.6f", disabled=True),
+                    "In": st.column_config.NumberColumn("Entrées (YTD)", format="%.6f", disabled=True),
+                    "Out": st.column_config.NumberColumn("Sorties (YTD)", format="%.6f", disabled=True),
                     "Account": st.column_config.TextColumn(disabled=True),
                     "Asset": st.column_config.TextColumn(disabled=True),
                 },
@@ -564,22 +584,32 @@ with tab_accounts:
         st.divider()
         st.write("**Positions déclarées manuellement (Off-chain, CEX, etc.) :**")
         if not pos_df.empty:
-            # Aggregate by Asset and Account to avoid multiple lines for same thing
-            pos_df = pos_df.groupby(["Asset", "Account"]).agg({"Quantité": "sum"}).reset_index()
+            # Mathematical model for manual: Report + In + Out = Final
+            pos_df["Date"] = pd.to_datetime(pos_df["Date"], utc=True, errors="coerce")
+            p_pre = pos_df[pos_df["Date"] < start_of_period].groupby(["Account", "Asset"])["Quantité"].sum().reset_index()
+            p_ytd = pos_df[pos_df["Date"] >= start_of_period].groupby(["Account", "Asset"])["Quantité"].agg([
+                ('In', lambda s: s[s > 0].sum()),
+                ('Out', lambda s: s[s < 0].sum())
+            ]).reset_index()
 
-            for col in pos_df.columns:
-                if pos_df[col].dtype == object:
-                    pos_df[col] = pos_df[col].fillna("").astype(str)
+            merged_p = pd.merge(p_pre, p_ytd, on=["Account", "Asset"], how="outer").fillna(0.0)
+            merged_p["Quantité"] = merged_p["Quantité"] + merged_p["In"] + merged_p["Out"]
 
-            if "Prix (EUR)" not in pos_df.columns:
-                pos_df["Prix (EUR)"] = pos_df["Asset"].map(eoy_prices).fillna(0.0)
+            p_final = merged_p[merged_p["Quantité"].abs() > 1e-8].copy()
+            for col in p_final.columns:
+                if p_final[col].dtype == object: p_final[col] = p_final[col].fillna("").astype(str)
+
+            p_final["Prix (EUR)"] = p_final["Asset"].map(eoy_prices).fillna(0.0)
 
             ed_manual = st.data_editor(
-                pos_df,
+                p_final,
                 column_config={
                     "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
                     "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
-                    "Quantité": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                    "Quantité": st.column_config.NumberColumn("Solde Final", format="%.6f", disabled=True),
+                    "Reported": st.column_config.NumberColumn("Report (Initial)", format="%.6f", disabled=True),
+                    "In": st.column_config.NumberColumn("Entrées (YTD)", format="%.6f", disabled=True),
+                    "Out": st.column_config.NumberColumn("Sorties (YTD)", format="%.6f", disabled=True),
                     "Asset": st.column_config.TextColumn(disabled=True),
                     "Account": st.column_config.TextColumn(disabled=True),
                 },
@@ -788,14 +818,26 @@ with tab_bilan:
         total_acq = st.session_state.get("total_acq_price_shared", 0.0)
         c_inf1.metric("Prix d'achat total (A)", f"{total_acq:,.2f} €", help="Capital investi (A) : Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
 
-        # 2. Calcul de la VGP consolidée à fin de période (Factual Summation)
+        # 2. Calcul de la VGP consolidée à fin de période (Factual Summation via Inventory)
+        inv_path = os.path.join(EXPORT_BASE_DIR, str(target_year), f"inventory_{target_year}.csv")
         vgp_end = 0.0
-        if "local_valued" in st.session_state:
-            vgp_end += st.session_state.local_valued["Valeur (EUR)"].sum()
-        if "proto_valued" in st.session_state:
-            vgp_end += st.session_state.proto_valued["Valeur (EUR)"].sum()
-        if "manual_pos_valued" in st.session_state:
-            vgp_end += st.session_state.manual_pos_valued["Valeur (EUR)"].sum()
+
+        if os.path.exists(inv_path):
+            try:
+                df_inv = pd_read_csv_safe(inv_path)
+                vgp_end = df_inv["Valeur (EUR)"].sum()
+                st.info(f"✅ VGP basée sur l'inventaire sanctuarisé : {inv_path}")
+            except: pass
+
+        if vgp_end == 0:
+            # Fallback to session derivation
+            if "local_valued" in st.session_state:
+                vgp_end += st.session_state.local_valued["Valeur (EUR)"].sum()
+            if "proto_valued" in st.session_state:
+                vgp_end += st.session_state.proto_valued["Valeur (EUR)"].sum()
+            if "manual_pos_valued" in st.session_state:
+                vgp_end += st.session_state.manual_pos_valued["Valeur (EUR)"].sum()
+            st.warning("⚠️ L'inventaire sanctuarisé est manquant. Calcul basé sur les données en session.")
 
         c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme factuelle des soldes par compte.")
 
