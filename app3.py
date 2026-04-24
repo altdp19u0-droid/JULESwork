@@ -428,6 +428,7 @@ with tab_accounts:
 
         # We only keep rows that are NOT neutral for the consolidated balance
         df_wealth = full_history[~full_history.apply(is_neutral, axis=1)]
+        st.session_state.df_wealth_consolidated = df_wealth
 
         # Consolidated balance per account/asset
         derived_local = full_history.groupby(['Account', 'Asset']).agg({'Amount': 'sum'}).reset_index()
@@ -628,10 +629,31 @@ with tab_accounts:
 
                 if frames:
                     full_snap = pd.concat(frames, ignore_index=True)
-                    # Add unique accounts as a separate section if needed or just metadata
-                    # We create a more structured CSV by adding a header for the account list
+                    # Add unique accounts as a separate section
                     acc_df = pd.DataFrame({"Account": accounts, "Type": "Owner_Account_List", "Asset": "", "Amount": 0, "Prix (EUR)": 0, "Valeur (EUR)": 0})
-                    final_export_df = pd.concat([acc_df, pd.DataFrame([{"Account": "---", "Type": "SEPARATOR"}]), full_snap], ignore_index=True)
+
+                    # Wealth Reconciliation Section
+                    wealth_rows = []
+                    if "df_wealth_consolidated" in st.session_state:
+                        df_w = st.session_state.df_wealth_consolidated
+                        eoy_date = datetime(target_year, 12, 31)
+                        eoy_prices = load_eoy_prices(target_year)
+                        for a in df_w["Asset"].unique():
+                            qty = df_w[df_w["Asset"] == a]["Amount"].sum()
+                            if abs(qty) > 1e-8:
+                                p = eoy_prices.get(a) or get_price_eur(a, eoy_date)
+                                wealth_rows.append({"Account": "Wealth_Consolidated", "Type": "Global_Inventory", "Asset": a, "Amount": qty, "Prix (EUR)": p, "Valeur (EUR)": qty * p})
+
+                    wealth_df = pd.DataFrame(wealth_rows)
+
+                    final_export_df = pd.concat([
+                        acc_df,
+                        pd.DataFrame([{"Account": "---", "Type": "SEPARATOR"}]),
+                        full_snap,
+                        pd.DataFrame([{"Account": "---", "Type": "SEPARATOR"}]),
+                        pd.DataFrame([{"Account": "WEALTH_RECONCILIATION_REPORT", "Type": "HEADER"}]),
+                        wealth_df
+                    ], ignore_index=True)
 
                     st.session_state.full_inventory_csv = final_export_df.to_csv(index=False, encoding="utf-8-sig")
                     st.success("Export prêt.")
@@ -790,16 +812,33 @@ with tab_bilan:
         total_acq = st.session_state.get("total_acq_price_shared", 0.0)
         c_inf1.metric("Prix d'achat total (A)", f"{total_acq:,.2f} €", help="Capital investi (A) : Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
 
-        # 2. Calcul de la VGP consolidée à fin de période
+        # 2. Calcul de la VGP consolidée à fin de période (Wealth-Change Method)
+        # To handle internal transfers correctly, we sum non-neutral movements
+        # assets_wealth_bals was defined in tab_accounts logic
+        # We re-derive it here for calculation
         vgp_end = 0.0
-        if "local_valued" in st.session_state:
-            vgp_end += st.session_state.local_valued["Valeur (EUR)"].sum()
-        if "proto_valued" in st.session_state:
-            vgp_end += st.session_state.proto_valued["Valeur (EUR)"].sum()
+
+        # Derived from journals (cumulative)
+        if "df_wealth_consolidated" in st.session_state:
+            df_w = st.session_state.df_wealth_consolidated
+            eoy_date = datetime(target_year, 12, 31)
+            unique_assets = df_w["Asset"].unique()
+            # We use verified prices or cache
+            eoy_prices = load_eoy_prices(target_year)
+
+            for a in unique_assets:
+                qty = df_w[df_w["Asset"] == a]["Amount"].sum()
+                if abs(qty) > 1e-8:
+                    p = eoy_prices.get(a)
+                    if p is None: # Fallback to engine
+                        p = get_price_eur(a, eoy_date)
+                    vgp_end += qty * p
+
+        # Add Manual Positions
         if "manual_pos_valued" in st.session_state:
             vgp_end += st.session_state.manual_pos_valued["Valeur (EUR)"].sum()
 
-        c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme des Wallets + Protocoles + Positions Manuelles.")
+        c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Basée sur la richesse nette (hors transferts internes).")
 
         st.divider()
         st.write("📝 **Montant à reporter dans la case 3AN (ou 3BN si moins-value) :**")

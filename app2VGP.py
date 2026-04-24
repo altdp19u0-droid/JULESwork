@@ -290,10 +290,25 @@ def get_portfolio_snapshot(journal, target_date):
                     "Valeur (EUR)": row["Quantité"] * p
                 })
 
-    # Global VGP for return (Sum of all details)
+    # Global VGP for return (Calculated via Wealth-Change method for accuracy)
+    total_vgp = 0.0
+    for asset, qty in balances.items():
+        total_vgp += qty * asset_prices.get(asset, 0.0)
+
+    # Reconcile Audit View
     full_details = pd.DataFrame(details)
     if not full_details.empty:
-        total_vgp = full_details["Valeur (EUR)"].sum()
+        table_total = full_details["Valeur (EUR)"].sum()
+        gap = total_vgp - table_total
+
+        if abs(gap) > 0.01:
+            full_details = pd.concat([full_details, pd.DataFrame([{
+                "Location": "🛡️ Ajustement (Transferts internes / Écarts)",
+                "Asset": "VARIOUS",
+                "Quantité": 0,
+                "Prix (EUR)": 0,
+                "Valeur (EUR)": gap
+            }])], ignore_index=True)
 
     return full_details, total_vgp
 
