@@ -156,7 +156,7 @@ def get_price_eur(asset, date_obj):
     return 0.0
 
 def get_portfolio_snapshot(journal, target_date):
-    """Calculates consolidated VGP by aggregating all journals since 2020."""
+    """Factual Account-based calculation of VGP."""
     # 1. Chargement des référentiels
     pos_labels = load_position_labels()
     protocol_addrs = set(pos_labels.keys())
@@ -176,30 +176,8 @@ def get_portfolio_snapshot(journal, target_date):
     if not journals_all: return pd.DataFrame(), 0.0
 
     full_history = pd.concat(journals_all, ignore_index=True)
-    my_accounts = set(full_history["Account"].dropna().unique())
 
-    # NEW: Include Manual Positions from all years up to target_date
-    manual_all = []
-    target_year = target_date.year
-    for y in range(2020, target_year + 1):
-        p_path = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
-        if os.path.exists(p_path):
-            try:
-                tmp_m = pd_read_csv_safe(p_path)
-                tmp_m["Date"] = pd.to_datetime(tmp_m["Date"], utc=True, errors="coerce")
-                # Filter by date
-                manual_all.append(tmp_m[tmp_m["Date"] <= target_date])
-            except: pass
-
-    df_manual_cumul = pd.concat(manual_all) if manual_all else pd.DataFrame()
-
-    # Pre-calculate mapping for audit display
-    def get_location(cp_raw):
-        if cp_raw in protocol_addrs:
-            return pos_labels[cp_raw]
-        return "Wallet"
-
-    # 2. Filtrage de base (Exclude Spam and manual duplicates)
+    # Filter by date and exclude Spam/Duplicates
     df = full_history[
         (full_history["Status"] != "Spam") &
         (full_history.get("Category", "") != "Doublon à ignorer") &
@@ -209,106 +187,87 @@ def get_portfolio_snapshot(journal, target_date):
 
     if df.empty: return pd.DataFrame(), 0.0
 
-    # 3. Identification des flux internes (qui ne changent pas la VGP globale)
-    # CRITICAL: Any row categorized as 'Transfert Interne' is neutral by definition,
-    # as its counter-leg exists (or should exist) elsewhere in the consolidated set.
-    def is_vgp_neutral(row):
-        cat = str(row["Category"])
-        if cat == "Transfert Interne":
-            return True
-
-        cp_raw = resolve_raw_addr(row["Counterparty"])
-        # Fallback detection for unlabeled transfers
-        if cp_raw in my_accounts or cp_raw in protocol_addrs:
-            if cat in ["A vérifier", "", "nan"]:
-                return True
-        return False
-
-    df["is_neutral"] = df.apply(is_vgp_neutral, axis=1)
-
-    # On ne garde que ce qui modifie la richesse globale (Wealth-changing events)
-    df_wealth = df[~df["is_neutral"]]
-
-    # Calcul des balances consolidées (Portefeuilles + Protocoles)
-    balances = df_wealth.groupby("Asset")["Amount"].sum()
-    balances = balances[balances.abs() > 1e-8]
-
-    # 5. Detail breakdown for audit (Breakdown by Location)
-    details = []
-    total_vgp = 0.0
-
-    # --- FIX: COLLECT ALL ASSETS FOR PRICING ---
-    # We fetch prices for every asset present in the journal up to this date,
-    # not just the ones in the consolidated balance, to ensure the Audit View
-    # and Wallets show correct values.
+    # 2. COLLECT ALL ASSETS FOR PRICING
     all_assets = set(df["Asset"].unique())
     asset_prices = {a: get_price_eur(a, target_date) for a in all_assets}
 
-    # Breakdown Logic:
-    # A. Balances in Wallets (Account-based)
+    details = []
+
+    # A. Balances of known OWNED ACCOUNTS
+    # These are factual legs from harvested wallets
     local_bals = df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
     for _, row in local_bals.iterrows():
         if abs(row["Amount"]) > 1e-8:
             p = asset_prices.get(row["Asset"], 0.0)
             details.append({
-                "Location": f"Wallet: {row['Account']}",
+                "Location": f"Account: {row['Account']}",
                 "Asset": row["Asset"],
                 "Quantité": row["Amount"],
                 "Prix (EUR)": p,
                 "Valeur (EUR)": row["Amount"] * p
             })
 
-    # B. Balances in Protocols (Label-based)
-    # Note: We filter on the full history for the protocol balance calculation
-    for addr, label in pos_labels.items():
-        mask_prot = df["Counterparty"].fillna("").apply(resolve_raw_addr) == addr
-        if mask_prot.any():
-            prot_bals = df[mask_prot].groupby("Asset")["Amount"].sum().reset_index()
-            for _, row in prot_bals.iterrows():
-                if abs(row["Amount"]) > 1e-8:
-                    p = asset_prices.get(row["Asset"], 0.0)
-                    details.append({
-                        "Location": f"Protocol: {label}",
-                        "Asset": row["Asset"],
-                        "Quantité": -row["Amount"], # Inverted
-                        "Prix (EUR)": p,
-                        "Valeur (EUR)": (-row["Amount"]) * p
-                    })
+    # B. Balances of INTERNAL TRANSFER OFFSET LEGS
+    # These are counterparts of transactions marked 'Transfert Interne'
+    # where the counterparty is NOT a harvested account (Unlabeled accounts, CEX, Apps).
+    owned_accs = set(df["Account"].dropna().unique())
+    mask_internal = df["Category"] == "Transfert Interne"
+    df_internal = df[mask_internal].copy()
 
-    # C. Balances in Manual Positions (Off-chain/CEX)
-    if not df_manual_cumul.empty:
-        # Aggregate by asset
-        man_bals = df_manual_cumul.groupby("Asset")["Quantité"].sum().reset_index()
+    # Normalize counterparty addresses for grouping
+    df_internal["cp_clean"] = df_internal["Counterparty"].apply(resolve_raw_addr)
+
+    # We only care about counterparts that are NOT in our local accounts list
+    # (Because the harvested leg of local-to-local is already in local_bals)
+    df_external_legs = df_internal[~df_internal["cp_clean"].isin(owned_accs)]
+
+    if not df_external_legs.empty:
+        # Factual summation of movements towards these 'virtual' counterparties
+        # LEG 1 (Harvested) says -1 ETH to CP. So LEG 2 (CP) is +1 ETH.
+        # We group by the raw counterparty address
+        ext_bals = df_external_legs.groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
+        for _, row in ext_bals.iterrows():
+            if abs(row["Amount"]) > 1e-8:
+                raw_cp = resolve_raw_addr(row["Counterparty"])
+                # Resolve label if exists (Protocol or platform)
+                label = pos_labels.get(raw_cp, f"External/CEX: {row['Counterparty']}")
+
+                p = asset_prices.get(row["Asset"], 0.0)
+                details.append({
+                    "Location": label,
+                    "Asset": row["Asset"],
+                    "Quantité": -row["Amount"], # Inverted leg
+                    "Prix (EUR)": p,
+                    "Valeur (EUR)": (-row["Amount"]) * p
+                })
+
+    # C. Balances in Manual Positions (Off-chain/CEX entries from app0)
+    manual_all = []
+    for y in range(2020, target_year + 1):
+        p_path = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
+        if os.path.exists(p_path):
+            try:
+                tmp_m = pd_read_csv_safe(p_path)
+                tmp_m["Date"] = pd.to_datetime(tmp_m["Date"], utc=True, errors="coerce")
+                manual_all.append(tmp_m[tmp_m["Date"] <= target_date])
+            except: pass
+
+    if manual_all:
+        df_manual_cumul = pd.concat(manual_all)
+        man_bals = df_manual_cumul.groupby(["Account", "Asset"])["Quantité"].sum().reset_index()
         for _, row in man_bals.iterrows():
             if abs(row["Quantité"]) > 1e-8:
                 p = get_price_eur(row["Asset"], target_date)
                 details.append({
-                    "Location": "Manual (Off-chain/CEX)",
+                    "Location": f"Manual Position: {row['Account']}",
                     "Asset": row["Asset"],
                     "Quantité": row["Quantité"],
                     "Prix (EUR)": p,
                     "Valeur (EUR)": row["Quantité"] * p
                 })
 
-    # Global VGP for return (Calculated via Wealth-Change method for accuracy)
-    total_vgp = 0.0
-    for asset, qty in balances.items():
-        total_vgp += qty * asset_prices.get(asset, 0.0)
-
-    # Reconcile Audit View
     full_details = pd.DataFrame(details)
-    if not full_details.empty:
-        table_total = full_details["Valeur (EUR)"].sum()
-        gap = total_vgp - table_total
-
-        if abs(gap) > 0.01:
-            full_details = pd.concat([full_details, pd.DataFrame([{
-                "Location": "🛡️ Ajustement (Transferts internes / Écarts)",
-                "Asset": "VARIOUS",
-                "Quantité": 0,
-                "Prix (EUR)": 0,
-                "Valeur (EUR)": gap
-            }])], ignore_index=True)
+    total_vgp = full_details["Valeur (EUR)"].sum() if not full_details.empty else 0.0
 
     return full_details, total_vgp
 
@@ -455,6 +414,14 @@ else:
             snapshot_df, total_val = get_portfolio_snapshot(journal, selected_date)
             if not snapshot_df.empty:
                 st.write(f"Composition du portefeuille au **{selected_date}** :")
+
+                # --- NEW: UNLABELED ACCOUNTS ALERT ---
+                unlabeled = snapshot_df[snapshot_df["Location"].str.contains("External/CEX:", na=False)]
+                if not unlabeled.empty:
+                    st.warning(f"🚨 **Alerte :** {len(unlabeled)} comptes identifiés comme 'External/CEX' ont un solde non nul. "
+                               "Ceci indique des transferts internes vers des comptes non récoltés. "
+                               "Vous devriez soit ajouter ces comptes dans 'Mapping des Protocoles' (App 2), "
+                               "soit vérifier vos types de transactions.")
 
                 # Highlight 0 prices
                 zero_prices = snapshot_df[snapshot_df["Prix (EUR)"] == 0]

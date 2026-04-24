@@ -397,40 +397,24 @@ with tab_accounts:
 
         st.info("Ces positions servent à calculer la Valeur Globale du Portefeuille (VGP).")
 
-        # 2. Calcul des soldes Locaux (Wallets)
-        # NEW: Accumulate from full history (journals from all years)
+        # 2. Factual Balance Calculation (Cumulative from 2020)
         journals_all = []
         for y in range(2020, target_year + 1):
             path_y = get_file_path(y, 'qualified')
             if os.path.exists(path_y):
                 try:
                     df_y = pd_read_csv_safe(path_y)
-                    # Filter Spam and Duplicates for accuracy
                     if 'Status' in df_y.columns: df_y = df_y[df_y['Status'] != 'Spam']
                     if 'Category' in df_y.columns: df_y = df_y[df_y['Category'] != 'Doublon à ignorer']
                     journals_all.append(df_y)
                 except: pass
 
         full_history = pd.concat(journals_all) if journals_all else journal
-        # Filter out Fiat legs (EUR) for crypto VGP
         full_history = full_history[full_history["Asset"] != "EUR"]
 
-        # Internal transfer neutralization
-        # We assume any row with 'Transfert Interne' category is neutral
-        # OR if counterparty is one of our accounts.
-        my_accounts = set(full_history['Account'].dropna().unique())
+        owned_accs = set(full_history["Account"].dropna().unique())
 
-        def is_neutral(row):
-            if str(row.get('Category')) == "Transfert Interne": return True
-            cp = resolve_raw_addr(row.get('Counterparty', ""))
-            if cp in my_accounts: return True
-            return False
-
-        # We only keep rows that are NOT neutral for the consolidated balance
-        df_wealth = full_history[~full_history.apply(is_neutral, axis=1)]
-        st.session_state.df_wealth_consolidated = df_wealth
-
-        # Consolidated balance per account/asset
+        # A. Balances of known OWNED ACCOUNTS
         derived_local = full_history.groupby(['Account', 'Asset']).agg({'Amount': 'sum'}).reset_index()
         derived_local = derived_local[derived_local['Amount'].abs() > 1e-8]
 
@@ -441,22 +425,25 @@ with tab_accounts:
             derived_local["Prix (EUR)"] = derived_local["Asset"].map(eoy_prices).fillna(0.0)
         derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
 
-        # 3. Calcul des soldes Protocoles (Mapping Counterparty)
-        # On cherche les flux vers des protocoles qui n'ont pas été retirés
-        # Solde Protocole = Sum(Sent to Protocol) - Sum(Received from Protocol)
-        # NEW: Uses full history to calculate cumulative protocol balances
+        # 3. INTERNAL TRANSFER OFFSET LEGS (The "Receivables")
+        # Sum of movements towards non-harvested counterparties categorized as 'Transfert Interne'
+        mask_internal = full_history["Category"] == "Transfert Interne"
+        df_ext_legs = full_history[mask_internal].copy()
+        df_ext_legs["cp_clean"] = df_ext_legs["Counterparty"].apply(resolve_raw_addr)
+        df_ext_legs = df_ext_legs[~df_ext_legs["cp_clean"].isin(owned_accs)]
+
         protocol_rows = []
-        for addr, label in pos_labels.items():
-            mask_prot = full_history["Counterparty"].fillna("").apply(resolve_raw_addr) == addr
-            if mask_prot.any():
-                df_prot = full_history[mask_prot].groupby("Asset")["Amount"].sum().reset_index()
-                for _, r in df_prot.iterrows():
-                    if abs(r["Amount"]) > 1e-8:
-                        protocol_rows.append({
-                            "Account": label,
-                            "Asset": r["Asset"],
-                            "Amount": -r["Amount"] # Inversion car c'est une créance sur le protocole
-                        })
+        if not df_ext_legs.empty:
+            ext_bals = df_ext_legs.groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
+            for _, r in ext_bals.iterrows():
+                if abs(r["Amount"]) > 1e-8:
+                    raw_cp = resolve_raw_addr(r["Counterparty"])
+                    label = pos_labels.get(raw_cp, f"External/CEX: {r['Counterparty']}")
+                    protocol_rows.append({
+                        "Account": label,
+                        "Asset": r["Asset"],
+                        "Amount": -r["Amount"] # Inverted leg
+                    })
 
         df_protocols = pd.DataFrame(protocol_rows)
         if not df_protocols.empty:
@@ -632,19 +619,8 @@ with tab_accounts:
                     # Add unique accounts as a separate section
                     acc_df = pd.DataFrame({"Account": accounts, "Type": "Owner_Account_List", "Asset": "", "Amount": 0, "Prix (EUR)": 0, "Valeur (EUR)": 0})
 
-                    # Wealth Reconciliation Section
-                    wealth_rows = []
-                    if "df_wealth_consolidated" in st.session_state:
-                        df_w = st.session_state.df_wealth_consolidated
-                        eoy_date = datetime(target_year, 12, 31)
-                        eoy_prices = load_eoy_prices(target_year)
-                        for a in df_w["Asset"].unique():
-                            qty = df_w[df_w["Asset"] == a]["Amount"].sum()
-                            if abs(qty) > 1e-8:
-                                p = eoy_prices.get(a) or get_price_eur(a, eoy_date)
-                                wealth_rows.append({"Account": "Wealth_Consolidated", "Type": "Global_Inventory", "Asset": a, "Amount": qty, "Prix (EUR)": p, "Valeur (EUR)": qty * p})
-
-                    wealth_df = pd.DataFrame(wealth_rows)
+                    # No reconciliation needed in factual mode
+                    wealth_df = pd.DataFrame()
 
                     final_export_df = pd.concat([
                         acc_df,
@@ -812,33 +788,16 @@ with tab_bilan:
         total_acq = st.session_state.get("total_acq_price_shared", 0.0)
         c_inf1.metric("Prix d'achat total (A)", f"{total_acq:,.2f} €", help="Capital investi (A) : Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
 
-        # 2. Calcul de la VGP consolidée à fin de période (Wealth-Change Method)
-        # To handle internal transfers correctly, we sum non-neutral movements
-        # assets_wealth_bals was defined in tab_accounts logic
-        # We re-derive it here for calculation
+        # 2. Calcul de la VGP consolidée à fin de période (Factual Summation)
         vgp_end = 0.0
-
-        # Derived from journals (cumulative)
-        if "df_wealth_consolidated" in st.session_state:
-            df_w = st.session_state.df_wealth_consolidated
-            eoy_date = datetime(target_year, 12, 31)
-            unique_assets = df_w["Asset"].unique()
-            # We use verified prices or cache
-            eoy_prices = load_eoy_prices(target_year)
-
-            for a in unique_assets:
-                qty = df_w[df_w["Asset"] == a]["Amount"].sum()
-                if abs(qty) > 1e-8:
-                    p = eoy_prices.get(a)
-                    if p is None: # Fallback to engine
-                        p = get_price_eur(a, eoy_date)
-                    vgp_end += qty * p
-
-        # Add Manual Positions
+        if "local_valued" in st.session_state:
+            vgp_end += st.session_state.local_valued["Valeur (EUR)"].sum()
+        if "proto_valued" in st.session_state:
+            vgp_end += st.session_state.proto_valued["Valeur (EUR)"].sum()
         if "manual_pos_valued" in st.session_state:
             vgp_end += st.session_state.manual_pos_valued["Valeur (EUR)"].sum()
 
-        c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Basée sur la richesse nette (hors transferts internes).")
+        c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme factuelle des soldes par compte.")
 
         st.divider()
         st.write("📝 **Montant à reporter dans la case 3AN (ou 3BN si moins-value) :**")
