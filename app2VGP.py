@@ -161,6 +161,21 @@ def get_portfolio_snapshot(journal, target_date):
     protocol_addrs = set(pos_labels.keys())
     my_accounts = set(journal["Account"].dropna().unique())
 
+    # NEW: Include Manual Positions from all years up to target_date
+    manual_all = []
+    target_year = target_date.year
+    for y in range(2020, target_year + 1):
+        p_path = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
+        if os.path.exists(p_path):
+            try:
+                tmp_m = pd_read_csv_safe(p_path)
+                tmp_m["Date"] = pd.to_datetime(tmp_m["Date"], utc=True, errors="coerce")
+                # Filter by date
+                manual_all.append(tmp_m[tmp_m["Date"] <= target_date])
+            except: pass
+
+    df_manual_cumul = pd.concat(manual_all) if manual_all else pd.DataFrame()
+
     # Pre-calculate mapping for audit display
     def get_location(cp_raw):
         if cp_raw in protocol_addrs:
@@ -244,11 +259,27 @@ def get_portfolio_snapshot(journal, target_date):
                         "Valeur (EUR)": (-row["Amount"]) * p
                     })
 
-    # Global VGP for return
-    for asset, qty in balances.items():
-        total_vgp += qty * asset_prices.get(asset, 0.0)
+    # C. Balances in Manual Positions (Off-chain/CEX)
+    if not df_manual_cumul.empty:
+        # Aggregate by asset
+        man_bals = df_manual_cumul.groupby("Asset")["Quantité"].sum().reset_index()
+        for _, row in man_bals.iterrows():
+            if abs(row["Quantité"]) > 1e-8:
+                p = get_price_eur(row["Asset"], target_date)
+                details.append({
+                    "Location": "Manual (Off-chain/CEX)",
+                    "Asset": row["Asset"],
+                    "Quantité": row["Quantité"],
+                    "Prix (EUR)": p,
+                    "Valeur (EUR)": row["Quantité"] * p
+                })
 
-    return pd.DataFrame(details), total_vgp
+    # Global VGP for return (Sum of all details)
+    full_details = pd.DataFrame(details)
+    if not full_details.empty:
+        total_vgp = full_details["Valeur (EUR)"].sum()
+
+    return full_details, total_vgp
 
 def is_imposable_robust(val):
     s = str(val).upper().strip()

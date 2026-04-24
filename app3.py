@@ -332,7 +332,17 @@ with tab_accounts:
     accounts = []
     derived_local = pd.DataFrame()
     df_protocols = pd.DataFrame()
-    pos_df = data.get('positions', pd.DataFrame())
+
+    # NEW: Accumulate manual positions from all years
+    manual_all = []
+    for y in range(2020, target_year + 1):
+        p_path = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
+        if os.path.exists(p_path):
+            try:
+                tmp_m = pd_read_csv_safe(p_path)
+                manual_all.append(tmp_m)
+            except: pass
+    pos_df = pd.concat(manual_all) if manual_all else pd.DataFrame()
 
     if not journal.empty:
         accounts = list(journal['Account'].dropna().unique())
@@ -497,6 +507,9 @@ with tab_accounts:
         st.divider()
         st.write("**Positions déclarées manuellement (Off-chain, CEX, etc.) :**")
         if not pos_df.empty:
+            # Aggregate by Asset and Account to avoid multiple lines for same thing
+            pos_df = pos_df.groupby(["Asset", "Account"]).agg({"Quantité": "sum"}).reset_index()
+
             for col in pos_df.columns:
                 if pos_df[col].dtype == object:
                     pos_df[col] = pos_df[col].fillna("").astype(str)
@@ -508,6 +521,7 @@ with tab_accounts:
                 pos_df,
                 column_config={
                     "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
+                    "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
                     "Quantité": st.column_config.NumberColumn(format="%.6f", disabled=True),
                     "Asset": st.column_config.TextColumn(disabled=True),
                     "Account": st.column_config.TextColumn(disabled=True),
@@ -520,6 +534,49 @@ with tab_accounts:
             st.session_state.manual_pos_valued = ed_manual
         else:
             st.info("Aucune position manuelle saisie dans l'App 0.")
+
+        # EXPORT CONSOLIDÉ CSV
+        st.divider()
+        col_ex1, col_ex2 = st.columns(2)
+
+        with col_ex1:
+            if st.button("📥 Préparer l'export consolidé (CSV)", use_container_width=True, key="btn_prepare_export"):
+                frames = []
+                if "local_valued" in st.session_state:
+                    tmp = st.session_state.local_valued.copy()
+                    tmp["Type"] = "Wallet"
+                    frames.append(tmp)
+                if "proto_valued" in st.session_state:
+                    tmp = st.session_state.proto_valued.copy()
+                    tmp["Type"] = "Protocol"
+                    frames.append(tmp)
+                if "manual_pos_valued" in st.session_state:
+                    tmp = st.session_state.manual_pos_valued.copy()
+                    tmp["Type"] = "Manual"
+                    if "Quantité" in tmp.columns:
+                        tmp = tmp.rename(columns={"Quantité": "Amount"})
+                    frames.append(tmp)
+
+                if frames:
+                    full_snap = pd.concat(frames, ignore_index=True)
+                    # Add unique accounts as a separate section if needed or just metadata
+                    # We create a more structured CSV by adding a header for the account list
+                    acc_df = pd.DataFrame({"Account": accounts, "Type": "Owner_Account_List", "Asset": "", "Amount": 0, "Prix (EUR)": 0, "Valeur (EUR)": 0})
+                    final_export_df = pd.concat([acc_df, pd.DataFrame([{"Account": "---", "Type": "SEPARATOR"}]), full_snap], ignore_index=True)
+
+                    st.session_state.full_inventory_csv = final_export_df.to_csv(index=False, encoding="utf-8-sig")
+                    st.success("Export prêt.")
+
+        with col_ex2:
+            if "full_inventory_csv" in st.session_state:
+                st.download_button(
+                    label="💾 Télécharger l'inventaire complet (CSV)",
+                    data=st.session_state.full_inventory_csv,
+                    file_name=f"inventaire_fiscal_complet_{target_year}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="btn_download_export"
+                )
 
 with tab_acq:
     st.subheader("💵 Suivi du Prix d'Acquisition Global")
@@ -562,9 +619,15 @@ with tab_cessions:
             st.write("Pour chaque cession, saisissez la **Valeur Globale du Portefeuille (VGP)** à la date de l'opération.")
 
             # On ajoute des colonnes pour le calcul fiscal
-            # Note: Le prix de cession en EUR doit être vérifié (basé sur Value ($) convertie via BCE ou saisi manuellement)
-            if 'Prix de Cession (EUR)' not in cessions.columns:
-                cessions['Prix de Cession (EUR)'] = 0.0
+            # NEW: Tentative d'initialisation automatique via Value ($) et taux BCE
+            if 'Prix de Cession (EUR)' not in cessions.columns or (cessions['Prix de Cession (EUR)'] == 0).all():
+                def init_pc(row):
+                    val_usd = float(row.get('Value ($)', 0))
+                    if val_usd > 0:
+                        rate = get_fiat_rate("USD", row['Date'])
+                        return val_usd * rate
+                    return 0.0
+                cessions['Prix de Cession (EUR)'] = cessions.apply(init_pc, axis=1)
 
             # Récupération automatique de la VGP calculée dans app2VGP si elle existe
             if 'VGP (EUR)' not in cessions.columns:
