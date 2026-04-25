@@ -923,12 +923,36 @@ with tab_bilan:
                 pdf.ln()
                 pdf.set_font(main_font, '', 10)
                 for _, r in proto_pos.iterrows():
-                    pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"], use_uni), border=1)
-                    pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"], use_uni), border=1)
-                    pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
+                    # Calculer la hauteur nécessaire pour la ligne (basée sur Account)
+                    # On utilise multi_cell en mode calcul si possible, sinon on estime
+                    txt_acc = pdf_safe_str(r["Account"], use_uni)
+
+                    # Approche robuste pour multi-colonne avec renvoi
+                    y_start = pdf.get_y()
+                    x_start = pdf.get_x()
+
+                    if y_start > 180:
+                        pdf.add_page()
+                        y_start = pdf.get_y()
+                        x_start = pdf.get_x()
+                        pdf.set_font(main_font, 'B', 11)
+                        for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
+                        pdf.ln()
+                        y_start = pdf.get_y()
+                        pdf.set_font(main_font, '', 10)
+
+                    # On dessine d'abord la cellule qui peut déborder pour obtenir la hauteur
+                    pdf.multi_cell(w_p[0], 8, txt_acc, border=1)
+                    h_row = pdf.get_y() - y_start
+
+                    # On revient en haut pour dessiner les autres cellules avec la même hauteur
+                    pdf.set_xy(x_start + w_p[0], y_start)
+                    pdf.cell(w_p[1], h_row, pdf_safe_str(r["Asset"], use_uni), border=1)
+                    pdf.cell(w_p[2], h_row, f"{r['Amount']:.6f}", border=1)
                     if has_val:
-                        pdf.cell(w_p[3], 8, f"{r.get('Valeur (EUR)', 0):,.2f} EUR", border=1)
-                    pdf.ln()
+                        pdf.cell(w_p[3], h_row, f"{r.get('Valeur (EUR)', 0):,.2f} EUR", border=1)
+
+                    pdf.set_y(y_start + h_row)
                 pdf.ln(10)
 
             # --- Page 2: Prix d'Acquisition ---
@@ -947,13 +971,63 @@ with tab_bilan:
             for _, r in fiat_df.iterrows():
                 try: ds_f = pd.to_datetime(r["Date"]).strftime("%d/%m/%Y")
                 except: ds_f = "N/A"
-                pdf.cell(w_f[0], 8, ds_f, border=1)
-                pdf.cell(w_f[1], 8, pdf_safe_str(r.get("Account", "Manual"), use_uni)[:30], border=1)
-                pdf.cell(w_f[2], 8, pdf_safe_str(r.get("Asset", "EUR"), use_uni), border=1)
-                pdf.cell(w_f[3], 8, pdf_safe_str(r.get("Type", ""), use_uni), border=1)
-                pdf.cell(w_f[4], 8, f"{r.get('Montant EUR', 0):.2f} EUR", border=1)
-                pdf.cell(w_f[5], 8, f"{r.get('Quantité', 0):.6f}", border=1)
-                pdf.ln()
+
+                # Calcul de la hauteur maximale nécessaire pour la ligne
+                # On vérifie Account et Type qui sont les plus susceptibles de déborder
+                txt_acc = pdf_safe_str(r.get("Account", "Manual"), use_uni)
+                txt_type = pdf_safe_str(r.get("Type", ""), use_uni)
+
+                y_start = pdf.get_y()
+                x_start = pdf.get_x()
+
+                # Gestion du saut de page manuel si la hauteur estimée dépasse la page
+                if y_start > 180: # Marge de sécurité pour le bas de page A4 Paysage
+                    pdf.add_page()
+                    y_start = pdf.get_y()
+                    x_start = pdf.get_x()
+                    # Répéter l'entête si nécessaire (optionnel mais recommandé pour la clarté)
+                    pdf.set_font(main_font, 'B', 10)
+                    for i, c in enumerate(cols_f): pdf.cell(w_f[i], 8, c, border=1, fill=True)
+                    pdf.ln()
+                    y_start = pdf.get_y()
+                    pdf.set_font(main_font, '', 9)
+
+                # On simule ou on trace pour obtenir les hauteurs
+                # Colonne 1: Date (fixe)
+                # Colonne 2: Compte (wrap)
+                pdf.set_xy(x_start + w_f[0], y_start)
+                pdf.multi_cell(w_f[1], 7, txt_acc, border=0) # On trace sans bordure d'abord pour mesurer
+                h_acc = pdf.get_y() - y_start
+
+                # Colonne 4: Type (wrap)
+                pdf.set_xy(x_start + w_f[0] + w_f[1] + w_f[2], y_start)
+                pdf.multi_cell(w_f[3], 7, txt_type, border=0)
+                h_type = pdf.get_y() - y_start
+
+                h_row = max(h_acc, h_type, 8)
+
+                # Maintenant on trace la ligne réelle avec la hauteur unifiée
+                pdf.set_xy(x_start, y_start)
+                pdf.cell(w_f[0], h_row, ds_f, border=1)
+
+                # Compte avec multi_cell et bordure manuelle si nécessaire ou juste multi_cell
+                pdf.set_xy(x_start + w_f[0], y_start)
+                pdf.multi_cell(w_f[1], 7, txt_acc, border=0)
+                # Bordure rectangulaire pour la cellule multi_cell
+                pdf.rect(x_start + w_f[0], y_start, w_f[1], h_row)
+
+                pdf.set_xy(x_start + w_f[0] + w_f[1], y_start)
+                pdf.cell(w_f[2], h_row, pdf_safe_str(r.get("Asset", "EUR"), use_uni), border=1)
+
+                pdf.set_xy(x_start + w_f[0] + w_f[1] + w_f[2], y_start)
+                pdf.multi_cell(w_f[3], 7, txt_type, border=0)
+                pdf.rect(x_start + w_f[0] + w_f[1] + w_f[2], y_start, w_f[3], h_row)
+
+                pdf.set_xy(x_start + w_f[0] + w_f[1] + w_f[2] + w_f[3], y_start)
+                pdf.cell(w_f[4], h_row, f"{r.get('Montant EUR', 0):.2f} EUR", border=1)
+                pdf.cell(w_f[5], h_row, f"{r.get('Quantité', 0):.6f}", border=1)
+
+                pdf.set_y(y_start + h_row)
 
             # --- Page 3: Cessions ---
             pdf.add_page()
