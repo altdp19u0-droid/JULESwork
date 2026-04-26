@@ -322,6 +322,14 @@ with st.sidebar:
             os.remove(PRICE_CACHE_FILE)
             st.success("Cache effacé.")
 
+    st.divider()
+    if st.button("🔄 Forcer la recharge (Disque)", use_container_width=True, help="Relit les journaux qualifiés depuis le disque pour prendre en compte les modifs de l'App 2."):
+        if "journal_active" in st.session_state: del st.session_state.journal_active
+        if "active_path" in st.session_state: del st.session_state.active_path
+        st.cache_data.clear()
+        st.success("Données rechargées.")
+        st.rerun()
+
 # --- Main logic ---
 path = get_qualified_path(target_year)
 
@@ -346,17 +354,6 @@ else:
         else:
             journal[col] = 0.0
 
-    # --- Vérification d'Intégrité (Zéro Fallback) ---
-    mask_cessions_check = (journal["Imposable"].apply(is_imposable_robust) | journal["Category"].fillna("").str.contains("Vente", case=False)) & (journal["Asset"] != "EUR") & (journal["Status"] != "Spam")
-    if mask_cessions_check.any():
-        # On vérifie si des cessions ont une VGP à 0
-        # Maintenant sûr car la colonne est initialisée juste au-dessus
-        missing_vgp_count = len(journal[mask_cessions_check & (journal["VGP (EUR)"] == 0)])
-        if missing_vgp_count > 0:
-            st.error(f"🚨 **Attention :** {missing_vgp_count} cessions n'ont pas encore de VGP calculée ou validée. Les rapports fiscaux seront incomplets.")
-            if st.button("🔍 Résoudre les prix manquants (AppPriceFix)", use_container_width=True):
-                st.info("Basculez sur l'onglet **AppPriceFix** dans le menu principal pour collecter les prix manquants.")
-
     # Construction du masque de détection (Exclude manual duplicates and Spam)
     mask_valid = (journal["Status"] != "Spam") & (journal.get("Category", "") != "Doublon à ignorer")
     mask_imposable = (journal["Imposable"].apply(is_imposable_robust)) & mask_valid if use_imposable_col else pd.Series(False, index=journal.index)
@@ -364,6 +361,15 @@ else:
 
     mask_cessions = (mask_imposable | mask_category) & (journal["Asset"] != "EUR")
     cessions_all = journal[mask_cessions].copy()
+
+    # --- Vérification d'Intégrité (Zéro Fallback) ---
+    if not cessions_all.empty:
+        # On vérifie si des cessions ont une VGP à 0
+        missing_vgp_count = len(cessions_all[cessions_all["VGP (EUR)"] == 0])
+        if missing_vgp_count > 0:
+            st.error(f"🚨 **Attention :** {missing_vgp_count} cessions n'ont pas encore de VGP calculée ou validée. Les rapports fiscaux seront incomplets.")
+            if st.button("🔍 Résoudre les prix manquants (AppPriceFix)", use_container_width=True):
+                st.info("Basculez sur l'onglet **AppPriceFix** dans le menu principal pour collecter les prix manquants.")
 
     if cessions_all.empty:
         st.warning("⚠️ Aucune cession imposable détectée avec les critères actuels.")
@@ -377,12 +383,18 @@ else:
         mask_manquant = (cessions_all["VGP (EUR)"].isna()) | (cessions_all["VGP (EUR)"] == 0)
         nb_manquant = len(cessions_all[mask_manquant])
 
+        # Error check: negative VGP
+        mask_error = cessions_all["VGP (EUR)"] < -1e-8
+        nb_error = len(cessions_all[mask_error])
+
         st.subheader(f"📈 Suivi des VGP ({nb_total} cessions au total)")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         col1.metric("Cessions identifiées", nb_total)
 
         # Real-time counter logic: we use the session state directly for the counter
         col2.metric("VGP à calculer", nb_manquant, delta=-nb_manquant, delta_color="inverse")
+
+        col3.metric("VGP en erreur (Négatives)", nb_error, delta=nb_error, delta_color="normal" if nb_error == 0 else "inverse")
 
         # 2. Boutons d'action
         if nb_manquant > 0:

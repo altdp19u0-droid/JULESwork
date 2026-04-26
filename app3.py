@@ -294,7 +294,19 @@ with st.sidebar:
     abattement = st.number_input("Abattement annuel (EUR)", value=305.0)
 
     st.divider()
-    if st.button("🔄 Recalculer tout", key="btn_recalc_all"):
+    if st.button("🔄 Forcer recharge (Disque)", key="btn_reload_disk", help="Relit les journaux qualifiés depuis le disque."):
+        # Clear specific session states to force reload from CSV
+        keys_to_clear = [
+            "journal_df", "local_valued", "proto_valued", "manual_pos_valued",
+            "bilan_fiscale", "fiscal_pdf_bytes", "full_inventory_csv"
+        ]
+        for k in keys_to_clear:
+            if k in st.session_state: del st.session_state[k]
+        st.cache_data.clear()
+        st.success("Données rechargées.")
+        st.rerun()
+
+    if st.button("🧮 Recalculer tout (Session)", key="btn_recalc_all"):
         st.cache_data.clear()
         st.rerun()
 
