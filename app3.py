@@ -289,6 +289,21 @@ with st.sidebar:
 
     target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, value=datetime.now().year)
 
+    # Year switch detection
+    if "last_target_year" not in st.session_state:
+        st.session_state.last_target_year = target_year
+
+    if target_year != st.session_state.last_target_year:
+        keys_to_clear = [
+            "journal_df", "local_valued", "proto_valued", "manual_pos_valued",
+            "bilan_fiscale", "fiscal_pdf_bytes", "full_inventory_csv"
+        ]
+        for k in keys_to_clear:
+            if k in st.session_state: del st.session_state[k]
+        st.session_state.last_target_year = target_year
+        st.cache_data.clear()
+        st.rerun()
+
     st.divider()
     flat_tax_rate = st.slider("Taux d'imposition (PFU)", 0.0, 1.0, 0.30, 0.01)
     abattement = st.number_input("Abattement annuel (EUR)", value=305.0)
@@ -318,9 +333,10 @@ if 'journal' in data and not data['journal'].empty:
     def is_imp_check(v): return str(v).upper().strip() in ["TRUE", "1", "1.0", "VRAI"]
     mask_cess_check = (j['Imposable'].apply(is_imp_check) | j['Category'].fillna("").str.contains("Vente", case=False)) & (j['Asset'] != 'EUR')
     if mask_cess_check.any() and 'VGP (EUR)' in j.columns:
-        missing_vgp = j[mask_cess_check & (j['VGP (EUR)'].fillna(0) == 0)]
+        # Check for zero or negative VGP
+        missing_vgp = j[mask_cess_check & (j['VGP (EUR)'].fillna(0) <= 0)]
         if not missing_vgp.empty:
-            st.error(f"🚨 **Incohérence Fiscale :** {len(missing_vgp)} cessions ont une VGP à 0.00. Le calcul de la plus-value sera erroné. Veuillez régulariser dans l'**App 2 (VGP)** ou l'**AppPriceFix**.")
+            st.error(f"🚨 **Incohérence Fiscale :** {len(missing_vgp)} cessions ont une VGP nulle ou négative. Le calcul de la plus-value sera erroné ou ignoré. Veuillez régulariser dans l'**App 2 (VGP)** ou l'**AppPriceFix**.")
 
 # --- Logic: Fiscal calculations ---
 def calculate_acquisition_price(year):
@@ -782,7 +798,16 @@ with tab_cessions:
                     vgp = row['VGP (EUR)']
 
                     if vgp > 0:
-                        fraction_acq = temp_acq * (pc / vgp)
+                        # Règle fiscale: L'abattement ne peut pas dépasser le prix de cession
+                        # et le ratio (pc/vgp) doit être plafonné à 1.0 (cas où pc > vgp par erreur de donnée)
+                        ratio = min(1.0, pc / vgp)
+                        if pc > vgp + 0.01:
+                            st.warning(f"⚠️ Donnée suspecte le {row['Date'].date()} : Prix de Cession ({pc:.2f}€) > VGP ({vgp:.2f}€). Ratio plafonné à 100%.")
+
+                        fraction_acq = temp_acq * ratio
+                        # L'abattement ne peut pas non plus dépasser le capital restant
+                        fraction_acq = min(temp_acq, fraction_acq)
+
                         pv = pc - fraction_acq
                         results.append({
                             "Date": row['Date'],
@@ -793,9 +818,9 @@ with tab_cessions:
                             "Plus-Value Brute": pv
                         })
                         # En fiscalité réelle, on soustrait fraction_acq du temp_acq pour la cession suivante
-                        temp_acq -= fraction_acq
+                        temp_acq = max(0.0, temp_acq - fraction_acq)
                     else:
-                        st.error(f"VGP manquante pour la cession du {row['Date']}")
+                        st.error(f"❌ VGP nulle ou négative ({vgp:.2f}€) pour la cession du {row['Date'].date()}. Cette ligne est ignorée.")
 
                 if results:
                     st.session_state.bilan_fiscale = pd.DataFrame(results)

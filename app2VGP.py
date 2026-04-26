@@ -309,6 +309,17 @@ with st.sidebar:
     st.header("⚙️ Paramètres")
     target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, value=datetime.now().year)
 
+    # Year switch detection
+    if "last_vgp_year" not in st.session_state:
+        st.session_state.last_vgp_year = target_year
+
+    if target_year != st.session_state.last_vgp_year:
+        if "journal_active" in st.session_state: del st.session_state.journal_active
+        if "active_path" in st.session_state: del st.session_state.active_path
+        st.session_state.last_vgp_year = target_year
+        st.cache_data.clear()
+        st.rerun()
+
     st.divider()
     st.subheader("🔍 Critères de détection")
     use_imposable_col = st.checkbox("Basé sur 'Imposable'", value=True, help="Détecte les lignes marquées explicitement comme imposables dans l'App 2")
