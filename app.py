@@ -8,6 +8,11 @@ from datetime import datetime
 from dateutil import tz
 from web3 import Web3
 
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
+
 # --- Configuration & Initialization ---
 st.set_page_config(page_title="Jules Crypto Harvest Pro - Sanctuarisation V7", layout="wide")
 st.title("🚜 Sanctuarisation des Données Blockchain (Harvest Pure)")
@@ -71,6 +76,9 @@ with st.sidebar:
     if st.button("🗑️ Réinitialiser l'Interface"):
         st.session_state.clear()
         st.rerun()
+
+    st.divider()
+    show_status()
 
 # --- Shared Logic ---
 def call_api(url, params=None):

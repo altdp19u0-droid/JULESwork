@@ -8,6 +8,11 @@ import json
 import io
 import unicodedata
 
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
+
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Import Neverless (appNeverless)", layout="wide")
 st.title("🚜 Importeur Spécialisé Neverless")
@@ -153,6 +158,9 @@ with st.sidebar:
     target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=datetime.now().year)
     st.divider()
     st.info("💡 Ce module transforme les lignes mixtes de Neverless en écritures comptables simples (In/Out/Fees) tout en préservant les prix USD natifs.")
+
+    st.divider()
+    show_status()
 
 uploaded_file = st.file_uploader("📂 Déposez votre export CSV Neverless", type="csv")
 

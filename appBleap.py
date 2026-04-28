@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 import requests
 from datetime import datetime
+from shared_logic import get_known_accounts
 import time
 import json
 import io
@@ -239,6 +240,8 @@ def process_bleap_csv(df):
 with st.sidebar:
     st.header("⚙️ Paramètres")
     target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=datetime.now().year)
+    st.divider()
+    show_status()
     st.divider()
     st.info("💡 Ce module applique les règles N26 et identifie automatiquement les ventes imposables d'EURA.")
 

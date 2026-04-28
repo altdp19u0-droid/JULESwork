@@ -2,6 +2,7 @@ import os
 import json
 import pandas as pd
 from datetime import datetime
+import streamlit as st
 
 EXPORT_BASE_DIR = "sanctuarisation"
 POSITIONS_FILE = "position_labels.json"
@@ -52,3 +53,19 @@ def get_known_accounts():
     # Clean and sort
     clean_known = sorted([str(x).strip() for x in known if str(x).strip() and str(x).lower() != "nan"])
     return clean_known
+
+if __name__ == "__main__":
+    st.set_page_config(page_title="Jules Crypto - Status Shared Logic", page_icon="⚙️")
+    st.title("⚙️ Module de Logique Partagée")
+    st.success("✅ Le module `shared_logic.py` est opérationnel et chargé correctement.")
+    st.info("Ce fichier est une bibliothèque de fonctions utilisée par les autres applications de la suite. Il ne contient pas d'interface de saisie.")
+
+    st.subheader("📊 Diagnostic des données")
+    if os.path.exists(EXPORT_BASE_DIR):
+        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
+        st.write(f"Dossiers annuels détectés : `{', '.join(years)}`")
+    else:
+        st.warning("⚠️ Dossier `sanctuarisation` non détecté.")
+
+    known_count = len(get_known_accounts())
+    st.write(f"Nombre de comptes connus indexés : `{known_count}`")

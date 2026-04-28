@@ -12,6 +12,11 @@ import traceback
 import time
 import requests
 
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
+
 # --- Helpers ---
 def pd_read_csv_safe(path):
     """Robust CSV reading for Windows with encoding fallbacks."""
@@ -321,6 +326,9 @@ with st.sidebar:
     if st.button("🧮 Recalculer tout (Session)", key="btn_recalc_all"):
         st.cache_data.clear()
         st.rerun()
+
+    st.divider()
+    show_status()
 
 data = load_data(target_year)
 

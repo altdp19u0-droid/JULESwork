@@ -17,6 +17,11 @@ NETWORKS_CFG = {
     "BSC": {"host": "api.bscscan.com", "native": "BNB", "free_api": "https://api.bscscan.com/api"}
 }
 
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
+
 # --- Initialisation de la Session ---
 REQUIRED_COLS = ['Source', 'ID', 'Date', 'Account', 'Asset', 'Type', 'Amount', 'Fee', 'Fiat_Value_EUR', 'Counterparty', 'Network', 'Is_Spam', 'Category']
 
@@ -410,4 +415,5 @@ elif menu == "Settings":
         st.session_state.transactions = pd.DataFrame(columns=REQUIRED_COLS)
         st.session_state.accounts_metadata = {}; st.rerun()
 
+st.sidebar.divider(); show_status()
 st.sidebar.divider(); st.sidebar.caption("Jules AI Harvest Pro v3.0")

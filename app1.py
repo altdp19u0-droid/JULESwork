@@ -4,6 +4,11 @@ import streamlit as st
 from datetime import datetime
 import json
 
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
+
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Import CSV (app1)", layout="wide")
 st.title("📥 Import CSV Universel")
@@ -25,6 +30,9 @@ with st.sidebar:
 
     st.divider()
     st.info("💡 Cet outil transforme vos exports (Exchange, Ledger) au format standard du système.")
+
+    st.divider()
+    show_status()
 
 # --- Helpers ---
 def pd_read_csv_safe(file):

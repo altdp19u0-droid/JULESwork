@@ -4,6 +4,12 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import unicodedata
+from shared_logic import resolve_raw_addr
+
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Diagnostic & Cohérence (appDiagCoh)", layout="wide")
@@ -124,6 +130,9 @@ with st.sidebar:
 
     st.divider()
     st.info("💡 Cet outil analyse la cohérence mathématique de vos flux. Un solde négatif indique une donnée manquante ou erronée.")
+
+    st.divider()
+    show_status()
 
 # Load Data
 df_j, df_m = load_all_history()

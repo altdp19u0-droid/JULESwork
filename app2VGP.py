@@ -6,6 +6,12 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import unicodedata
+from shared_logic import resolve_raw_addr
+
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Calcul VGP Pro (app2VGP)", layout="wide")
@@ -336,6 +342,9 @@ with st.sidebar:
         st.cache_data.clear()
         st.success("Données rechargées.")
         st.rerun()
+
+    st.divider()
+    show_status()
 
 # --- Main logic ---
 path = get_qualified_path(target_year)

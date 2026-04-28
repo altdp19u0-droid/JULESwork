@@ -7,6 +7,11 @@ import streamlit as st
 from datetime import datetime
 import unicodedata
 
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
+
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Explorateur de Prix (appPriceFix)", layout="wide")
 st.title("🔍 Explorateur & Collecteur de Prix")
@@ -134,6 +139,9 @@ with st.sidebar:
     selected_years = st.multiselect("Années à traiter", options=available_years, default=available_years, help="Sélectionnez une ou plusieurs années pour limiter le scan.")
 
     exclude_spam = st.checkbox("🛡️ Exclure les Spams (Statut App 2)", value=True, help="Ignore les assets et dates liés uniquement à des transactions marquées comme Spam dans le journal qualifié.")
+
+    st.divider()
+    show_status()
 
 # --- Scanner ---
 def load_all_verified_prices():

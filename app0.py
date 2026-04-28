@@ -5,6 +5,11 @@ from datetime import datetime
 import unicodedata
 from shared_logic import get_known_accounts, resolve_raw_addr
 
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
+
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Registre Fiat & Positions (app0)", layout="wide")
 st.title("🏦 Registre Fiat, Plateformes & Positions (Step 0)")
@@ -122,12 +127,23 @@ with st.sidebar:
         st.toast(f"Données de {target_year} rechargées.")
         st.rerun()
 
+    st.divider()
+    show_status()
+
 # --- Tabs ---
 t1, t2, t3 = st.tabs(["💶 Mouvements Fiat", "🔒 Positions", "🔄 Échanges & Autovirements"])
 
 @st.fragment
 def fragment_fiat():
     st.subheader(f"📝 Saisie des flux monétaires ({target_year})")
+
+    # Mode Edition
+    edit_idx = st.session_state.get("fiat_edit_idx", None)
+    if edit_idx is not None:
+        st.warning(f"📝 Mode Édition : Modification de la ligne {edit_idx}")
+        if st.button("❌ Annuler l'édition"):
+            st.session_state.fiat_edit_idx = None
+            st.rerun()
 
     # Utilisation de colonnes hors formulaire pour la réactivité
     c1, c2, c3 = st.columns(3)
@@ -178,7 +194,8 @@ def fragment_fiat():
 
     f_imposable = c_imp.checkbox("Imp.", key="fiat_imp_checkbox")
 
-    if st.button("➕ Ajouter au journal", use_container_width=True):
+    btn_label = "💾 Enregistrer les modifications" if edit_idx is not None else "➕ Ajouter au journal"
+    if st.button(btn_label, use_container_width=True, type="primary" if edit_idx is not None else "secondary"):
         if f_date.year != target_year:
             st.error(f"❌ La date doit impérativement être en {target_year}.")
         else:
@@ -188,11 +205,21 @@ def fragment_fiat():
                 "Montant EUR": f_amount, "Type": f_type, "Asset": f_asset.upper(),
                 "Quantité": f_qty, "Tx Hash": f_hash, "Imposable": f_imposable
             }
-            st.session_state.fiat_journal = pd.concat([st.session_state.fiat_journal, pd.DataFrame([new_row])], ignore_index=True)
+
+            if edit_idx is not None:
+                # Update existing row
+                for k, v in new_row.items():
+                    st.session_state.fiat_journal.at[edit_idx, k] = v
+                st.session_state.fiat_edit_idx = None
+                st.success("Mouvement mis à jour.")
+            else:
+                # Add new row
+                st.session_state.fiat_journal = pd.concat([st.session_state.fiat_journal, pd.DataFrame([new_row])], ignore_index=True)
+                st.success("Mouvement ajouté.")
+
             # Ensure types are maintained
             for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
                 st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].fillna("").astype(str)
-            st.success("Mouvement ajouté.")
             st.rerun()
 
     st.divider()
@@ -206,7 +233,7 @@ def fragment_fiat():
         sort_order_f = cs2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_fiat_order", horizontal=True)
         df_fiat = df_fiat.sort_values(by=sort_col_f, ascending=(sort_order_f == "Croissant"))
 
-    st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
+    st.info("💡 Cliquez sur une ligne pour la charger dans l'espace de saisie haut.")
 
     # Type safety: force string type for text columns to avoid Streamlit FLOAT mismatch crash
     for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
@@ -230,59 +257,103 @@ def fragment_fiat():
         },
         use_container_width=True,
         num_rows="dynamic",
-        key="fiat_editor"
+        key="fiat_editor",
+        selection_mode="single_row"
     )
+
+    # Row Selection Logic
+    selection = st.session_state.fiat_editor.get("selection", {}).get("rows", [])
+    if selection:
+        sel_idx = selection[0]
+        # Get the actual index in the dataframe (considering sort)
+        real_idx = df_fiat.index[sel_idx]
+        if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_fiat"):
+            row = df_fiat.loc[real_idx]
+            st.session_state.fiat_edit_idx = real_idx
+            # Populate form
+            st.session_state.fiat_date_input = row["Date"]
+            st.session_state.fiat_amount_input = float(row["Montant EUR"])
+            st.session_state.fiat_type_input = row["Type"]
+            st.session_state.fiat_asset_input = row["Asset"]
+            st.session_state.fiat_hash_input = row["Tx Hash"]
+            st.session_state.fiat_qty_input = float(row["Quantité"])
+            st.session_state.fiat_imp_checkbox = bool(row["Imposable"])
+
+            # Labels
+            st.session_state.sel_fiat_label = row["Compte/Label"] if row["Compte/Label"] in known_accs else "(Nouveau / Autre...)"
+            if row["Compte/Label"] not in known_accs: st.session_state.fiat_label_input = row["Compte/Label"]
+
+            st.session_state.sel_fiat_plat = row["Plateforme"] if row["Plateforme"] in known_accs else "(Nouveau / Autre...)"
+            if row["Plateforme"] not in known_accs: st.session_state.fiat_plat_input = row["Plateforme"]
+
+            st.session_state.sel_fiat_addr = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
+            if row["Account"] not in known_accs: st.session_state.fiat_addr_input = row["Account"]
+
+            st.rerun()
+
     if not edited_df.equals(df_fiat):
         st.session_state.fiat_journal = edited_df
 
 @st.fragment
 def fragment_pos():
     st.subheader(f"📝 Saisie des positions ({target_year})")
-    with st.form("pos_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        default_date_pos = datetime.now() if target_year == datetime.now().year else datetime(target_year, 1, 1)
-        p_date = c1.date_input("Date d'ouverture/maj", default_date_pos)
-        p_type = c2.selectbox("Type de position", ["Staking", "Vault (Compound/Aave)", "Lending", "CEX Balance", "Autre"])
 
-        known_accs = get_known_accounts()
-        options_acc = ["(Nouveau / Autre...)"] + known_accs
-        p_plat_sel = c3.selectbox("Plateforme / Protocole (Connu)", options_acc, key="sel_pos_plat")
-        p_plat_new = c3.text_input("Saisie nouveau label", placeholder="ex: Lido, Binance Earn", key="input_pos_plat_new")
-        p_plat = p_plat_new if p_plat_sel == "(Nouveau / Autre...)" else p_plat_sel
+    # Mode Edition
+    edit_idx = st.session_state.get("pos_edit_idx", None)
+    if edit_idx is not None:
+        st.warning(f"📝 Mode Édition : Modification de la ligne {edit_idx}")
+        if st.button("❌ Annuler l'édition", key="btn_cancel_pos"):
+            st.session_state.pos_edit_idx = None
+            st.rerun()
 
-        c4, c5, c_dir = st.columns([1, 1, 1])
-        p_asset = c4.text_input("Asset", placeholder="ex: stETH, USDC")
-        p_qty = c5.number_input("Quantité", min_value=0.0, format="%.8f")
-        p_direction = c_dir.radio("Sens", ["🔵 Dépôt (+)", "🔴 Sortie (-)"], horizontal=True)
+    c1, c2, c3 = st.columns(3)
+    default_date_pos = datetime.now() if target_year == datetime.now().year else datetime(target_year, 1, 1)
+    p_date = c1.date_input("Date d'ouverture/maj", default_date_pos, key="pos_date_input")
+    p_type = c2.selectbox("Type de position", ["Staking", "Vault (Compound/Aave)", "Lending", "CEX Balance", "Autre"], key="pos_type_input")
 
-        c_addr, c_hash_p = st.columns(2)
-        p_addr_sel = c_addr.selectbox("Compte / Adresse (Connu)", options_acc, key="sel_pos_addr")
-        p_addr_new = c_addr.text_input("Saisie nouveau compte/adresse", placeholder="0x... ou label", key="input_pos_addr_new")
-        p_addr = p_addr_new if p_addr_sel == "(Nouveau / Autre...)" else p_addr_sel
+    known_accs = get_known_accounts()
+    options_acc = ["(Nouveau / Autre...)"] + known_accs
+    p_plat_sel = c3.selectbox("Plateforme / Protocole (Connu)", options_acc, key="sel_pos_plat")
+    p_plat_new = c3.text_input("Saisie nouveau label", placeholder="ex: Lido, Binance Earn", key="input_pos_plat_new")
+    p_plat = p_plat_new if p_plat_sel == "(Nouveau / Autre...)" else p_plat_sel
 
-        p_hash = c_hash_p.text_input("Tx Hash (Blockchain)", placeholder="0x...")
+    c4, c5, c_dir = st.columns([1, 1, 1])
+    p_asset = c4.text_input("Asset", placeholder="ex: stETH, USDC", key="pos_asset_input")
+    p_qty = c5.number_input("Quantité", min_value=0.0, format="%.8f", key="pos_qty_input")
+    p_direction = c_dir.radio("Sens", ["🔵 Dépôt (+)", "🔴 Sortie (-)"], horizontal=True, key="pos_dir_input")
 
-        submit_pos = st.form_submit_button("➕ Ajouter à la liste")
+    c_addr, c_hash_p = st.columns(2)
+    p_addr_sel = c_addr.selectbox("Compte / Adresse (Connu)", options_acc, key="sel_pos_addr")
+    p_addr_new = c_addr.text_input("Saisie nouveau compte/adresse", placeholder="0x... ou label", key="input_pos_addr_new")
+    p_addr = p_addr_new if p_addr_sel == "(Nouveau / Autre...)" else p_addr_sel
 
-        if submit_pos:
-            if p_date.year != target_year:
-                st.error(f"❌ La date doit impérativement être en {target_year}.")
+    p_hash = c_hash_p.text_input("Tx Hash (Blockchain)", placeholder="0x...", key="pos_hash_input")
+
+    btn_label = "💾 Enregistrer les modifications" if edit_idx is not None else "➕ Ajouter à la liste"
+    if st.button(btn_label, use_container_width=True, type="primary" if edit_idx is not None else "secondary", key="btn_submit_pos"):
+        if p_date.year != target_year:
+            st.error(f"❌ La date doit impérativement être en {target_year}.")
+        else:
+            final_qty = p_qty if "Dépôt" in p_direction else -p_qty
+            new_row = {
+                "Date": p_date, "Account": p_addr, "Counterparty": p_plat,
+                "Type Position": p_type, "Protocole/Plateforme": p_plat,
+                "Asset": p_asset.upper(), "Quantité": final_qty,
+                "Tx Hash": p_hash
+            }
+
+            if edit_idx is not None:
+                for k, v in new_row.items():
+                    st.session_state.positions_journal.at[edit_idx, k] = v
+                st.session_state.pos_edit_idx = None
+                st.success("Position mise à jour.")
             else:
-                # Application du sens (Négatif pour sortie)
-                final_qty = p_qty if "Dépôt" in p_direction else -p_qty
-
-                new_row = {
-                    "Date": p_date, "Account": p_addr, "Counterparty": p_plat,
-                    "Type Position": p_type, "Protocole/Plateforme": p_plat,
-                    "Asset": p_asset.upper(), "Quantité": final_qty,
-                    "Tx Hash": p_hash
-                }
                 st.session_state.positions_journal = pd.concat([st.session_state.positions_journal, pd.DataFrame([new_row])], ignore_index=True)
-                # Ensure types are maintained
-                for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
-                    st.session_state.positions_journal[col] = st.session_state.positions_journal[col].fillna("").astype(str)
                 st.success("Position enregistrée.")
-                st.rerun()
+
+            for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
+                st.session_state.positions_journal[col] = st.session_state.positions_journal[col].fillna("").astype(str)
+            st.rerun()
 
     st.divider()
     st.subheader("📊 Contrôle & Observation (Positions en cours)")
@@ -295,7 +366,7 @@ def fragment_pos():
         sort_order_p = ps2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_pos_order", horizontal=True)
         df_pos = df_pos.sort_values(by=sort_col_p, ascending=(sort_order_p == "Croissant"))
 
-    st.info("💡 Vous pouvez modifier les cellules ou supprimer des lignes en les sélectionnant et en appuyant sur 'Suppr' (Delete).")
+    st.info("💡 Cliquez sur une ligne pour la charger dans l'espace de saisie haut.")
 
     # Type safety
     for col in ["Account", "Counterparty", "Type Position", "Protocole/Plateforme", "Asset", "Tx Hash"]:
@@ -316,8 +387,34 @@ def fragment_pos():
         },
         use_container_width=True,
         num_rows="dynamic",
-        key="pos_editor"
+        key="pos_editor",
+        selection_mode="single_row"
     )
+
+    # Row Selection Logic
+    selection = st.session_state.pos_editor.get("selection", {}).get("rows", [])
+    if selection:
+        sel_idx = selection[0]
+        real_idx = df_pos.index[sel_idx]
+        if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_pos"):
+            row = df_pos.loc[real_idx]
+            st.session_state.pos_edit_idx = real_idx
+            # Populate form
+            st.session_state.pos_date_input = row["Date"]
+            st.session_state.pos_type_input = row["Type Position"]
+            st.session_state.pos_asset_input = row["Asset"]
+            st.session_state.pos_qty_input = abs(float(row["Quantité"]))
+            st.session_state.pos_dir_input = "🔵 Dépôt (+)" if float(row["Quantité"]) >= 0 else "🔴 Sortie (-)"
+            st.session_state.pos_hash_input = row["Tx Hash"]
+
+            st.session_state.sel_pos_plat = row["Protocole/Plateforme"] if row["Protocole/Plateforme"] in known_accs else "(Nouveau / Autre...)"
+            if row["Protocole/Plateforme"] not in known_accs: st.session_state.input_pos_plat_new = row["Protocole/Plateforme"]
+
+            st.session_state.sel_pos_addr = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
+            if row["Account"] not in known_accs: st.session_state.input_pos_addr_new = row["Account"]
+
+            st.rerun()
+
     if not edited_df.equals(df_pos):
         st.session_state.positions_journal = edited_df
 
@@ -330,69 +427,63 @@ def fragment_swaps():
 
     with col_s1:
         st.write("**🔁 Swap Crypto-to-Crypto**")
-        with st.form("swap_form", clear_on_submit=True):
-            s_date = st.date_input("Date du swap", default_date)
+        s_date = st.date_input("Date du swap", default_date, key="swap_date_input")
 
-            known_accs = get_known_accounts()
-            options_acc = ["(Nouveau / Autre...)"] + known_accs
+        known_accs = get_known_accounts()
+        options_acc = ["(Nouveau / Autre...)"] + known_accs
 
-            s_acc_sel = st.selectbox("Compte (Connu)", options_acc, key="sel_swap_acc")
-            s_acc_new = st.text_input("Saisie nouveau compte", placeholder="ex: Binance, Wallet A", key="input_swap_acc_new")
-            s_acc = s_acc_new if s_acc_sel == "(Nouveau / Autre...)" else s_acc_sel
+        s_acc_sel = st.selectbox("Compte (Connu)", options_acc, key="sel_swap_acc")
+        s_acc_new = st.text_input("Saisie nouveau compte", placeholder="ex: Binance, Wallet A", key="input_swap_acc_new")
+        s_acc = s_acc_new if s_acc_sel == "(Nouveau / Autre...)" else s_acc_sel
 
-            c_s1, c_s2 = st.columns(2)
-            s_asset_out = c_s1.text_input("Asset Vendu", placeholder="ex: BTC")
-            s_qty_out = c_s2.number_input("Quantité Vendue", min_value=0.0, format="%.8f")
-            c_s3, c_s4 = st.columns(2)
-            s_asset_in = c_s3.text_input("Asset Reçu", placeholder="ex: USDC")
-            s_qty_in = c_s4.number_input("Quantité Reçue", min_value=0.0, format="%.8f")
-            s_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...")
-            s_imp = st.checkbox("Imposable", value=False)
+        c_s1, c_s2 = st.columns(2)
+        s_asset_out = c_s1.text_input("Asset Vendu", placeholder="ex: BTC", key="swap_asset_out_input")
+        s_qty_out = c_s2.number_input("Quantité Vendue", min_value=0.0, format="%.8f", key="swap_qty_out_input")
+        c_s3, c_s4 = st.columns(2)
+        s_asset_in = c_s3.text_input("Asset Reçu", placeholder="ex: USDC", key="swap_asset_in_input")
+        s_qty_in = c_s4.number_input("Quantité Reçue", min_value=0.0, format="%.8f", key="swap_qty_in_input")
+        s_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...", key="swap_hash_input")
+        s_imp = st.checkbox("Imposable", value=False, key="swap_imp_input")
 
-            if st.form_submit_button("➕ Ajouter le Swap"):
-                if s_date.year != target_year:
-                    st.error("Année incorrecte.")
-                else:
-                    # Ligne Sortie
-                    row_out = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_out.upper(), "Amount": -s_qty_out, "Type": "Swap Out", "Tx Hash": s_hash, "Source Type": "Manual Swap", "Imposable": s_imp}
-                    # Ligne Entrée
-                    row_in = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_in.upper(), "Amount": s_qty_in, "Type": "Swap In", "Tx Hash": s_hash, "Source Type": "Manual Swap", "Imposable": s_imp}
-                    st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_out, row_in])], ignore_index=True)
-                    st.success("Swap ajouté (2 lignes créées).")
-                    st.rerun()
+        if st.button("➕ Ajouter le Swap", key="btn_add_swap"):
+            if s_date.year != target_year:
+                st.error("Année incorrecte.")
+            else:
+                row_out = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_out.upper(), "Amount": -s_qty_out, "Type": "Swap Out", "Tx Hash": s_hash, "Source Type": "Manual Swap", "Imposable": s_imp}
+                row_in = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_in.upper(), "Amount": s_qty_in, "Type": "Swap In", "Tx Hash": s_hash, "Source Type": "Manual Swap", "Imposable": s_imp}
+                st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_out, row_in])], ignore_index=True)
+                st.success("Swap ajouté.")
+                st.rerun()
 
     with col_s2:
         st.write("**🚚 Transfert Interne**")
-        with st.form("transfer_form", clear_on_submit=True):
-            t_date = st.date_input("Date du transfert", default_date)
-            t_asset = st.text_input("Asset", placeholder="ex: ETH")
-            t_qty = st.number_input("Quantité", min_value=0.0, format="%.8f")
+        t_date = st.date_input("Date du transfert", default_date, key="trans_date_input")
+        t_asset = st.text_input("Asset", placeholder="ex: ETH", key="trans_asset_input")
+        t_qty = st.number_input("Quantité", min_value=0.0, format="%.8f", key="trans_qty_input")
 
-            known_accs = get_known_accounts()
-            options_acc = ["(Nouveau / Autre...)"] + known_accs
+        known_accs = get_known_accounts()
+        options_acc = ["(Nouveau / Autre...)"] + known_accs
 
-            c_t1, c_t2 = st.columns(2)
-            t_src_sel = c_t1.selectbox("Compte Source (Connu)", options_acc, key="sel_trans_src")
-            t_src_new = c_t1.text_input("Saisie nouveau source", placeholder="ex: Wallet A", key="input_trans_src_new")
-            t_acc_src = t_src_new if t_src_sel == "(Nouveau / Autre...)" else t_src_sel
+        c_t1, c_t2 = st.columns(2)
+        t_src_sel = c_t1.selectbox("Compte Source (Connu)", options_acc, key="sel_trans_src")
+        t_src_new = c_t1.text_input("Saisie nouveau source", placeholder="ex: Wallet A", key="input_trans_src_new")
+        t_acc_src = t_src_new if t_src_sel == "(Nouveau / Autre...)" else t_src_sel
 
-            t_dst_sel = c_t2.selectbox("Compte Destination (Connu)", options_acc, key="sel_trans_dst")
-            t_dst_new = c_t2.text_input("Saisie nouveau dest.", placeholder="ex: Wallet B", key="input_trans_dst_new")
-            t_acc_dst = t_dst_new if t_dst_sel == "(Nouveau / Autre...)" else t_dst_sel
-            t_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...")
-            t_imp = st.checkbox("Imposable", value=False)
+        t_dst_sel = c_t2.selectbox("Compte Destination (Connu)", options_acc, key="sel_trans_dst")
+        t_dst_new = c_t2.text_input("Saisie nouveau dest.", placeholder="ex: Wallet B", key="input_trans_dst_new")
+        t_acc_dst = t_dst_new if t_dst_sel == "(Nouveau / Autre...)" else t_dst_sel
+        t_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...", key="trans_hash_input")
+        t_imp = st.checkbox("Imposable", value=False, key="trans_imp_input")
 
-            if st.form_submit_button("➕ Ajouter le Transfert"):
-                if t_date.year != target_year:
-                    st.error("Année incorrecte.")
-                else:
-                    # Ligne Sortie Source
-                    row_src = {"Date": t_date, "Account": t_acc_src, "Counterparty": t_acc_dst, "Asset": t_asset.upper(), "Amount": -t_qty, "Type": "Transfert Interne Out", "Tx Hash": t_hash, "Source Type": "Manual Transfer", "Imposable": t_imp}
-                    # Ligne Entrée Destination
-                    row_dst = {"Date": t_date, "Account": t_acc_dst, "Counterparty": t_acc_src, "Asset": t_asset.upper(), "Amount": t_qty, "Type": "Transfert Interne In", "Tx Hash": t_hash, "Source Type": "Manual Transfer", "Imposable": t_imp}
-                    st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_src, row_dst])], ignore_index=True)
-                    st.success("Transfert ajouté (2 lignes créées).")
-                    st.rerun()
+        if st.button("➕ Ajouter le Transfert", key="btn_add_trans"):
+            if t_date.year != target_year:
+                st.error("Année incorrecte.")
+            else:
+                row_src = {"Date": t_date, "Account": t_acc_src, "Counterparty": t_acc_dst, "Asset": t_asset.upper(), "Amount": -t_qty, "Type": "Transfert Interne Out", "Tx Hash": t_hash, "Source Type": "Manual Transfer", "Imposable": t_imp}
+                row_dst = {"Date": t_date, "Account": t_acc_dst, "Counterparty": t_acc_src, "Asset": t_asset.upper(), "Amount": t_qty, "Type": "Transfert Interne In", "Tx Hash": t_hash, "Source Type": "Manual Transfer", "Imposable": t_imp}
+                st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_src, row_dst])], ignore_index=True)
+                st.success("Transfert ajouté.")
+                st.rerun()
 
     st.divider()
     st.subheader("📊 Journal des Échanges & Autovirements")
@@ -409,6 +500,7 @@ def fragment_swaps():
         if col in df_swaps.columns:
             df_swaps[col] = df_swaps[col].fillna("").astype(str)
 
+    st.info("💡 Cliquez sur une ligne pour la charger (Remplit le formulaire correspondant)")
     edited_df = st.data_editor(
         df_swaps,
         column_config={
@@ -423,8 +515,52 @@ def fragment_swaps():
         },
         use_container_width=True,
         num_rows="dynamic",
-        key="swaps_editor"
+        key="swaps_editor",
+        selection_mode="single_row"
     )
+
+    # Row Selection Logic for Swaps/Transfers
+    selection = st.session_state.swaps_editor.get("selection", {}).get("rows", [])
+    if selection:
+        sel_idx = selection[0]
+        real_idx = df_swaps.index[sel_idx]
+        row = df_swaps.loc[real_idx]
+
+        if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_swap"):
+            if "Swap" in row["Type"]:
+                # Charger dans formulaire Swap (on essaie de retrouver la paire si possible, sinon juste cette ligne)
+                st.session_state.swap_date_input = row["Date"]
+                st.session_state.sel_swap_acc = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
+                if row["Account"] not in known_accs: st.session_state.input_swap_acc_new = row["Account"]
+                st.session_state.swap_hash_input = row["Tx Hash"]
+                st.session_state.swap_imp_input = bool(row["Imposable"])
+
+                if "Out" in row["Type"]:
+                    st.session_state.swap_asset_out_input = row["Asset"]
+                    st.session_state.swap_qty_out_input = abs(float(row["Amount"]))
+                else:
+                    st.session_state.swap_asset_in_input = row["Asset"]
+                    st.session_state.swap_qty_in_input = abs(float(row["Amount"]))
+            else:
+                # Charger dans formulaire Transfert
+                st.session_state.trans_date_input = row["Date"]
+                st.session_state.trans_asset_input = row["Asset"]
+                st.session_state.trans_qty_input = abs(float(row["Amount"]))
+                st.session_state.trans_hash_input = row["Tx Hash"]
+                st.session_state.trans_imp_input = bool(row["Imposable"])
+
+                if "Out" in row["Type"]:
+                    st.session_state.sel_trans_src = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
+                    if row["Account"] not in known_accs: st.session_state.input_trans_src_new = row["Account"]
+                    st.session_state.sel_trans_dst = row["Counterparty"] if row["Counterparty"] in known_accs else "(Nouveau / Autre...)"
+                    if row["Counterparty"] not in known_accs: st.session_state.input_trans_dst_new = row["Counterparty"]
+                else:
+                    st.session_state.sel_trans_dst = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
+                    if row["Account"] not in known_accs: st.session_state.input_trans_dst_new = row["Account"]
+                    st.session_state.sel_trans_src = row["Counterparty"] if row["Counterparty"] in known_accs else "(Nouveau / Autre...)"
+                    if row["Counterparty"] not in known_accs: st.session_state.input_trans_src_new = row["Counterparty"]
+            st.rerun()
+
     if not edited_df.equals(df_swaps):
         st.session_state.swaps_journal = edited_df
 

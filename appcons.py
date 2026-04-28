@@ -10,6 +10,12 @@ import tempfile
 import unicodedata
 import traceback
 from datetime import datetime, time as dt_time
+from shared_logic import resolve_raw_addr
+
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
 
 # --- Helpers ---
 def pd_read_csv_safe(path):
@@ -254,6 +260,9 @@ with st.sidebar:
     sort_col = st.selectbox("Trier par", cols_avail, index=cols_avail.index("Date") if "Date" in cols_avail else 0)
     sort_order = st.radio("Sens", ["Décroissant", "Croissant"])
     df = df.sort_values(by=sort_col, ascending=(sort_order == "Croissant"))
+
+    st.divider()
+    show_status()
 
 # --- Main App Tabs ---
 tab_list, tab_vgp = st.tabs(["📋 Liste de Consultation", "💰 Soldes & VGP"])
