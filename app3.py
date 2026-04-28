@@ -867,14 +867,21 @@ with tab_bilan:
         c_inf1.metric("Prix d'achat total (A)", f"{total_acq:,.2f} €", help="Capital investi (A) : Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
 
         # 2. Calcul de la VGP consolidée à fin de période (Factual Summation via Inventory)
-        inv_path = os.path.join(EXPORT_BASE_DIR, str(target_year), f"inventory_{target_year}.csv")
+        # Priorité à inventory_EOY_YYYY.csv, fallback sur inventory_YYYY.csv
+        y_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
+        eoy_path = os.path.join(y_dir, f"inventory_EOY_{target_year}.csv")
+        legacy_path = os.path.join(y_dir, f"inventory_{target_year}.csv")
+
+        inv_path = eoy_path if os.path.exists(eoy_path) else legacy_path
         vgp_end = 0.0
 
         if os.path.exists(inv_path):
             try:
                 df_inv = pd_read_csv_safe(inv_path)
+                # On s'assure que Valeur (EUR) est numérique
+                df_inv["Valeur (EUR)"] = pd.to_numeric(df_inv["Valeur (EUR)"], errors="coerce").fillna(0.0)
                 vgp_end = df_inv["Valeur (EUR)"].sum()
-                st.info(f"✅ VGP basée sur l'inventaire sanctuarisé : {inv_path}")
+                st.info(f"✅ VGP basée sur l'inventaire sanctuarisé : {os.path.basename(inv_path)}")
             except: pass
 
         if vgp_end == 0:

@@ -240,9 +240,13 @@ def fragment_fiat():
         if col in df_fiat.columns:
             df_fiat[col] = df_fiat[col].fillna("").astype(str)
 
+    if "Mod." not in df_fiat.columns:
+        df_fiat.insert(0, "Mod.", False)
+
     edited_df = st.data_editor(
         df_fiat,
         column_config={
+            "Mod.": st.column_config.CheckboxColumn("Mod.", default=False),
             "Date": st.column_config.DateColumn("Date", required=True),
             "Account": st.column_config.TextColumn("Account"),
             "Counterparty": st.column_config.TextColumn("Counterparty"),
@@ -257,18 +261,15 @@ def fragment_fiat():
         },
         use_container_width=True,
         num_rows="dynamic",
-        key="fiat_editor",
-        selection_mode="single_row"
+        key="fiat_editor"
     )
 
-    # Row Selection Logic
-    selection = st.session_state.fiat_editor.get("selection", {}).get("rows", [])
-    if selection:
-        sel_idx = selection[0]
-        # Get the actual index in the dataframe (considering sort)
-        real_idx = df_fiat.index[sel_idx]
+    # Row Selection Logic via Checkbox
+    selected_rows = edited_df[edited_df["Mod."] == True]
+    if not selected_rows.empty:
+        real_idx = selected_rows.index[0]
         if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_fiat"):
-            row = df_fiat.loc[real_idx]
+            row = selected_rows.iloc[0]
             st.session_state.fiat_edit_idx = real_idx
             # Populate form
             st.session_state.fiat_date_input = row["Date"]
@@ -291,8 +292,8 @@ def fragment_fiat():
 
             st.rerun()
 
-    if not edited_df.equals(df_fiat):
-        st.session_state.fiat_journal = edited_df
+    if not edited_df.drop(columns=["Mod."], errors="ignore").equals(df_fiat.drop(columns=["Mod."], errors="ignore")):
+        st.session_state.fiat_journal = edited_df.drop(columns=["Mod."], errors="ignore")
 
 @st.fragment
 def fragment_pos():
@@ -373,9 +374,13 @@ def fragment_pos():
         if col in df_pos.columns:
             df_pos[col] = df_pos[col].fillna("").astype(str)
 
+    if "Mod." not in df_pos.columns:
+        df_pos.insert(0, "Mod.", False)
+
     edited_df = st.data_editor(
         df_pos,
         column_config={
+            "Mod.": st.column_config.CheckboxColumn("Mod.", default=False),
             "Date": st.column_config.DateColumn("Date", required=True),
             "Account": st.column_config.TextColumn("Account"),
             "Counterparty": st.column_config.TextColumn("Counterparty"),
@@ -387,17 +392,15 @@ def fragment_pos():
         },
         use_container_width=True,
         num_rows="dynamic",
-        key="pos_editor",
-        selection_mode="single_row"
+        key="pos_editor"
     )
 
     # Row Selection Logic
-    selection = st.session_state.pos_editor.get("selection", {}).get("rows", [])
-    if selection:
-        sel_idx = selection[0]
-        real_idx = df_pos.index[sel_idx]
+    selected_rows = edited_df[edited_df["Mod."] == True]
+    if not selected_rows.empty:
+        real_idx = selected_rows.index[0]
         if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_pos"):
-            row = df_pos.loc[real_idx]
+            row = selected_rows.iloc[0]
             st.session_state.pos_edit_idx = real_idx
             # Populate form
             st.session_state.pos_date_input = row["Date"]
@@ -415,8 +418,8 @@ def fragment_pos():
 
             st.rerun()
 
-    if not edited_df.equals(df_pos):
-        st.session_state.positions_journal = edited_df
+    if not edited_df.drop(columns=["Mod."], errors="ignore").equals(df_pos.drop(columns=["Mod."], errors="ignore")):
+        st.session_state.positions_journal = edited_df.drop(columns=["Mod."], errors="ignore")
 
 @st.fragment
 def fragment_swaps():
@@ -500,10 +503,14 @@ def fragment_swaps():
         if col in df_swaps.columns:
             df_swaps[col] = df_swaps[col].fillna("").astype(str)
 
-    st.info("💡 Cliquez sur une ligne pour la charger (Remplit le formulaire correspondant)")
+    st.info("💡 Cochez la colonne 'Mod.' pour charger une ligne dans le formulaire.")
+    if "Mod." not in df_swaps.columns:
+        df_swaps.insert(0, "Mod.", False)
+
     edited_df = st.data_editor(
         df_swaps,
         column_config={
+            "Mod.": st.column_config.CheckboxColumn("Mod.", default=False),
             "Date": st.column_config.DateColumn("Date", required=True),
             "Account": st.column_config.TextColumn("Compte"),
             "Counterparty": st.column_config.TextColumn("Contrepartie"),
@@ -515,16 +522,14 @@ def fragment_swaps():
         },
         use_container_width=True,
         num_rows="dynamic",
-        key="swaps_editor",
-        selection_mode="single_row"
+        key="swaps_editor"
     )
 
     # Row Selection Logic for Swaps/Transfers
-    selection = st.session_state.swaps_editor.get("selection", {}).get("rows", [])
-    if selection:
-        sel_idx = selection[0]
-        real_idx = df_swaps.index[sel_idx]
-        row = df_swaps.loc[real_idx]
+    selected_rows = edited_df[edited_df["Mod."] == True]
+    if not selected_rows.empty:
+        real_idx = selected_rows.index[0]
+        row = selected_rows.iloc[0]
 
         if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_swap"):
             if "Swap" in row["Type"]:
@@ -561,8 +566,8 @@ def fragment_swaps():
                     if row["Counterparty"] not in known_accs: st.session_state.input_trans_src_new = row["Counterparty"]
             st.rerun()
 
-    if not edited_df.equals(df_swaps):
-        st.session_state.swaps_journal = edited_df
+    if not edited_df.drop(columns=["Mod."], errors="ignore").equals(df_swaps.drop(columns=["Mod."], errors="ignore")):
+        st.session_state.swaps_journal = edited_df.drop(columns=["Mod."], errors="ignore")
 
 with t1: fragment_fiat()
 with t2: fragment_pos()

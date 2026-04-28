@@ -465,7 +465,12 @@ else:
         # 4. Audit détaillé
         st.divider()
         st.subheader("🔍 Audit : Détail du Portefeuille à une Date")
-        selected_date = st.selectbox("Choisir une date de cession pour voir le détail", options=sorted(cessions_all["Date"].unique(), reverse=True))
+
+        audit_options = sorted(list(cessions_all["Date"].unique()), reverse=True)
+        eoy_date = datetime(target_year, 12, 31, tzinfo=audit_options[0].tzinfo if audit_options else None)
+        audit_options = [eoy_date] + [d for d in audit_options if d != eoy_date]
+
+        selected_date = st.selectbox("Choisir une date pour voir le détail", options=audit_options, format_func=lambda x: f"{x.strftime('%d/%m/%Y')} {'(🏁 Fin d’année)' if x == eoy_date else '(📈 Cession)'}")
 
         if selected_date:
             snapshot_df, total_val = get_portfolio_snapshot(journal, selected_date)
@@ -555,12 +560,22 @@ else:
 
                     st.success(f"{count} prix enregistrés (Global & Annuel). Relancez le calcul pour rafraîchir.")
 
-                if col_save_audit2.button("🛡️ Sanctuariser l'Inventaire (Complet)", use_container_width=True):
+                if col_save_audit2.button("🛡️ Sanctuariser l'Inventaire", use_container_width=True):
                     y_dir = os.path.join(EXPORT_BASE_DIR, str(selected_date.year))
                     os.makedirs(y_dir, exist_ok=True)
-                    inv_path = os.path.join(y_dir, f"inventory_{selected_date.year}.csv")
+
+                    is_eoy = (selected_date.month == 12 and selected_date.day == 31)
+                    if is_eoy:
+                        inv_path = os.path.join(y_dir, f"inventory_EOY_{selected_date.year}.csv")
+                        # Legacy support
+                        legacy_path = os.path.join(y_dir, f"inventory_{selected_date.year}.csv")
+                        ed_snapshot.to_csv(legacy_path, index=False, encoding="utf-8-sig")
+                    else:
+                        d_str = selected_date.strftime("%Y%m%d")
+                        inv_path = os.path.join(y_dir, f"inventory_audit_{selected_date.year}_{d_str}.csv")
+
                     ed_snapshot.to_csv(inv_path, index=False, encoding="utf-8-sig")
-                    st.success(f"Inventaire sanctuarisé dans : {inv_path}")
+                    st.success(f"Inventaire sanctuarisé : {os.path.basename(inv_path)}")
                     st.balloons()
 
             else:
