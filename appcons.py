@@ -10,6 +10,7 @@ import tempfile
 import unicodedata
 import traceback
 from datetime import datetime, time as dt_time
+from shared_logic import resolve_raw_addr
 
 # --- Helpers ---
 def pd_read_csv_safe(path):
@@ -48,10 +49,6 @@ def apply_position_labels(df):
     df["Counterparty"] = df["Counterparty"].apply(format_cp)
     return df
 
-def resolve_raw_addr(addr_str):
-    s = str(addr_str).strip().lower()
-    if "(" in s and ")" in s:
-        return s.split("(")[-1].split(")")[0].strip()
     parts = s.split()
     for p in parts:
         if p.startswith("0x") and len(p) >= 40: return p

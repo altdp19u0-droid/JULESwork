@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import streamlit as st
 from datetime import datetime
+from shared_logic import resolve_raw_addr
 import unicodedata
 
 # --- Configuration ---
@@ -20,10 +21,6 @@ def pd_read_csv_safe(path):
         try: return pd.read_csv(path, encoding="latin-1")
         except: return pd.read_csv(path, encoding="utf-8", errors="replace")
 
-def resolve_raw_addr(addr_str):
-    s = str(addr_str).strip().lower()
-    if "(" in s and ")" in s:
-        return s.split("(")[-1].split(")")[0].strip()
     parts = s.split()
     for p in parts:
         if p.startswith("0x") and len(p) >= 40: return p

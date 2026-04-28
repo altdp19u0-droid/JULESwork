@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 from datetime import datetime
+from shared_logic import resolve_raw_addr
 from fpdf import FPDF
 from io import BytesIO, StringIO
 import json
@@ -174,10 +175,6 @@ def load_position_labels():
         except: return {}
     return {}
 
-def resolve_raw_addr(addr_str):
-    s = str(addr_str).strip().lower()
-    if "(" in s and ")" in s:
-        return s.split("(")[-1].split(")")[0].strip()
     parts = s.split()
     for p in parts:
         if p.startswith("0x") and len(p) >= 40: return p

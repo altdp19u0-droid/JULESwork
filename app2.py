@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 import streamlit as st
 from datetime import datetime
+from shared_logic import resolve_raw_addr, get_known_accounts
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Qualification (app2)", layout="wide")
@@ -27,16 +28,6 @@ def is_imposable_robust(val):
     if pd.isna(val): return False
     s = str(val).upper().strip()
     return s in ["TRUE", "1", "1.0", "VRAI", "YES", "OUI"]
-
-def resolve_raw_addr(addr_str):
-    s = str(addr_str).strip().lower()
-    if "(" in s and ")" in s:
-        return s.split("(")[-1].split(")")[0].strip()
-    parts = s.split()
-    for p in parts:
-        if p.startswith("0x") and len(p) >= 40: return p
-    return s
-
 
 def load_spam_list():
     if os.path.exists(SPAM_FILE):
@@ -88,7 +79,10 @@ def apply_position_labels(df):
     def format_cp(cp_str):
         raw = resolve_raw_addr(cp_str)
         if raw in labels:
-            return f"{labels[raw]} ({raw})"
+            mapping = labels[raw]
+            # Handle both string (legacy) and dict (new) formats
+            label_text = mapping["label"] if isinstance(mapping, dict) else mapping
+            return f"{label_text} ({raw})"
         return cp_str
 
     df["Counterparty"] = df["Counterparty"].apply(format_cp)
@@ -544,25 +538,37 @@ with st.sidebar:
 
     with st.expander("🏦 Mapping des Protocoles (Positions)"):
         pos_labels = load_position_labels()
-        st.write(f"Protocoles identifiés : **{len(pos_labels)}**")
+        st.write(f"Mappings identifiés : **{len(pos_labels)}**")
 
-        st.info("Associez une adresse à un nom de protocole (ex: Staking ETH, Compound Vault) pour l'inclure dans la VGP.")
+        st.info("Associez une adresse à un label et un type pour l'inclure dans le circuit de traitement.")
 
-        new_addr = st.text_input("Adresse du contrat/vault", placeholder="0x...")
-        new_label = st.text_input("Nom du protocole / Label", placeholder="ex: Staking Lido")
+        col_m1, col_m2, col_m3 = st.columns([1.5, 1, 1])
+        new_addr = col_m1.text_input("Adresse (0x...)", placeholder="0x...", key="mapping_addr")
+        new_label = col_m2.text_input("Label / Nom", placeholder="ex: Lido, Binance", key="mapping_label")
+        new_type = col_m3.selectbox("Type", ["Protocole/DEX", "CEX/Exchange", "Wallet (Propriétaire)", "Passerelle Fiat"], key="mapping_type")
 
-        if st.button("➕ Ajouter la Position"):
+        if st.button("➕ Ajouter / Mettre à jour le Mapping", use_container_width=True):
             if new_addr and new_label:
                 addr_clean = resolve_raw_addr(new_addr)
-                pos_labels[addr_clean] = new_label
+                pos_labels[addr_clean] = {
+                    "label": new_label,
+                    "type": new_type
+                }
                 save_position_labels(pos_labels)
-                st.success(f"Position '{new_label}' enregistrée.")
+                st.success(f"Mapping '{new_label}' ({new_type}) enregistré.")
                 st.rerun()
 
         if pos_labels:
             st.divider()
-            # Table simple pour voir/supprimer
-            pos_df = pd.DataFrame(list(pos_labels.items()), columns=["Adresse", "Label"])
+            # Construction d'un DataFrame propre pour l'affichage
+            pos_data = []
+            for addr, val in pos_labels.items():
+                if isinstance(val, dict):
+                    pos_data.append({"Adresse": addr, "Label": val.get("label", ""), "Type": val.get("type", "Inconnu")})
+                else:
+                    pos_data.append({"Adresse": addr, "Label": val, "Type": "Legacy (Protocole)"})
+
+            pos_df = pd.DataFrame(pos_data)
             st.dataframe(pos_df, use_container_width=True, hide_index=True)
 
             to_del = st.selectbox("Supprimer une position", [""] + sorted(list(pos_labels.keys())))
@@ -626,19 +632,42 @@ def main_journal_fragment():
         # Add current session accounts
         all_my_accounts.update(df["Account"].astype(str).str.lower().unique())
 
-        count_ca = 0
-        def is_internal(cp_str):
-            raw = resolve_raw_addr(cp_str)
-            return raw in all_my_accounts
+        # NEW: Integrate Mapped Positions (CEX, Wallets, etc.) into the internal circuit
+        pos_labels = load_position_labels()
+        circuit_accs = all_my_accounts.copy()
+        fiat_passerelles = set()
 
-        mask_internal = df["Counterparty"].fillna("").apply(is_internal)
+        for addr, mapping in pos_labels.items():
+            circuit_accs.add(addr.lower())
+            if isinstance(mapping, dict) and mapping.get("type") == "Passerelle Fiat":
+                fiat_passerelles.add(addr.lower())
+
+        count_ca = 0
+        count_fiat = 0
+
+        def check_internal(cp_str):
+            raw = resolve_raw_addr(cp_str)
+            return raw in circuit_accs
+
+        mask_internal = df["Counterparty"].fillna("").apply(check_internal)
         if mask_internal.any():
-            df.loc[mask_internal, "Category"] = "Transfert Interne"
-            df.loc[mask_internal, "Status"] = "Valide"
-            count_ca = mask_internal.sum()
+            for idx, row in df[mask_internal].iterrows():
+                raw_cp = resolve_raw_addr(row["Counterparty"])
+                if raw_cp in fiat_passerelles:
+                    df.at[idx, "Category"] = "Vente"
+                    df.at[idx, "Imposable"] = True
+                    df.at[idx, "Status"] = "Valide"
+                    count_fiat += 1
+                else:
+                    df.at[idx, "Category"] = "Transfert Interne"
+                    df.at[idx, "Status"] = "Valide"
+                    count_ca += 1
 
         st.session_state.journal_qualifie = df
-        st.success(f"Transferts identifiés : {count_h} par Hash, {count_ca} par Compte Propriétaire (Global Scan).")
+        msg = f"🔍 Analyse terminée : {count_h} par Hash, {count_ca} par Circuit Interne."
+        if count_fiat > 0:
+            msg += f" {count_fiat} cessions via Passerelles Fiat détectées."
+        st.success(msg)
         st.rerun()
 
     # 2. Data Editor
