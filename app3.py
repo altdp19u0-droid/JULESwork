@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-from shared_logic import resolve_raw_addr
+from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur
 from fpdf import FPDF
 from io import BytesIO, StringIO
 import json
@@ -109,68 +109,6 @@ def get_fiat_rate(from_currency, date_obj):
     except:
         return 0.0
 
-def get_price_eur(asset, date_obj):
-    # Same logic as app2VGP for consistency
-    asset_clean = unicodedata.normalize('NFKC', str(asset)).upper().strip()
-
-    # 1. Stables & Direct Mappings (BCE Forex Data)
-    if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]:
-        return 1.0
-
-    if asset_clean in ["USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS", "TWCOMPOUNDUSDC"]:
-        return get_fiat_rate("USD", date_obj)
-
-    if asset_clean == "ZCHF":
-        return get_fiat_rate("CHF", date_obj)
-
-    d_str = date_obj.strftime("%d-%m-%Y")
-    cache = load_price_cache()
-    cache_key = f"{asset_clean}_{d_str}"
-    if cache_key in cache: return float(cache[cache_key])
-
-    # 2. CoinGecko Mapping
-    asset_map = {
-        "ETH": "ethereum", "BTC": "bitcoin", "POL": "polygon-ecosystem-token",
-        "BNB": "binancecoin", "ARB": "arbitrum", "OP": "optimism", "WETH": "ethereum",
-        "SOL": "solana", "MATIC": "matic-network", "AVAX": "avalanche-2", "DOT": "polkadot",
-        "LINK": "chainlink", "UNI": "uniswap", "AAVE": "aave", "DAI": "dai",
-        "ZCHF": "cryptofranc", "BCH": "bitcoin-cash", "HBAR": "hedera-hashgraph",
-        "TWT": "trust-wallet-token", "ME": "magic-eden", "ORDER": "orderly-network",
-        "IP": "story-ip", "AUNT": "auntie-whale" # Fallback guess for AUNT
-    }
-
-    cg_id = asset_map.get(asset_clean, asset_clean.lower())
-    url_cg = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
-
-    try:
-        time.sleep(1.2)
-        res = requests.get(url_cg, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            if "market_data" in data:
-                price = float(data["market_data"]["current_price"]["eur"])
-                cache[cache_key] = price
-                save_price_cache(cache)
-                return price
-    except: pass
-
-    # 3. Fallback DefiLlama (Prix Spot approximation pour les petites capitalisations)
-    try:
-        ts = int(date_obj.timestamp())
-        url_llama = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{cg_id}?searchWidth=12h"
-        res = requests.get(url_llama, timeout=10)
-        if res.status_code == 200:
-            coins = res.json().get("coins", {})
-            if coins:
-                price_usd = float(next(iter(coins.values()))["price"])
-                rate = get_fiat_rate("USD", date_obj)
-                price = price_usd * rate
-                cache[cache_key] = price
-                save_price_cache(cache)
-                return price
-    except: pass
-
-    return 0.0
 
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
@@ -866,33 +804,31 @@ with tab_bilan:
         total_acq = st.session_state.get("total_acq_price_shared", 0.0)
         c_inf1.metric("Prix d'achat total (A)", f"{total_acq:,.2f} €", help="Capital investi (A) : Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
 
-        # 2. Calcul de la VGP consolidée à fin de période (Factual Summation via Inventory)
-        # Priorité à inventory_EOY_YYYY.csv, fallback sur inventory_YYYY.csv
+        # 2. Calcul de la VGP consolidée au 31/12 (Calcul Réel)
         y_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         eoy_path = os.path.join(y_dir, f"inventory_EOY_{target_year}.csv")
-        legacy_path = os.path.join(y_dir, f"inventory_{target_year}.csv")
-
-        inv_path = eoy_path if os.path.exists(eoy_path) else legacy_path
         vgp_end = 0.0
 
-        if os.path.exists(inv_path):
+        if os.path.exists(eoy_path):
             try:
-                df_inv = pd_read_csv_safe(inv_path)
-                # On s'assure que Valeur (EUR) est numérique
+                df_inv = pd_read_csv_safe(eoy_path)
                 df_inv["Valeur (EUR)"] = pd.to_numeric(df_inv["Valeur (EUR)"], errors="coerce").fillna(0.0)
                 vgp_end = df_inv["Valeur (EUR)"].sum()
-                st.info(f"✅ VGP basée sur l'inventaire sanctuarisé : {os.path.basename(inv_path)}")
+                st.info(f"✅ VGP basée sur l'inventaire sanctuarisé au 31/12/{target_year}.")
             except: pass
 
         if vgp_end == 0:
-            # Fallback to session derivation
-            if "local_valued" in st.session_state:
-                vgp_end += st.session_state.local_valued["Valeur (EUR)"].sum()
-            if "proto_valued" in st.session_state:
-                vgp_end += st.session_state.proto_valued["Valeur (EUR)"].sum()
-            if "manual_pos_valued" in st.session_state:
-                vgp_end += st.session_state.manual_pos_valued["Valeur (EUR)"].sum()
-            st.warning("⚠️ L'inventaire sanctuarisé est manquant. Calcul basé sur les données en session.")
+            if f"vgp_eoy_{target_year}" in st.session_state:
+                vgp_end = st.session_state[f"vgp_eoy_{target_year}"]
+
+            if st.button(f"🧮 Calculer la VGP au 31/12/{target_year}", key="btn_calc_vgp_eoy"):
+                with st.spinner("Calcul en cours..."):
+                    # Use the shared logic to get a factual snapshot
+                    eoy_date = datetime(target_year, 12, 31)
+                    _, vgp_val = get_portfolio_snapshot(target_year, eoy_date)
+                    st.session_state[f"vgp_eoy_{target_year}"] = vgp_val
+                    st.success(f"VGP calculée : {vgp_val:,.2f} €")
+                    st.rerun()
 
         c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme factuelle des soldes par compte.")
 

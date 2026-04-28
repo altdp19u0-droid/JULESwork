@@ -137,6 +137,30 @@ t1, t2, t3 = st.tabs(["💶 Mouvements Fiat", "🔒 Positions", "🔄 Échanges 
 def fragment_fiat():
     st.subheader(f"📝 Saisie des flux monétaires ({target_year})")
 
+    # --- PENDING LOAD LOGIC (Avoids StreamlitAPIException) ---
+    if "fiat_pending_load" in st.session_state and st.session_state.fiat_pending_load is not None:
+        row = st.session_state.fiat_pending_load
+        st.session_state.fiat_date_input = row["Date"]
+        st.session_state.fiat_amount_input = float(row["Montant EUR"])
+        st.session_state.fiat_type_input = row["Type"]
+        st.session_state.fiat_asset_input = row["Asset"]
+        st.session_state.fiat_hash_input = row["Tx Hash"]
+        st.session_state.fiat_qty_input = float(row["Quantité"])
+        st.session_state.fiat_imp_checkbox = bool(row["Imposable"])
+
+        known_accs = get_known_accounts()
+        st.session_state.sel_fiat_label = row["Compte/Label"] if row["Compte/Label"] in known_accs else "(Nouveau / Autre...)"
+        if row["Compte/Label"] not in known_accs: st.session_state.fiat_label_input = row["Compte/Label"]
+
+        st.session_state.sel_fiat_plat = row["Plateforme"] if row["Plateforme"] in known_accs else "(Nouveau / Autre...)"
+        if row["Plateforme"] not in known_accs: st.session_state.fiat_plat_input = row["Plateforme"]
+
+        st.session_state.sel_fiat_addr = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
+        if row["Account"] not in known_accs: st.session_state.fiat_addr_input = row["Account"]
+
+        # Clear trigger
+        st.session_state.fiat_pending_load = None
+
     # Mode Edition
     edit_idx = st.session_state.get("fiat_edit_idx", None)
     if edit_idx is not None:
@@ -269,27 +293,8 @@ def fragment_fiat():
     if not selected_rows.empty:
         real_idx = selected_rows.index[0]
         if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_fiat"):
-            row = selected_rows.iloc[0]
             st.session_state.fiat_edit_idx = real_idx
-            # Populate form
-            st.session_state.fiat_date_input = row["Date"]
-            st.session_state.fiat_amount_input = float(row["Montant EUR"])
-            st.session_state.fiat_type_input = row["Type"]
-            st.session_state.fiat_asset_input = row["Asset"]
-            st.session_state.fiat_hash_input = row["Tx Hash"]
-            st.session_state.fiat_qty_input = float(row["Quantité"])
-            st.session_state.fiat_imp_checkbox = bool(row["Imposable"])
-
-            # Labels
-            st.session_state.sel_fiat_label = row["Compte/Label"] if row["Compte/Label"] in known_accs else "(Nouveau / Autre...)"
-            if row["Compte/Label"] not in known_accs: st.session_state.fiat_label_input = row["Compte/Label"]
-
-            st.session_state.sel_fiat_plat = row["Plateforme"] if row["Plateforme"] in known_accs else "(Nouveau / Autre...)"
-            if row["Plateforme"] not in known_accs: st.session_state.fiat_plat_input = row["Plateforme"]
-
-            st.session_state.sel_fiat_addr = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
-            if row["Account"] not in known_accs: st.session_state.fiat_addr_input = row["Account"]
-
+            st.session_state.fiat_pending_load = selected_rows.iloc[0]
             st.rerun()
 
     if not edited_df.drop(columns=["Mod."], errors="ignore").equals(df_fiat.drop(columns=["Mod."], errors="ignore")):
@@ -298,6 +303,25 @@ def fragment_fiat():
 @st.fragment
 def fragment_pos():
     st.subheader(f"📝 Saisie des positions ({target_year})")
+
+    # --- PENDING LOAD LOGIC ---
+    if "pos_pending_load" in st.session_state and st.session_state.pos_pending_load is not None:
+        row = st.session_state.pos_pending_load
+        st.session_state.pos_date_input = row["Date"]
+        st.session_state.pos_type_input = row["Type Position"]
+        st.session_state.pos_asset_input = row["Asset"]
+        st.session_state.pos_qty_input = abs(float(row["Quantité"]))
+        st.session_state.pos_dir_input = "🔵 Dépôt (+)" if float(row["Quantité"]) >= 0 else "🔴 Sortie (-)"
+        st.session_state.pos_hash_input = row["Tx Hash"]
+
+        known_accs = get_known_accounts()
+        st.session_state.sel_pos_plat = row["Protocole/Plateforme"] if row["Protocole/Plateforme"] in known_accs else "(Nouveau / Autre...)"
+        if row["Protocole/Plateforme"] not in known_accs: st.session_state.input_pos_plat_new = row["Protocole/Plateforme"]
+
+        st.session_state.sel_pos_addr = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
+        if row["Account"] not in known_accs: st.session_state.input_pos_addr_new = row["Account"]
+
+        st.session_state.pos_pending_load = None
 
     # Mode Edition
     edit_idx = st.session_state.get("pos_edit_idx", None)
@@ -400,22 +424,8 @@ def fragment_pos():
     if not selected_rows.empty:
         real_idx = selected_rows.index[0]
         if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_pos"):
-            row = selected_rows.iloc[0]
             st.session_state.pos_edit_idx = real_idx
-            # Populate form
-            st.session_state.pos_date_input = row["Date"]
-            st.session_state.pos_type_input = row["Type Position"]
-            st.session_state.pos_asset_input = row["Asset"]
-            st.session_state.pos_qty_input = abs(float(row["Quantité"]))
-            st.session_state.pos_dir_input = "🔵 Dépôt (+)" if float(row["Quantité"]) >= 0 else "🔴 Sortie (-)"
-            st.session_state.pos_hash_input = row["Tx Hash"]
-
-            st.session_state.sel_pos_plat = row["Protocole/Plateforme"] if row["Protocole/Plateforme"] in known_accs else "(Nouveau / Autre...)"
-            if row["Protocole/Plateforme"] not in known_accs: st.session_state.input_pos_plat_new = row["Protocole/Plateforme"]
-
-            st.session_state.sel_pos_addr = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
-            if row["Account"] not in known_accs: st.session_state.input_pos_addr_new = row["Account"]
-
+            st.session_state.pos_pending_load = selected_rows.iloc[0]
             st.rerun()
 
     if not edited_df.drop(columns=["Mod."], errors="ignore").equals(df_pos.drop(columns=["Mod."], errors="ignore")):
@@ -424,6 +434,41 @@ def fragment_pos():
 @st.fragment
 def fragment_swaps():
     st.subheader(f"🔄 Saisie des Échanges et Transferts ({target_year})")
+
+    # --- PENDING LOAD LOGIC ---
+    if "swap_pending_load" in st.session_state and st.session_state.swap_pending_load is not None:
+        row = st.session_state.swap_pending_load
+        known_accs = get_known_accounts()
+        if "Swap" in row["Type"]:
+            st.session_state.swap_date_input = row["Date"]
+            st.session_state.sel_swap_acc = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
+            if row["Account"] not in known_accs: st.session_state.input_swap_acc_new = row["Account"]
+            st.session_state.swap_hash_input = row["Tx Hash"]
+            st.session_state.swap_imp_input = bool(row["Imposable"])
+            if "Out" in row["Type"]:
+                st.session_state.swap_asset_out_input = row["Asset"]
+                st.session_state.swap_qty_out_input = abs(float(row["Amount"]))
+            else:
+                st.session_state.swap_asset_in_input = row["Asset"]
+                st.session_state.swap_qty_in_input = abs(float(row["Amount"]))
+        else:
+            st.session_state.trans_date_input = row["Date"]
+            st.session_state.trans_asset_input = row["Asset"]
+            st.session_state.trans_qty_input = abs(float(row["Amount"]))
+            st.session_state.trans_hash_input = row["Tx Hash"]
+            st.session_state.trans_imp_input = bool(row["Imposable"])
+            if "Out" in row["Type"]:
+                st.session_state.sel_trans_src = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
+                if row["Account"] not in known_accs: st.session_state.input_trans_src_new = row["Account"]
+                st.session_state.sel_trans_dst = row["Counterparty"] if row["Counterparty"] in known_accs else "(Nouveau / Autre...)"
+                if row["Counterparty"] not in known_accs: st.session_state.input_trans_dst_new = row["Counterparty"]
+            else:
+                st.session_state.sel_trans_dst = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
+                if row["Account"] not in known_accs: st.session_state.input_trans_dst_new = row["Account"]
+                st.session_state.sel_trans_src = row["Counterparty"] if row["Counterparty"] in known_accs else "(Nouveau / Autre...)"
+                if row["Counterparty"] not in known_accs: st.session_state.input_trans_src_new = row["Counterparty"]
+
+        st.session_state.swap_pending_load = None
     default_date = datetime.now() if target_year == datetime.now().year else datetime(target_year, 1, 1)
 
     col_s1, col_s2 = st.columns(2)
@@ -529,41 +574,8 @@ def fragment_swaps():
     selected_rows = edited_df[edited_df["Mod."] == True]
     if not selected_rows.empty:
         real_idx = selected_rows.index[0]
-        row = selected_rows.iloc[0]
-
         if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_swap"):
-            if "Swap" in row["Type"]:
-                # Charger dans formulaire Swap (on essaie de retrouver la paire si possible, sinon juste cette ligne)
-                st.session_state.swap_date_input = row["Date"]
-                st.session_state.sel_swap_acc = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
-                if row["Account"] not in known_accs: st.session_state.input_swap_acc_new = row["Account"]
-                st.session_state.swap_hash_input = row["Tx Hash"]
-                st.session_state.swap_imp_input = bool(row["Imposable"])
-
-                if "Out" in row["Type"]:
-                    st.session_state.swap_asset_out_input = row["Asset"]
-                    st.session_state.swap_qty_out_input = abs(float(row["Amount"]))
-                else:
-                    st.session_state.swap_asset_in_input = row["Asset"]
-                    st.session_state.swap_qty_in_input = abs(float(row["Amount"]))
-            else:
-                # Charger dans formulaire Transfert
-                st.session_state.trans_date_input = row["Date"]
-                st.session_state.trans_asset_input = row["Asset"]
-                st.session_state.trans_qty_input = abs(float(row["Amount"]))
-                st.session_state.trans_hash_input = row["Tx Hash"]
-                st.session_state.trans_imp_input = bool(row["Imposable"])
-
-                if "Out" in row["Type"]:
-                    st.session_state.sel_trans_src = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
-                    if row["Account"] not in known_accs: st.session_state.input_trans_src_new = row["Account"]
-                    st.session_state.sel_trans_dst = row["Counterparty"] if row["Counterparty"] in known_accs else "(Nouveau / Autre...)"
-                    if row["Counterparty"] not in known_accs: st.session_state.input_trans_dst_new = row["Counterparty"]
-                else:
-                    st.session_state.sel_trans_dst = row["Account"] if row["Account"] in known_accs else "(Nouveau / Autre...)"
-                    if row["Account"] not in known_accs: st.session_state.input_trans_dst_new = row["Account"]
-                    st.session_state.sel_trans_src = row["Counterparty"] if row["Counterparty"] in known_accs else "(Nouveau / Autre...)"
-                    if row["Counterparty"] not in known_accs: st.session_state.input_trans_src_new = row["Counterparty"]
+            st.session_state.swap_pending_load = selected_rows.iloc[0]
             st.rerun()
 
     if not edited_df.drop(columns=["Mod."], errors="ignore").equals(df_swaps.drop(columns=["Mod."], errors="ignore")):
