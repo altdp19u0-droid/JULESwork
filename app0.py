@@ -2,6 +2,8 @@ import os
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import unicodedata
+from shared_logic import get_known_accounts, resolve_raw_addr
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Registre Fiat & Positions (app0)", layout="wide")
@@ -131,8 +133,22 @@ def fragment_fiat():
     c1, c2, c3 = st.columns(3)
     default_date = datetime.now() if target_year == datetime.now().year else datetime(target_year, 1, 1)
     f_date = c1.date_input("Date du virement", default_date, key="fiat_date_input")
-    f_label = c2.text_input("Compte Bancaire / Label", placeholder="ex: Compte Courant Bourso", key="fiat_label_input")
-    f_plat = c3.text_input("Plateforme / Exchange", placeholder="ex: Binance, Kraken", key="fiat_plat_input")
+
+    # Prop B: Dropdown with free text fallback
+    known_accs = get_known_accounts()
+    options_acc = ["(Nouveau / Autre...)"] + known_accs
+
+    sel_label = c2.selectbox("Compte Bancaire (Connu)", options_acc, key="sel_fiat_label")
+    if sel_label == "(Nouveau / Autre...)":
+        f_label = c2.text_input("Saisie nouveau compte", placeholder="ex: Compte Courant Bourso", key="fiat_label_input")
+    else:
+        f_label = sel_label
+
+    sel_plat = c3.selectbox("Plateforme / Contrepartie (Connue)", options_acc, key="sel_fiat_plat")
+    if sel_plat == "(Nouveau / Autre...)":
+        f_plat = c3.text_input("Saisie nouvelle plateforme", placeholder="ex: Binance, Kraken", key="fiat_plat_input")
+    else:
+        f_plat = sel_plat
 
     c4, c5, c6 = st.columns(3)
     f_amount = c4.number_input("Montant (EUR)", min_value=0.0, step=10.0, key="fiat_amount_input")
@@ -149,7 +165,11 @@ def fragment_fiat():
 
     c_hash, c_addr_f, c_qty_f, c_imp = st.columns([1.5, 1.5, 1, 0.5])
     f_hash = c_hash.text_input("Tx Hash (Blockchain)", placeholder="0x...", key="fiat_hash_input")
-    f_addr = c_addr_f.text_input("Adresse/Compte Blockchain", placeholder="0x...", key="fiat_addr_input")
+
+    f_addr_sel = c_addr_f.selectbox("Compte / Adresse (Connu)", options_acc, key="sel_fiat_addr")
+    f_addr_new = c_addr_f.text_input("Saisie nouveau compte/adresse", placeholder="0x... ou label", key="fiat_addr_input")
+    f_addr = f_addr_new if f_addr_sel == "(Nouveau / Autre...)" else f_addr_sel
+
     f_qty = c_qty_f.number_input("Quantité Asset", min_value=0.0, format="%.8f", key="fiat_qty_input")
 
     # Automatisation de la coche imposable via session_state
@@ -223,7 +243,12 @@ def fragment_pos():
         default_date_pos = datetime.now() if target_year == datetime.now().year else datetime(target_year, 1, 1)
         p_date = c1.date_input("Date d'ouverture/maj", default_date_pos)
         p_type = c2.selectbox("Type de position", ["Staking", "Vault (Compound/Aave)", "Lending", "CEX Balance", "Autre"])
-        p_plat = c3.text_input("Protocole / Plateforme", placeholder="ex: Lido, Binance Earn")
+
+        known_accs = get_known_accounts()
+        options_acc = ["(Nouveau / Autre...)"] + known_accs
+        p_plat_sel = c3.selectbox("Plateforme / Protocole (Connu)", options_acc, key="sel_pos_plat")
+        p_plat_new = c3.text_input("Saisie nouveau label", placeholder="ex: Lido, Binance Earn", key="input_pos_plat_new")
+        p_plat = p_plat_new if p_plat_sel == "(Nouveau / Autre...)" else p_plat_sel
 
         c4, c5, c_dir = st.columns([1, 1, 1])
         p_asset = c4.text_input("Asset", placeholder="ex: stETH, USDC")
@@ -231,7 +256,10 @@ def fragment_pos():
         p_direction = c_dir.radio("Sens", ["🔵 Dépôt (+)", "🔴 Sortie (-)"], horizontal=True)
 
         c_addr, c_hash_p = st.columns(2)
-        p_addr = c_addr.text_input("Adresse Contrat / Memo", placeholder="0x... ou commentaire")
+        p_addr_sel = c_addr.selectbox("Compte / Adresse (Connu)", options_acc, key="sel_pos_addr")
+        p_addr_new = c_addr.text_input("Saisie nouveau compte/adresse", placeholder="0x... ou label", key="input_pos_addr_new")
+        p_addr = p_addr_new if p_addr_sel == "(Nouveau / Autre...)" else p_addr_sel
+
         p_hash = c_hash_p.text_input("Tx Hash (Blockchain)", placeholder="0x...")
 
         submit_pos = st.form_submit_button("➕ Ajouter à la liste")
@@ -304,7 +332,14 @@ def fragment_swaps():
         st.write("**🔁 Swap Crypto-to-Crypto**")
         with st.form("swap_form", clear_on_submit=True):
             s_date = st.date_input("Date du swap", default_date)
-            s_acc = st.text_input("Compte (ex: Binance, Wallet A)", placeholder="Compte propriétaire")
+
+            known_accs = get_known_accounts()
+            options_acc = ["(Nouveau / Autre...)"] + known_accs
+
+            s_acc_sel = st.selectbox("Compte (Connu)", options_acc, key="sel_swap_acc")
+            s_acc_new = st.text_input("Saisie nouveau compte", placeholder="ex: Binance, Wallet A", key="input_swap_acc_new")
+            s_acc = s_acc_new if s_acc_sel == "(Nouveau / Autre...)" else s_acc_sel
+
             c_s1, c_s2 = st.columns(2)
             s_asset_out = c_s1.text_input("Asset Vendu", placeholder="ex: BTC")
             s_qty_out = c_s2.number_input("Quantité Vendue", min_value=0.0, format="%.8f")
@@ -332,9 +367,18 @@ def fragment_swaps():
             t_date = st.date_input("Date du transfert", default_date)
             t_asset = st.text_input("Asset", placeholder="ex: ETH")
             t_qty = st.number_input("Quantité", min_value=0.0, format="%.8f")
+
+            known_accs = get_known_accounts()
+            options_acc = ["(Nouveau / Autre...)"] + known_accs
+
             c_t1, c_t2 = st.columns(2)
-            t_acc_src = c_t1.text_input("Compte Source", placeholder="ex: Wallet A")
-            t_acc_dst = c_t2.text_input("Compte Destination", placeholder="ex: Wallet B")
+            t_src_sel = c_t1.selectbox("Compte Source (Connu)", options_acc, key="sel_trans_src")
+            t_src_new = c_t1.text_input("Saisie nouveau source", placeholder="ex: Wallet A", key="input_trans_src_new")
+            t_acc_src = t_src_new if t_src_sel == "(Nouveau / Autre...)" else t_src_sel
+
+            t_dst_sel = c_t2.selectbox("Compte Destination (Connu)", options_acc, key="sel_trans_dst")
+            t_dst_new = c_t2.text_input("Saisie nouveau dest.", placeholder="ex: Wallet B", key="input_trans_dst_new")
+            t_acc_dst = t_dst_new if t_dst_sel == "(Nouveau / Autre...)" else t_dst_sel
             t_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...")
             t_imp = st.checkbox("Imposable", value=False)
 
@@ -359,7 +403,7 @@ def fragment_swaps():
         ss1, ss2 = st.columns([2, 1])
         sort_col_s = ss1.selectbox("Trier par", options=df_swaps.columns, index=list(df_swaps.columns).index("Date"), key="sort_col_swaps")
         sort_order_s = ss2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_swap_order", horizontal=True)
-        df_swaps = df_swaps.sort_values(by=sort_col_s, ascending=(sort_order_s == "Croissant"))
+        df_swaps = df_swaps.sort_values(by=sort_col_s, ascending=(sort_order_f == "Croissant"))
 
     for col in ["Account", "Counterparty", "Asset", "Type", "Tx Hash", "Source Type"]:
         if col in df_swaps.columns:
