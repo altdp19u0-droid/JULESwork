@@ -6,8 +6,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import unicodedata
-
-# --- Status Indicator ---
+from shared_logic import get_price_eur
 def show_status():
     st.sidebar.success("✅ Système Opérationnel")
     st.sidebar.caption(f"Logique Partagée : OK")
@@ -47,86 +46,6 @@ def pd_read_csv_safe(path):
         try: return pd.read_csv(path, encoding="latin-1")
         except: return pd.read_csv(path, encoding="utf-8", errors="replace")
 
-def get_fiat_rate(from_currency, date_obj):
-    """Fetches official BCE exchange rates via Frankfurter API."""
-    from_currency = from_currency.upper().strip()
-    if from_currency == "EUR": return 1.0
-    date_str = date_obj.strftime("%Y-%m-%d")
-    try:
-        url = f"https://api.frankfurter.app/{date_str}?from={from_currency}&to=EUR"
-        res = requests.get(url, timeout=5).json()
-        if "rates" in res and "EUR" in res["rates"]:
-            return float(res["rates"]["EUR"])
-    except: pass
-    return 0.0
-
-def get_price_eur_engine(asset, date_obj, cache):
-    # CRUCIAL: Unify normalization with other apps (nuance_map)
-    nuance_map = {
-        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
-        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
-        "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
-        "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
-        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
-    }
-    asset_clean = str(asset)
-    for k, v in nuance_map.items():
-        asset_clean = asset_clean.replace(k, v)
-    asset_clean = unicodedata.normalize('NFKC', asset_clean).upper().strip()
-
-    # 1. Stables & Direct Mappings (BCE Forex Data)
-    if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]: return 1.0
-
-    if asset_clean in ["USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS", "TWCOMPOUNDUSDC"]:
-        return get_fiat_rate("USD", date_obj)
-
-    if asset_clean == "ZCHF":
-        return get_fiat_rate("CHF", date_obj)
-
-    d_str = date_obj.strftime("%d-%m-%Y")
-    cache_key = f"{asset_clean}_{d_str}"
-    if cache_key in cache: return float(cache[cache_key])
-
-    # 2. CoinGecko Mapping
-    asset_map = {
-        "ETH": "ethereum", "BTC": "bitcoin", "POL": "polygon-ecosystem-token",
-        "BNB": "binancecoin", "ARB": "arbitrum", "OP": "optimism", "WETH": "ethereum",
-        "SOL": "solana", "MATIC": "matic-network", "AVAX": "avalanche-2", "DOT": "polkadot",
-        "LINK": "chainlink", "UNI": "uniswap", "AAVE": "aave", "DAI": "dai",
-        "ZCHF": "cryptofranc", "BCH": "bitcoin-cash", "HBAR": "hedera-hashgraph",
-        "TWT": "trust-wallet-token", "ME": "magic-eden", "ORDER": "orderly-network",
-        "IP": "story-ip", "AUNT": "auntie-whale", "LDO": "lido-finance", "NEAR": "near",
-        "FTM": "fantom", "STX": "blockstack", "RUNE": "thorchain", "GRT": "the-graph",
-        "MKR": "maker", "RNDR": "render-token", "FET": "fetch-ai", "INJ": "injective-protocol"
-    }
-
-    cg_id = asset_map.get(asset_clean, asset_clean.lower())
-    url_cg = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
-
-    try:
-        time.sleep(1.2) # API Rate limit protection
-        res = requests.get(url_cg, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            if "market_data" in data:
-                return float(data["market_data"]["current_price"]["eur"])
-    except: pass
-
-    # 3. Fallback DefiLlama
-    try:
-        ts = int(date_obj.timestamp())
-        # Try with coingecko ID
-        url_llama = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{cg_id}?searchWidth=12h"
-        res = requests.get(url_llama, timeout=10)
-        if res.status_code == 200:
-            coins = res.json().get("coins", {})
-            if coins:
-                price_usd = float(next(iter(coins.values()))["price"])
-                rate = get_fiat_rate("USD", date_obj)
-                return price_usd * rate
-    except: pass
-
-    return 0.0
 
 # --- Sidebar ---
 with st.sidebar:
@@ -338,7 +257,7 @@ if "price_explorer_df" in st.session_state:
 
             for idx, (i, row) in enumerate(to_fetch.iterrows()):
                 dt_obj = datetime.combine(row["Date"], datetime.min.time())
-                new_price = get_price_eur_engine(row["Asset"], dt_obj, cache)
+                new_price = get_price_eur(row["Asset"], dt_obj)
 
                 if new_price > 0:
                     ed_prices.at[i, "Prix (EUR)"] = new_price

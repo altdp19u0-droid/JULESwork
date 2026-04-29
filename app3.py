@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur
+from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur, get_fiat_rate, pd_read_csv_safe, load_price_cache, save_price_cache
 from fpdf import FPDF
 from io import BytesIO, StringIO
 import json
@@ -16,17 +16,6 @@ import requests
 def show_status():
     st.sidebar.success("✅ Système Opérationnel")
     st.sidebar.caption(f"Logique Partagée : OK")
-
-# --- Helpers ---
-def pd_read_csv_safe(path):
-    """Robust CSV reading for Windows with encoding fallbacks."""
-    try:
-        return pd.read_csv(path, encoding="utf-8-sig")
-    except:
-        try:
-            return pd.read_csv(path, encoding="latin-1")
-        except:
-            return pd.read_csv(path, encoding="utf-8", errors="replace")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Fiscalité (app3)", layout="wide")
@@ -69,45 +58,6 @@ def save_eoy_prices(year, prices_dict):
         except: return False
     return False
 
-PRICE_CACHE_FILE = "historical_prices_cache.json"
-
-def load_price_cache():
-    """Loads prices from both global cache and all annual sanctuarised files."""
-    combined = {}
-    if os.path.exists(PRICE_CACHE_FILE):
-        try:
-            with open(PRICE_CACHE_FILE, "r", encoding="utf-8", errors="replace") as f:
-                combined = json.load(f)
-        except: pass
-
-    # Merge with annual verified prices
-    if os.path.exists(EXPORT_BASE_DIR):
-        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
-        for y in years:
-            path = os.path.join(EXPORT_BASE_DIR, y, f"verified_prices_{y}.json")
-            if os.path.exists(path):
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        combined.update(json.load(f))
-                except: pass
-    return combined
-
-def save_price_cache(cache):
-    with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f)
-
-def get_fiat_rate(from_currency, date_obj):
-    """Fetches official BCE exchange rates via Frankfurter API."""
-    from_currency = from_currency.upper().strip()
-    if from_currency == "EUR": return 1.0
-
-    date_str = date_obj.strftime("%Y-%m-%d")
-    try:
-        url = f"https://api.frankfurter.app/{date_str}?from={from_currency}&to=EUR"
-        res = requests.get(url, timeout=5).json()
-        return float(res["rates"]["EUR"])
-    except:
-        return 0.0
 
 
 def load_position_labels():

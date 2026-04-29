@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 from datetime import datetime
 import time
+from shared_logic import get_price_eur, get_fiat_rate
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto Tracker Harvest Pro", layout="wide")
@@ -39,65 +40,6 @@ if 'fiat_accounts' not in st.session_state:
 if 'spam_addresses' not in st.session_state:
     st.session_state.spam_addresses = set()
 
-# --- Fonctions de Prix & Conversion ---
-
-@st.cache_data(ttl=86400)
-def get_eur_usd_rate(date_obj):
-    """Récupère le taux EUR/USD via Frankfurter API (BCE). Zero Fallback."""
-    date_str = date_obj.strftime("%Y-%m-%d")
-    try:
-        url = f"https://api.frankfurter.app/{date_str}?from=USD&to=EUR"
-        res = requests.get(url, timeout=5).json()
-        if "rates" in res and "EUR" in res["rates"]:
-            return float(res["rates"]["EUR"])
-    except: pass
-    return 0.0
-
-@st.cache_data(ttl=3600)
-def get_price_usd(asset, date_obj):
-    if asset is None or not isinstance(asset, str) or not asset.strip():
-        return 0.0
-
-    asset = asset.upper().strip()
-    cg_map = {
-        "ETH": "ethereum", "BNB": "binancecoin", "POL": "polygon-ecosystem-token",
-        "USDT": "tether", "USDC": "usd-coin", "DAI": "dai",
-        "EURA": "ageur", "AGEUR": "ageur", "STEUR": "stasis-euro",
-        "8LND": "8lnd", "BTC": "bitcoin", "WBTC": "wrapped-bitcoin",
-        "ARB": "arbitrum", "OP": "optimism", "MATIC": "matic-network"
-    }
-    asset_id = cg_map.get(asset, asset.lower())
-    d_str = date_obj.strftime("%d-%m-%Y")
-
-    try:
-        url = f"https://api.coingecko.com/api/v3/coins/{asset_id}/history?date={d_str}&localization=false"
-        res = requests.get(url, timeout=5).json()
-        if "market_data" in res: return res["market_data"]["current_price"]["usd"]
-    except: pass
-
-    try:
-        ts = int(time.mktime(date_obj.timetuple()))
-        url = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{asset_id}"
-        res = requests.get(url, timeout=5).json()
-        if "coins" in res and res["coins"]:
-            return res["coins"][next(iter(res["coins"]))]["price"]
-    except: pass
-
-    if asset in ["USDT", "USDC", "DAI"]: return 1.0
-    if asset in ["EURA", "AGEUR", "STEUR"]:
-        # Zéro Fallback : on récupère le taux inverse EUR/USD via Frankfurter
-        date_str = date_obj.strftime("%Y-%m-%d")
-        try:
-            url = f"https://api.frankfurter.app/{date_str}?from=EUR&to=USD"
-            res = requests.get(url, timeout=5).json()
-            return float(res["rates"]["USD"])
-        except: return 0.0
-    return 0.0
-
-def get_price_eur(asset, date_obj):
-    usd = get_price_usd(asset, date_obj)
-    if usd == 0: return 0.0
-    return usd * get_eur_usd_rate(date_obj)
 
 # --- MOTEUR DE RÉCOLTE ULTIME (V3.0) ---
 

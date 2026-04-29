@@ -27,23 +27,19 @@ def pd_read_csv_safe(path):
         except: return pd.read_csv(path, encoding="utf-8", errors="replace")
 
 def load_price_cache():
-    """Loads prices from both global cache and all annual sanctuarised files."""
     combined = {}
     if os.path.exists(PRICE_CACHE_FILE):
         try:
             with open(PRICE_CACHE_FILE, "r", encoding="utf-8", errors="replace") as f:
                 combined = json.load(f)
         except: pass
-
-    # Merge with annual verified prices
     if os.path.exists(EXPORT_BASE_DIR):
         years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
         for y in years:
             path = os.path.join(EXPORT_BASE_DIR, y, f"verified_prices_{y}.json")
             if os.path.exists(path):
                 try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        combined.update(json.load(f))
+                    with open(path, "r", encoding="utf-8") as f: combined.update(json.load(f))
                 except: pass
     return combined
 
@@ -53,11 +49,16 @@ def save_price_cache(cache):
 
 def get_fiat_rate(from_currency, date_obj):
     """Fetches official BCE exchange rates via Frankfurter API."""
-    from_currency = str(from_currency).upper().strip()
-    if from_currency == "EUR": return 1.0
+    from_curr = str(from_currency).upper().strip()
+    if from_curr == "EUR": return 1.0
+    # Handle common mappings
+    if from_curr == "USD": ticker = "USD"
+    elif from_curr == "CHF": ticker = "CHF"
+    else: ticker = from_curr
+
     date_str = date_obj.strftime("%Y-%m-%d")
     try:
-        url = f"https://api.frankfurter.app/{date_str}?from={from_currency}&to=EUR"
+        url = f"https://api.frankfurter.app/{date_str}?from={ticker}&to=EUR"
         res = requests.get(url, timeout=5).json()
         if "rates" in res and "EUR" in res["rates"]:
             return float(res["rates"]["EUR"])
@@ -112,6 +113,24 @@ def get_price_eur(asset, date_obj):
                 save_price_cache(cache)
                 return price
     except: pass
+
+    # Fallback DefiLlama
+    try:
+        ts = int(date_obj.timestamp())
+        url_llama = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{cg_id}?searchWidth=12h"
+        res = requests.get(url_llama, timeout=10)
+        if res.status_code == 200:
+            coins = res.json().get("coins", {})
+            if coins:
+                price_usd = float(next(iter(coins.values()))["price"])
+                rate = get_fiat_rate("USD", date_obj)
+                price = price_usd * rate
+                if price > 0:
+                    cache[cache_key] = price
+                    save_price_cache(cache)
+                    return price
+    except: pass
+
     return 0.0
 
 def get_portfolio_snapshot(journal_or_year, target_date):
@@ -129,21 +148,26 @@ def get_portfolio_snapshot(journal_or_year, target_date):
         except: pass
 
     target_date = pd.to_datetime(target_date, utc=True)
-    target_year = target_date.year
-    start_of_year = datetime(target_year, 1, 1, tzinfo=target_date.tzinfo)
+    target_year_val = target_date.year
+    start_of_year = datetime(target_year_val, 1, 1, tzinfo=target_date.tzinfo)
 
-    # Load history if needed
+    # Load history
     journals_all = []
     manual_all = []
 
-    for y in range(2020, target_year + 1):
-        path_j = os.path.join(EXPORT_BASE_DIR, str(y), f"qualified_journal_{y}.csv")
-        if os.path.exists(path_j):
-            try:
-                df_y = pd_read_csv_safe(path_j)
-                df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
-                journals_all.append(df_y[df_y["Date"] <= target_date])
-            except: pass
+    for y in range(2020, target_year_val + 1):
+        if y == target_year_val and isinstance(journal_or_year, pd.DataFrame):
+            df_y = journal_or_year.copy()
+            df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
+            journals_all.append(df_y[df_y["Date"] <= target_date])
+        else:
+            path_j = os.path.join(EXPORT_BASE_DIR, str(y), f"qualified_journal_{y}.csv")
+            if os.path.exists(path_j):
+                try:
+                    df_y = pd_read_csv_safe(path_j)
+                    df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
+                    journals_all.append(df_y[df_y["Date"] <= target_date])
+                except: pass
 
         path_m = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
         if os.path.exists(path_m):
