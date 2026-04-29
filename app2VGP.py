@@ -251,20 +251,22 @@ else:
             if not snapshot_df.empty:
                 st.write(f"Composition du portefeuille au **{selected_date}** :")
 
-                # --- NEW: UNLABELED ACCOUNTS ALERT ---
+                # --- IDENTIFY CIRCUITS & UNLABELED ---
+                circuits_df = snapshot_df[snapshot_df.get("Is_Circuit", False) == True]
                 unlabeled = snapshot_df[snapshot_df["Location"].str.contains("External/CEX:", na=False)]
+
+                if not circuits_df.empty:
+                    st.info(f"ℹ️ **Circuits Externes :** {len(circuits_df)} circuits de traitement détectés (Swaps/Bridges). Leurs soldes sont exclus de la VGP fiscale.")
+
                 if not unlabeled.empty:
                     st.warning(f"🚨 **Alerte :** {len(unlabeled)} comptes identifiés comme 'External/CEX' ont un solde non nul. "
-                               "Ceci indique des transferts internes vers des comptes non récoltés. "
-                               "Vous devriez soit ajouter ces comptes dans 'Mapping des Protocoles' (App 2), "
-                               "soit vérifier vos types de transactions.")
+                               "Ceci indique des transferts internes vers des comptes non récoltés (comptes propriétaires manquants).")
 
                     with st.expander("📋 Liste des comptes 'External/CEX' à mapper"):
-                        # Extract addresses from "External/CEX: 0x..."
                         cp_list = unlabeled["Location"].unique()
                         clean_list = [cp.replace("External/CEX: ", "").strip() for cp in cp_list]
                         st.code("\n".join(clean_list), language="text")
-                        st.info("💡 Copiez ces adresses pour les ajouter à votre mapping de protocoles ou pour investiguer les transferts manquants.")
+                        st.info("💡 Si ce sont des circuits de transit, labellez-les dans l'**App 2 (Circuits de Traitement)** pour les exclure.")
 
                 # Highlight 0 prices
                 zero_prices = snapshot_df[snapshot_df["Prix (EUR)"] == 0]
@@ -272,6 +274,7 @@ else:
                     st.warning(f"⚠️ {len(zero_prices)} actifs n'ont pas pu être valorisés automatiquement (Prix = 0).")
 
                 # Interactive Editor for Audit
+                # We show Is_Circuit to the user
                 ed_snapshot = st.data_editor(
                     snapshot_df,
                     column_config={
@@ -283,15 +286,17 @@ else:
                         "Sorties": st.column_config.NumberColumn("Total Sorties", format="%.6f", disabled=True),
                         "Asset": st.column_config.TextColumn(disabled=True),
                         "Location": st.column_config.TextColumn(disabled=True),
+                        "Is_Circuit": st.column_config.CheckboxColumn("Circuit?", disabled=True),
                     },
                     use_container_width=True,
                     key=f"audit_ed_{selected_date}"
                 )
 
-                # Recalculate Total with manual edits
+                # Recalculate Total with manual edits (Excluding circuits)
                 ed_snapshot["Valeur (EUR)"] = ed_snapshot["Solde"] * ed_snapshot["Prix (EUR)"].fillna(0.0)
-                new_total = ed_snapshot["Valeur (EUR)"].sum()
-                st.metric("VGP Totale Corrigée", f"{new_total:,.2f} €")
+                mask_vgp_ed = (ed_snapshot["Is_Circuit"] != True)
+                new_total = ed_snapshot[mask_vgp_ed]["Valeur (EUR)"].sum()
+                st.metric("VGP Totale Corrigée (Excl. Circuits)", f"{new_total:,.2f} €")
 
                 col_save_audit1, col_save_audit2 = st.columns(2)
 

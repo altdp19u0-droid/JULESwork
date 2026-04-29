@@ -10,6 +10,7 @@ import unicodedata
 EXPORT_BASE_DIR = "sanctuarisation"
 POSITIONS_FILE = "position_labels.json"
 PRICE_CACHE_FILE = "historical_prices_cache.json"
+EXTERNAL_CIRCUITS_FILE = "external_circuits.json"
 
 def resolve_raw_addr(addr_str):
     s = str(addr_str).strip().lower()
@@ -195,7 +196,13 @@ def get_portfolio_snapshot(journal_or_year, target_date):
     asset_prices = {a: get_price_eur(a, target_date) for a in all_assets}
 
     details = []
-    owned_accs = set(df_j["Account"].dropna().unique()) if not df_j.empty else set()
+
+    # Identify owned accounts by address if possible, otherwise by name
+    owned_names = set(df_j["Account"].dropna().unique()) if not df_j.empty else set()
+    owned_addrs = set()
+    for n in owned_names:
+        res = resolve_raw_addr(n)
+        if res.startswith("0x"): owned_addrs.add(res)
 
     # --- A. OWNED ACCOUNTS ---
     if not df_j.empty:
@@ -217,12 +224,20 @@ def get_portfolio_snapshot(journal_or_year, target_date):
                     "Solde": r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": r["Final_Bal"] * p
                 })
 
-    # --- B. INTERNAL TRANSFER OFFSET LEGS ---
+    # --- B. INTERNAL TRANSFER OFFSET LEGS (Receivables) ---
     if not df_j.empty:
+        ext_data = load_external_circuits()
+        circuit_labels = ext_data.get("labels", {})
+
         mask_int = (df_j["Category"] == "Transfert Interne")
         df_ext = df_j[mask_int].copy()
         df_ext["cp_low"] = df_ext["Counterparty"].apply(resolve_raw_addr)
-        df_ext = df_ext[~df_ext["cp_low"].isin(owned_accs)]
+
+        # We also filter out any address identified as a "Transient External Circuit"
+        circuit_addrs = set(circuit_labels.keys())
+        # Filter: Counterparty must not be an owned account name AND not an owned account address
+        df_ext = df_ext[ (~df_ext["Counterparty"].isin(owned_names)) & (~df_ext["cp_low"].isin(owned_addrs)) ]
+
         if not df_ext.empty:
             ext_pre = df_ext[df_ext["Date"] < start_of_year].groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
             ext_ytd = df_ext[df_ext["Date"] >= start_of_year].groupby(["Counterparty", "Asset"])["Amount"].agg([
@@ -231,15 +246,24 @@ def get_portfolio_snapshot(journal_or_year, target_date):
             merged_ext = pd.merge(ext_pre, ext_ytd, on=["Counterparty", "Asset"], how="outer").fillna(0.0)
             merged_ext = merged_ext.rename(columns={"Amount": "Reported"})
             merged_ext["Final_Bal"] = merged_ext["Reported"] + merged_ext["In"] + merged_ext["Out"]
+
             for _, r in merged_ext.iterrows():
                 if abs(r["Final_Bal"]) > 1e-8:
                     raw_cp = resolve_raw_addr(r["Counterparty"])
-                    label = pos_labels.get(raw_cp, f"External/CEX: {r['Counterparty']}")
+
+                    # LOGIC: If it's a known circuit, we label it but EXCLUDE from VGP details
+                    # If it's NOT a known circuit (likely a missing owner or position), we keep it as a receivable
+                    is_circuit = raw_cp in circuit_addrs
+                    label = circuit_labels.get(raw_cp, pos_labels.get(raw_cp, f"External/CEX: {r['Counterparty']}"))
+
                     p = asset_prices.get(r["Asset"], 0.0)
+                    val_eur = (-r["Final_Bal"]) * p
+
                     details.append({
                         "Location": label, "Asset": r["Asset"],
                         "Report": -r["Reported"], "Entrées": abs(r["In"]), "Sorties": abs(r["Out"]),
-                        "Solde": -r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": (-r["Final_Bal"]) * p
+                        "Solde": -r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": val_eur,
+                        "Is_Circuit": is_circuit # Meta field for filtering
                     })
 
     # --- C. MANUAL POSITIONS ---
@@ -261,8 +285,99 @@ def get_portfolio_snapshot(journal_or_year, target_date):
                 })
 
     full_details = pd.DataFrame(details)
-    total_vgp = full_details["Valeur (EUR)"].sum() if not full_details.empty else 0.0
+
+    # Calculate Total VGP: We EXCLUDE rows marked as 'Is_Circuit'
+    if not full_details.empty:
+        mask_vgp = (full_details["Is_Circuit"] != True)
+        total_vgp = full_details[mask_vgp]["Valeur (EUR)"].sum()
+    else:
+        total_vgp = 0.0
+
     return full_details, total_vgp
+
+def load_external_circuits():
+    if os.path.exists(EXTERNAL_CIRCUITS_FILE):
+        try:
+            with open(EXTERNAL_CIRCUITS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except: return {"labels": {}, "hidden": []}
+    return {"labels": {}, "hidden": []}
+
+def save_external_circuits(data):
+    with open(EXTERNAL_CIRCUITS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
+def get_owner_addresses():
+    """Extracts all raw addresses identified as 'owners' from the journals."""
+    owners = set()
+    if os.path.exists(EXPORT_BASE_DIR):
+        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
+        for y in years:
+            path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
+            if os.path.exists(path):
+                try:
+                    df = pd_read_csv_safe(path)
+                    if "Account" in df.columns:
+                        for a in df["Account"].dropna().unique():
+                            resolved = resolve_raw_addr(a)
+                            if resolved.startswith("0x"): owners.add(resolved)
+                except: pass
+    return owners
+
+def get_external_circuits_discovery():
+    """Discovers valid transient addresses (not owners, not positions)."""
+    owner_addrs = get_owner_addresses()
+
+    pos_labels = {}
+    if os.path.exists(POSITIONS_FILE):
+        try:
+            with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
+                mappings = json.load(f)
+                for addr, val in mappings.items():
+                    pos_labels[addr] = val.get("label") if isinstance(val, dict) else val
+        except: pass
+    pos_addrs = set(pos_labels.keys())
+
+    circuits_info = {} # {addr: {count, volume_usd}}
+
+    # Scan all journals
+    if os.path.exists(EXPORT_BASE_DIR):
+        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
+        for y in years:
+            path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
+            if os.path.exists(path):
+                try:
+                    df = pd_read_csv_safe(path)
+                    if not df.empty and "Status" in df.columns:
+                        # Only Valid transactions
+                        df_val = df[df["Status"] == "Valide"]
+                        for _, r in df_val.iterrows():
+                            cp_raw = resolve_raw_addr(r.get("Counterparty", ""))
+                            if cp_raw and cp_raw not in owner_addrs and cp_raw not in pos_addrs:
+                                if cp_raw not in circuits_info:
+                                    circuits_info[cp_raw] = {"count": 0, "volume_usd": 0.0, "last_asset": ""}
+                                circuits_info[cp_raw]["count"] += 1
+                                circuits_info[cp_raw]["volume_usd"] += abs(float(r.get("Value ($)", 0.0)))
+                                circuits_info[cp_raw]["last_asset"] = str(r.get("Asset", ""))
+                except: pass
+
+    # Filter out hidden/already labeled ones
+    ext_data = load_external_circuits()
+    labels = ext_data.get("labels", {})
+    hidden = set(ext_data.get("hidden", []))
+
+    final_list = []
+    for addr, stats in circuits_info.items():
+        if addr not in hidden:
+            final_list.append({
+                "Address": addr,
+                "Label": labels.get(addr, ""),
+                "Tx Count": stats["count"],
+                "Vol. USD": stats["volume_usd"],
+                "Asset": stats["last_asset"]
+            })
+
+    return sorted(final_list, key=lambda x: x["Vol. USD"], reverse=True)
 
 def get_known_accounts(include_mappings=True):
     """Aggregates account names from mapping file and all qualified journals."""

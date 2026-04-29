@@ -5,7 +5,11 @@ import requests
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-from shared_logic import resolve_raw_addr
+from shared_logic import (
+    resolve_raw_addr, get_fiat_rate,
+    load_external_circuits, save_external_circuits, get_external_circuits_discovery,
+    pd_read_csv_safe
+)
 
 # --- Status Indicator ---
 def show_status():
@@ -34,16 +38,6 @@ def is_imposable_robust(val):
     s = str(val).upper().strip()
     return s in ["TRUE", "1", "1.0", "VRAI", "YES", "OUI"]
 
-def resolve_raw_addr(addr_str):
-    s = str(addr_str).strip().lower()
-    if "(" in s and ")" in s:
-        return s.split("(")[-1].split(")")[0].strip()
-    parts = s.split()
-    for p in parts:
-        if p.startswith("0x") and len(p) >= 40: return p
-    return s
-
-
 def load_spam_list():
     if os.path.exists(SPAM_FILE):
         try:
@@ -71,44 +65,31 @@ def save_position_labels(labels_dict):
 def get_qualified_path(year):
     return os.path.join(EXPORT_BASE_DIR, str(year), f"qualified_journal_{year}.csv")
 
-def get_fiat_rate(from_currency, date_obj):
-    """Fetches official BCE exchange rates via Frankfurter API."""
-    from_currency = from_currency.upper().strip()
-    if from_currency == "EUR": return 1.0
-    try:
-        date_str = date_obj.strftime("%Y-%m-%d")
-        url = f"https://api.frankfurter.app/{date_str}?from={from_currency}&to=EUR"
-        res = requests.get(url, timeout=5).json()
-        if "rates" in res and "EUR" in res["rates"]:
-            return float(res["rates"]["EUR"])
-    except: pass
-    return 0.0
-
 # --- Engine: Merging & Cleaning ---
 def apply_position_labels(df):
     """Remplace l'adresse Counterparty par 'Label (0x...)' si un mapping existe."""
     if df.empty: return df
+
+    # 1. Load Standard Positions
     labels = load_position_labels()
-    if not labels: return df
+
+    # 2. Load External Circuits Labels
+    ext_data = load_external_circuits()
+    circ_labels = ext_data.get("labels", {})
+
+    # Merge both for display (Positions take priority)
+    combined_labels = {**circ_labels, **labels}
+
+    if not combined_labels: return df
 
     def format_cp(cp_str):
         raw = resolve_raw_addr(cp_str)
-        if raw in labels:
-            return f"{labels[raw]} ({raw})"
+        if raw in combined_labels:
+            return f"{combined_labels[raw]} ({raw})"
         return cp_str
 
     df["Counterparty"] = df["Counterparty"].apply(format_cp)
     return df
-
-def pd_read_csv_safe(path):
-    """Robust CSV reading for Windows with encoding fallbacks."""
-    try:
-        return pd.read_csv(path, encoding="utf-8-sig")
-    except:
-        try:
-            return pd.read_csv(path, encoding="latin-1")
-        except:
-            return pd.read_csv(path, encoding="utf-8", errors="replace")
 
 def merge_raw_data(year):
     year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
@@ -559,6 +540,56 @@ with st.sidebar:
                 for item in to_remove: spam_list.remove(item)
                 save_spam_list(spam_list)
                 st.rerun()
+
+    with st.expander("🌐 Circuits de Traitement (Swaps/Bridges/External)"):
+        from shared_logic import get_external_circuits_discovery, load_external_circuits, save_external_circuits
+
+        st.info("Détectez et étiquetez les comptes tiers utilisés pour les swaps ou bridges. Ces comptes sont exclus de la VGP par défaut.")
+
+        circuits = get_external_circuits_discovery()
+        if not circuits:
+            st.write("Aucun circuit externe détecté dans les transactions validées.")
+        else:
+            df_circuits = pd.DataFrame(circuits)
+
+            # Action logic for labels
+            ed_circuits = st.data_editor(
+                df_circuits,
+                column_config={
+                    "Address": st.column_config.TextColumn(disabled=True),
+                    "Label": st.column_config.TextColumn("Label / Nom", help="ex: Bridge Arbitrum, 1inch Swap"),
+                    "Vol. USD": st.column_config.NumberColumn(format="$ %.2f", disabled=True),
+                    "Tx Count": st.column_config.NumberColumn(disabled=True),
+                    "Asset": st.column_config.TextColumn(disabled=True),
+                },
+                use_container_width=True,
+                key="circuits_editor"
+            )
+
+            c_save1, c_save2 = st.columns(2)
+            if c_save1.button("💾 Enregistrer les Labels de Circuits", use_container_width=True):
+                ext_data = load_external_circuits()
+                new_labels = {}
+                for _, r in ed_circuits.iterrows():
+                    if str(r["Label"]).strip():
+                        new_labels[r["Address"]] = str(r["Label"]).strip()
+                ext_data["labels"] = new_labels
+                save_external_circuits(ext_data)
+                st.success("Labels de circuits enregistrés.")
+                st.rerun()
+
+            addr_to_hide = st.selectbox("Cacher une adresse de cette liste", options=[""] + [c["Address"] for c in circuits])
+            if addr_to_hide and st.button("🚫 Cacher l'adresse"):
+                ext_data = load_external_circuits()
+                if "hidden" not in ext_data: ext_data["hidden"] = []
+                ext_data["hidden"].append(addr_to_hide)
+                save_external_circuits(ext_data)
+                st.success(f"Adresse {addr_to_hide} cachée.")
+                st.rerun()
+
+        if st.button("🧹 Réinitialiser les Circuits (Vider labels & cachés)"):
+            save_external_circuits({"labels": {}, "hidden": []})
+            st.rerun()
 
     with st.expander("🏦 Mapping des Protocoles (Positions)"):
         pos_labels = load_position_labels()

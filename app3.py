@@ -77,13 +77,18 @@ def load_position_labels():
 def apply_position_labels(df):
     """Remplace l'adresse Counterparty par 'Label (0x...)' si un mapping existe."""
     if df.empty: return df
+    from shared_logic import load_external_circuits
+
     labels = load_position_labels()
-    if not labels: return df
+    circ_labels = load_external_circuits().get("labels", {})
+    combined = {**circ_labels, **labels}
+
+    if not combined: return df
 
     def format_cp(cp_str):
         raw = resolve_raw_addr(cp_str)
-        if raw in labels:
-            return f"{labels[raw]} ({raw})"
+        if raw in combined:
+            return f"{combined[raw]} ({raw})"
         return cp_str
 
     df["Counterparty"] = df["Counterparty"].apply(format_cp)
@@ -323,74 +328,25 @@ with tab_accounts:
 
         st.info("Ces positions servent à calculer la Valeur Globale du Portefeuille (VGP).")
 
-        # 2. Factual Balance Calculation (Report + In - Out = Final)
-        # 1. Load History (2020 -> 31/12/target_year)
-        journals_all = []
-        for y in range(2020, target_year + 1):
-            path_y = get_file_path(y, 'qualified')
-            if os.path.exists(path_y):
-                try:
-                    df_y = pd_read_csv_safe(path_y)
-                    df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
-                    if 'Status' in df_y.columns: df_y = df_y[df_y['Status'] != 'Spam']
-                    if 'Category' in df_y.columns: df_y = df_y[df_y['Category'] != 'Doublon à ignorer']
-                    journals_all.append(df_y[df_y["Asset"] != "EUR"])
-                except: pass
+        # 2. Factual Balance Calculation (Unified Snapshot)
+        eoy_date = datetime(target_year, 12, 31)
+        full_snapshot, _ = get_portfolio_snapshot(target_year, eoy_date)
 
-        df_full = pd.concat(journals_all) if journals_all else journal[journal["Asset"] != "EUR"]
-        owned_accs = set(df_full["Account"].dropna().unique())
-        start_of_period = datetime(target_year, 1, 1, tzinfo=df_full["Date"].iloc[0].tzinfo if not df_full.empty else None)
+        if full_snapshot.empty:
+            st.warning("Aucun solde détecté pour cette année.")
+            derived_local = pd.DataFrame()
+            df_protocols = pd.DataFrame()
+        else:
+            # Map columns to match app3 legacy expectation
+            # Snapshot returns: Location, Asset, Report, Entrées, Sorties, Solde, Prix (EUR), Valeur (EUR), Is_Circuit
+            full_snapshot = full_snapshot.rename(columns={"Location": "Account", "Solde": "Amount", "Entrées": "In", "Sorties": "Out"})
 
-        # --- A. OWNED ACCOUNTS ---
-        df_pre = df_full[df_full["Date"] < start_of_period]
-        pre_bals = df_pre.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
+            # Split Local vs External for UI legacy
+            mask_wallet = full_snapshot["Account"].str.contains("Account:", na=False)
+            derived_local = full_snapshot[mask_wallet].copy()
+            derived_local["Account"] = derived_local["Account"].str.replace("Account: ", "")
 
-        df_period = df_full[df_full["Date"] >= start_of_period]
-        period_stats = df_period.groupby(["Account", "Asset"])["Amount"].agg([
-            ('In', lambda s: s[s > 0].sum()),
-            ('Out', lambda s: s[s < 0].sum())
-        ]).reset_index()
-
-        merged_local = pd.merge(pre_bals, period_stats, on=["Account", "Asset"], how="outer").fillna(0.0)
-        merged_local["Amount"] = merged_local["Amount"] + merged_local["In"] + merged_local["Out"]
-
-        derived_local = merged_local[merged_local["Amount"].abs() > 1e-8].copy()
-        # Price mapping
-        eoy_prices = load_eoy_prices(target_year)
-        derived_local["Prix (EUR)"] = derived_local["Asset"].map(eoy_prices).fillna(0.0)
-        derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
-
-        # --- B. INTERNAL TRANSFER OFFSET LEGS (Virtual Accounts) ---
-        mask_int = (df_full["Category"] == "Transfert Interne")
-        df_ext = df_full[mask_int].copy()
-        df_ext["cp_low"] = df_ext["Counterparty"].apply(resolve_raw_addr)
-        df_ext = df_ext[~df_ext["cp_low"].isin(owned_accs)]
-
-        ext_pre = df_ext[df_ext["Date"] < start_of_period].groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
-        ext_period = df_ext[df_ext["Date"] >= start_of_period].groupby(["Counterparty", "Asset"])["Amount"].agg([
-            ('In', lambda s: s[s < 0].sum()),
-            ('Out', lambda s: s[s > 0].sum())
-        ]).reset_index()
-
-        merged_ext = pd.merge(ext_pre, ext_period, on=["Counterparty", "Asset"], how="outer").fillna(0.0)
-        merged_ext = merged_ext.rename(columns={"Amount": "Reported"})
-        merged_ext["Final_Bal"] = -(merged_ext["Reported"] + merged_ext["In"] + merged_ext["Out"]) # Inverted leg
-
-        protocol_rows = []
-        for _, r in merged_ext.iterrows():
-            if abs(r["Final_Bal"]) > 1e-8:
-                raw_cp = resolve_raw_addr(r["Counterparty"])
-                label = pos_labels.get(raw_cp, f"External/CEX: {r['Counterparty']}")
-                # Sign inversion for receivables (we report our assets held there)
-                protocol_rows.append({
-                    "Account": label, "Asset": r["Asset"], "Amount": r["Final_Bal"],
-                    "In": abs(r["In"]), "Out": abs(r["Out"]), "Report": -r["Reported"]
-                })
-
-        df_protocols = pd.DataFrame(protocol_rows)
-        if not df_protocols.empty:
-            df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(eoy_prices).fillna(0.0)
-            df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
+            df_protocols = full_snapshot[~mask_wallet].copy()
 
         # 4. Valorisation & Sanctuarisation
         col_v1, col_v2 = st.columns(2)
@@ -470,6 +426,7 @@ with tab_accounts:
                 "Out": st.column_config.NumberColumn("Sorties (YTD)", format="%.6f", disabled=True),
                 "Account": st.column_config.TextColumn(disabled=True),
                 "Asset": st.column_config.TextColumn(disabled=True),
+                "Is_Circuit": st.column_config.CheckboxColumn("Circuit?", disabled=True),
             },
             use_container_width=True,
             key="local_pos_ed"
@@ -499,6 +456,7 @@ with tab_accounts:
                     "Out": st.column_config.NumberColumn("Sorties (YTD)", format="%.6f", disabled=True),
                     "Account": st.column_config.TextColumn(disabled=True),
                     "Asset": st.column_config.TextColumn(disabled=True),
+                    "Is_Circuit": st.column_config.CheckboxColumn("Circuit?", disabled=True),
                 },
                 use_container_width=True,
                 key="proto_pos_ed"

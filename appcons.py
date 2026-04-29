@@ -45,11 +45,15 @@ def load_position_labels():
 
 def apply_position_labels(df):
     if df.empty: return df
+    from shared_logic import load_external_circuits
     labels = load_position_labels()
-    if not labels: return df
+    circ_labels = load_external_circuits().get("labels", {})
+    combined = {**circ_labels, **labels}
+
+    if not combined: return df
     def format_cp(cp_str):
         raw = resolve_raw_addr(cp_str)
-        if raw in labels: return f"{labels[raw]} ({raw})"
+        if raw in combined: return f"{combined[raw]} ({raw})"
         return cp_str
     df["Counterparty"] = df["Counterparty"].apply(format_cp)
     return df
