@@ -234,19 +234,17 @@ def fetch_data(address, api_key, network):
 # --- UI PRINCIPALE ---
 st.sidebar.title("Jules Crypto Pro V3")
 
-# Auto-discovery of owner accounts
+# Auto-discovery of owner accounts (ONLY from identified transactions in the journal)
 def get_discovered_accounts():
     discovered = set()
     if not st.session_state.transactions.empty:
+        # We only take accounts present in the actual transaction journal
         discovered.update(st.session_state.transactions['Account'].dropna().unique())
-
-    from shared_logic import get_known_accounts
-    discovered.update(get_known_accounts())
     return sorted([str(x) for x in discovered if str(x).strip()])
 
 with st.sidebar:
     # Key renamed to ensure absolute uniqueness across refreshes
-    menu = st.selectbox("Navigation", ["Harvest", "Consultation", "Frais & Fiscalité", "Settings"], key="main_nav_v6_final")
+    menu = st.selectbox("Navigation", ["Harvest", "Consultation", "Frais & Fiscalité", "Settings"], key="main_nav_v7_final")
 
     st.divider()
     st.subheader("🏦 Comptes Propriétaires")

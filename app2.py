@@ -218,7 +218,14 @@ def merge_raw_data(year):
                     amount = float(r.get("Value ETH", 0.0))
                     if f_addr == acc_low: amount = -amount
 
-                    status = "Spam" if (resolve_raw_addr(cp) in spam_list or str(r.get("Chain", "")).lower() in spam_list) else "A vérifier"
+                    # --- AUTOMATIC SPAM DETECTION ---
+                    # 1. Known Blacklist
+                    is_blacklisted = (resolve_raw_addr(cp) in spam_list or str(r.get("Chain", "")).lower() in spam_list)
+                    # 2. Empty Asset & Dust amount (User Request)
+                    asset_name = str(r.get("Chain", "")).strip()
+                    is_dust_empty = (asset_name == "" and abs(amount) < 1e-15)
+
+                    status = "Spam" if (is_blacklisted or is_dust_empty) else "A vérifier"
                     all_rows.append({
                         "Date": r.get("Date"), "Account": acc_low, "Counterparty": cp, "Asset": r.get("Chain", "ETH"),
                         "Amount": amount, "Value ($)": float(r.get("Value ($)") or 0.0), "Network": r.get("Chain"),
@@ -243,7 +250,12 @@ def merge_raw_data(year):
                     amount = float(r.get("Value", 0.0))
                     if f_addr == acc_low: amount = -amount
 
-                    status = "Spam" if (resolve_raw_addr(cp) in spam_list or str(r.get("Token", "")).lower() in spam_list) else "A vérifier"
+                    # --- AUTOMATIC SPAM DETECTION ---
+                    is_blacklisted = (resolve_raw_addr(cp) in spam_list or str(r.get("Token", "")).lower() in spam_list)
+                    asset_name = str(r.get("Token", "")).strip()
+                    is_dust_empty = (asset_name == "" and abs(amount) < 1e-15)
+
+                    status = "Spam" if (is_blacklisted or is_dust_empty) else "A vérifier"
                     all_rows.append({
                         "Date": r.get("Date"), "Account": acc_low, "Counterparty": cp, "Asset": r.get("Token"),
                         "Amount": amount, "Value ($)": float(r.get("Value ($)") or 0.0), "Network": r.get("Chain"),
