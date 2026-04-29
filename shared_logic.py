@@ -264,12 +264,12 @@ def get_portfolio_snapshot(journal_or_year, target_date):
     total_vgp = full_details["Valeur (EUR)"].sum() if not full_details.empty else 0.0
     return full_details, total_vgp
 
-def get_known_accounts():
+def get_known_accounts(include_mappings=True):
     """Aggregates account names from mapping file and all qualified journals."""
     known = set()
 
     # 1. From Mappings
-    if os.path.exists(POSITIONS_FILE):
+    if include_mappings and os.path.exists(POSITIONS_FILE):
         try:
             with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
                 mappings = json.load(f)

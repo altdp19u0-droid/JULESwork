@@ -240,6 +240,11 @@ def get_discovered_accounts():
     if not st.session_state.transactions.empty:
         # We only take accounts present in the actual transaction journal
         discovered.update(st.session_state.transactions['Account'].dropna().unique())
+
+    # We also include accounts identified in journals on disk, but EXCLUDE mapping list
+    from shared_logic import get_known_accounts
+    discovered.update(get_known_accounts(include_mappings=False))
+
     return sorted([str(x) for x in discovered if str(x).strip()])
 
 with st.sidebar:
