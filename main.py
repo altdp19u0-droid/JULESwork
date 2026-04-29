@@ -233,7 +233,37 @@ def fetch_data(address, api_key, network):
 
 # --- UI PRINCIPALE ---
 st.sidebar.title("Jules Crypto Pro V3")
-menu = st.sidebar.selectbox("Navigation", ["Harvest", "Consultation", "Frais & Fiscalité", "Settings"], key="main_nav")
+
+# Auto-discovery of owner accounts
+def get_discovered_accounts():
+    discovered = set()
+    if not st.session_state.transactions.empty:
+        discovered.update(st.session_state.transactions['Account'].dropna().unique())
+
+    from shared_logic import get_known_accounts
+    discovered.update(get_known_accounts())
+    return sorted([str(x) for x in discovered if str(x).strip()])
+
+with st.sidebar:
+    menu = st.selectbox("Navigation", ["Harvest", "Consultation", "Frais & Fiscalité", "Settings"], key="main_nav_v3")
+
+    st.divider()
+    st.subheader("🏦 Comptes Propriétaires")
+    discovered_accs = get_discovered_accounts()
+    if discovered_accs:
+        for acc in discovered_accs:
+            st.sidebar.caption(f"• {acc}")
+    else:
+        st.sidebar.info("Aucun compte détecté.")
+
+    new_acc = st.text_input("Ajouter un compte manuel", placeholder="ex: 0x... ou Label")
+    if st.button("➕ Ajouter"):
+        if new_acc:
+            # We don't have a dedicated accounts list in session,
+            # but adding a dummy transaction or using metadata could work.
+            # For now, we'll use metadata to store manually added labels
+            st.session_state.accounts_metadata[new_acc] = {"Count": 0, "Manual": True}
+            st.rerun()
 
 if menu == "Harvest":
     st.header("🚜 Récolte Massive de Données")
@@ -279,9 +309,12 @@ if menu == "Harvest":
             st.success(f"Récolte réussie : {len(new_df)} lignes.")
 
     if st.session_state.accounts_metadata:
+        st.subheader("📋 Gestion des Comptes")
         for acc, meta in list(st.session_state.accounts_metadata.items()):
             c1, c2 = st.columns([4, 1])
-            c1.info(f"{acc} : {meta['Count']} transactions")
+            msg = f"{acc} : {meta.get('Count', 0)} transactions"
+            if meta.get("Manual"): msg += " (Manuel)"
+            c1.info(msg)
             if c2.button("Supprimer", key=f"del_{acc}"):
                 del st.session_state.accounts_metadata[acc]; st.rerun()
 
