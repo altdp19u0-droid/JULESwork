@@ -245,8 +245,7 @@ def get_discovered_accounts():
     return sorted([str(x) for x in discovered if str(x).strip()])
 
 with st.sidebar:
-    # Key renamed to ensure absolute uniqueness across refreshes
-    menu = st.selectbox("Navigation", ["Harvest", "Consultation", "Frais & Fiscalité", "Settings"], key="main_nav_v6_final")
+    menu = st.selectbox("Navigation", ["Harvest", "Consultation", "Frais & Fiscalité", "Settings"], key="main_nav_v3")
 
     st.divider()
     st.subheader("🏦 Comptes Propriétaires")

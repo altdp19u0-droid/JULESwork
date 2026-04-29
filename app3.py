@@ -783,6 +783,48 @@ with tab_bilan:
         c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme factuelle des soldes par compte.")
 
         st.divider()
+        st.subheader("📥 Export de l'Historique Fiscal")
+        st.write("Ce bouton génère un fichier CSV contenant l'intégralité des transactions (hors spams) utilisées pour la constitution de l'inventaire et le calcul des plus-values.")
+
+        if st.button("📊 Préparer l'export Historique (Sans Spam)", use_container_width=True, key="btn_export_hist_fiscal"):
+            # Aggregation logic (same as VGP/Portfolio but row-based)
+            all_txs = []
+            for y in range(2020, target_year + 1):
+                path_j = get_file_path(y, 'qualified')
+                if os.path.exists(path_j):
+                    try:
+                        df_y = pd_read_csv_safe(path_j)
+                        # Standard exclusion filter
+                        if 'Status' in df_y.columns:
+                            df_y = df_y[df_y['Status'] != 'Spam']
+                        if 'Category' in df_y.columns:
+                            df_y = df_y[df_y['Category'] != 'Doublon à ignorer']
+                        all_txs.append(df_y)
+                    except: pass
+
+            if all_txs:
+                df_hist_full = pd.concat(all_txs, ignore_index=True)
+                # Apply labels for audit clarity
+                df_hist_full = apply_position_labels(df_hist_full)
+
+                # Convert to CSV bytes
+                csv_bytes = df_hist_full.to_csv(index=False, encoding="utf-8-sig")
+                st.session_state.hist_fiscal_csv = csv_bytes
+                st.success(f"Historique prêt ({len(df_hist_full)} lignes).")
+            else:
+                st.warning("Aucune transaction trouvée dans les journaux qualifiés.")
+
+        if "hist_fiscal_csv" in st.session_state:
+            st.download_button(
+                label="💾 Télécharger l'historique complet (CSV)",
+                data=st.session_state.hist_fiscal_csv,
+                file_name=f"historique_fiscal_complet_{target_year}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="btn_download_hist_fiscal"
+            )
+
+        st.divider()
         st.write("📝 **Montant à reporter dans la case 3AN (ou 3BN si moins-value) :**")
         st.code(f"{round(total_pv)}")
 
