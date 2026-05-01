@@ -392,6 +392,12 @@ def sync_data(year):
             if "Tx Hash" in old_df.columns:
                 old_df["Tx Hash"] = old_df["Tx Hash"].apply(norm_hash)
 
+            # Ensure all Fidelity columns exist in old_df to avoid KeyError
+            fidelity_cols = ["Category", "Status", "Imposable", "VGP (EUR)", "Linked_ID", "Link_Status"]
+            for col in fidelity_cols:
+                if col not in old_df.columns:
+                    old_df[col] = "" if col not in ["Imposable", "VGP (EUR)"] else (False if col == "Imposable" else 0.0)
+
             # Force numeric
             for col in ["Amount", "Value ($)", "VGP (EUR)"]:
                 if col in old_df.columns:
@@ -405,17 +411,13 @@ def sync_data(year):
 
             # --- FIDELITY ENGINE: Re-apply qualifications and Links from old_df to new_df ---
             if not old_df.empty:
-                # Ensure Link columns exist in old_df
-                for c in ["Linked_ID", "Link_Status"]:
-                    if c not in old_df.columns: old_df[c] = ""
-
                 # 1. Map by Exact Hash (Strongest)
                 # We extract mapping tables from old_df
-                hash_map = old_df[old_df["Tx Hash"] != ""].drop_duplicates("Tx Hash").set_index("Tx Hash")[["Category", "Status", "Imposable", "VGP (EUR)", "Linked_ID", "Link_Status"]].to_dict('index')
+                hash_map = old_df[old_df["Tx Hash"] != ""].drop_duplicates("Tx Hash").set_index("Tx Hash")[fidelity_cols].to_dict('index')
 
                 # 2. Map by (Date, Account, Asset) for manual entries or synthetic
                 old_df["_d"] = old_df["Date"].dt.date
-                manual_map = old_df[old_df["Tx Hash"] == ""].drop_duplicates(["_d", "Account", "Asset"]).set_index(["_d", "Account", "Asset"])[["Category", "Status", "Imposable", "VGP (EUR)", "Linked_ID", "Link_Status"]].to_dict('index')
+                manual_map = old_df[old_df["Tx Hash"] == ""].drop_duplicates(["_d", "Account", "Asset"]).set_index(["_d", "Account", "Asset"])[fidelity_cols].to_dict('index')
 
                 def reapply(row):
                     h = row["Tx Hash"]
@@ -674,69 +676,99 @@ with st.sidebar:
 
         journal_active = st.session_state.get("journal_qualifie")
         circuits = get_external_circuits_discovery(journal_active)
-        if not circuits:
-            st.write("Aucun circuit externe détecté dans les transactions.")
-        else:
-            df_circuits = pd.DataFrame(circuits)
 
-            # Action logic for labels
-            ed_circuits = st.data_editor(
-                df_circuits,
-                column_config={
-                    "Address": st.column_config.TextColumn(disabled=True),
-                    "Label": st.column_config.TextColumn("Label / Nom", help="ex: Bridge Arbitrum, 1inch Swap"),
-                    "Vol. USD": st.column_config.NumberColumn(format="$ %.2f", disabled=True),
-                    "Tx Count": st.column_config.NumberColumn(disabled=True),
-                    "Asset": st.column_config.TextColumn(disabled=True),
-                },
-                use_container_width=True,
-                key="circuits_editor"
-            )
+        t_discovery, t_manage = st.tabs(["🔎 Discovery (Auto)", "⚙️ Gérer les Circuits Indexés"])
 
-            c_save1, c_save2 = st.columns(2)
-            if c_save1.button("💾 Enregistrer les Labels de Circuits", use_container_width=True):
-                ext_data = load_external_circuits()
-                new_labels = {}
-                for _, r in ed_circuits.iterrows():
-                    if str(r["Label"]).strip():
-                        new_labels[r["Address"]] = str(r["Label"]).strip()
-                ext_data["labels"] = new_labels
-                save_external_circuits(ext_data)
-                st.success("Labels de circuits enregistrés.")
-                st.rerun()
+        with t_discovery:
+            if not circuits:
+                st.info("Aucun nouveau circuit externe détecté dans les transactions.")
+            else:
+                df_circuits = pd.DataFrame(circuits)
 
-            st.divider()
-            st.subheader("🛠️ Actions sur les adresses détectées")
-            c_act1, c_act2, c_act3 = st.columns(3)
+                # Action logic for labels
+                ed_circuits = st.data_editor(
+                    df_circuits,
+                    column_config={
+                        "Address": st.column_config.TextColumn(disabled=True),
+                        "Label": st.column_config.TextColumn("Label / Nom", help="ex: Bridge Arbitrum, 1inch Swap"),
+                        "Vol. USD": st.column_config.NumberColumn(format="$ %.2f", disabled=True),
+                        "Tx Count": st.column_config.NumberColumn(disabled=True),
+                        "Asset": st.column_config.TextColumn(disabled=True),
+                    },
+                    use_container_width=True,
+                    key="circuits_editor"
+                )
 
-            addr_target = st.selectbox("Choisir une adresse pour action", options=[""] + [c["Address"] for c in circuits])
-
-            if addr_target:
-                # Find current info for the selected address
-                curr_info = next((c for c in circuits if c["Address"] == addr_target), {})
-                curr_label = curr_info.get("Label", "")
-
-                if c_act1.button("👤 Promouvoir en PROPRIÉTAIRE", use_container_width=True):
-                    owners = load_owner_accounts()
-                    owners[addr_target] = curr_label if curr_label else f"Owner ({addr_target[:6]})"
-                    save_owner_accounts(owners)
-                    st.success(f"Adresse {addr_target} ajoutée aux comptes propriétaires.")
-                    st.rerun()
-
-                if c_act2.button("🏦 Promouvoir en POSITION", use_container_width=True):
-                    pos = load_position_labels()
-                    pos[addr_target] = curr_label if curr_label else f"Position ({addr_target[:6]})"
-                    save_position_labels(pos)
-                    st.success(f"Adresse {addr_target} ajoutée au mapping des protocoles.")
-                    st.rerun()
-
-                if c_act3.button("🚫 Cacher l'adresse", use_container_width=True):
+                c_save1, c_save2 = st.columns(2)
+                if c_save1.button("💾 Enregistrer les Labels de Circuits", use_container_width=True):
                     ext_data = load_external_circuits()
-                    if "hidden" not in ext_data: ext_data["hidden"] = []
-                    ext_data["hidden"].append(addr_target)
+                    new_labels = ext_data.get("labels", {})
+                    for _, r in ed_circuits.iterrows():
+                        if str(r["Label"]).strip():
+                            new_labels[r["Address"]] = str(r["Label"]).strip()
+                    ext_data["labels"] = new_labels
                     save_external_circuits(ext_data)
-                    st.success(f"Adresse {addr_target} cachée.")
+                    st.success("Labels de circuits enregistrés.")
                     st.rerun()
+
+                st.divider()
+                st.subheader("🛠️ Actions sur les adresses détectées")
+                c_act1, c_act2, c_act3 = st.columns(3)
+
+                addr_target = st.selectbox("Choisir une adresse pour action", options=[""] + [c["Address"] for c in circuits])
+
+                if addr_target:
+                    curr_info = next((c for c in circuits if c["Address"] == addr_target), {})
+                    curr_label = curr_info.get("Label", "")
+
+                    if c_act1.button("👤 Promouvoir en PROPRIÉTAIRE", use_container_width=True):
+                        owners = load_owner_accounts()
+                        owners[addr_target] = curr_label if curr_label else f"Owner ({addr_target[:6]})"
+                        save_owner_accounts(owners)
+                        st.success(f"Adresse {addr_target} ajoutée aux comptes propriétaires.")
+                        st.rerun()
+
+                    if c_act2.button("🏦 Promouvoir en POSITION", use_container_width=True):
+                        pos = load_position_labels()
+                        pos[addr_target] = curr_label if curr_label else f"Position ({addr_target[:6]})"
+                        save_position_labels(pos)
+                        st.success(f"Adresse {addr_target} ajoutée au mapping des protocoles.")
+                        st.rerun()
+
+                    if c_act3.button("🚫 Cacher l'adresse", use_container_width=True):
+                        ext_data = load_external_circuits()
+                        if "hidden" not in ext_data: ext_data["hidden"] = []
+                        ext_data["hidden"].append(addr_target)
+                        save_external_circuits(ext_data)
+                        st.success(f"Adresse {addr_target} cachée.")
+                        st.rerun()
+
+        with t_manage:
+            ext_data = load_external_circuits()
+            labels = ext_data.get("labels", {})
+            hidden = ext_data.get("hidden", [])
+
+            if not labels and not hidden:
+                st.write("Aucun circuit enregistré.")
+            else:
+                st.subheader("Labels existants")
+                if labels:
+                    df_labels = pd.DataFrame(list(labels.items()), columns=["Address", "Label"])
+                    ed_labels = st.data_editor(df_labels, use_container_width=True, key="ed_labels_mgmt")
+                    if st.button("💾 Mettre à jour les Labels"):
+                        new_map = {r["Address"]: r["Label"] for _, r in ed_labels.iterrows()}
+                        ext_data["labels"] = new_map
+                        save_external_circuits(ext_data)
+                        st.success("Labels mis à jour.")
+                        st.rerun()
+
+                if hidden:
+                    st.subheader("Adresses cachées")
+                    to_unhide = st.multiselect("Retirer des adresses cachées", options=hidden)
+                    if st.button("🔓 Réafficher les adresses sélectionnées"):
+                        ext_data["hidden"] = [h for h in hidden if h not in to_unhide]
+                        save_external_circuits(ext_data)
+                        st.rerun()
 
             st.divider()
             st.subheader("➕ Ajouter manuellement un circuit")

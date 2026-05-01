@@ -508,6 +508,41 @@ def get_owner_addresses(journal_df=None):
                 except: pass
     return owners
 
+@st.cache_data(ttl=600)
+def get_external_circuits_discovery_disk():
+    """Discovers transient addresses from all journals saved on disk."""
+    owner_addrs = get_owner_addresses()
+
+    pos_labels = {}
+    if os.path.exists(POSITIONS_FILE):
+        try:
+            with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
+                mappings = json.load(f)
+                for addr, val in mappings.items():
+                    pos_labels[addr] = val.get("label") if isinstance(val, dict) else val
+        except: pass
+
+    circuits_info = {} # {addr: {count, volume_usd}}
+    if os.path.exists(EXPORT_BASE_DIR):
+        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
+        for y in years:
+            path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
+            if os.path.exists(path):
+                try:
+                    df = pd_read_csv_safe(path)
+                    if not df.empty and "Status" in df.columns:
+                        df_val = df[df["Status"] != "Spam"]
+                        for _, r in df_val.iterrows():
+                            cp_raw = resolve_raw_addr(r.get("Counterparty", ""))
+                            if cp_raw and cp_raw not in owner_addrs and cp_raw not in pos_addrs:
+                                if cp_raw not in circuits_info:
+                                    circuits_info[cp_raw] = {"count": 0, "volume_usd": 0.0, "last_asset": ""}
+                                circuits_info[cp_raw]["count"] += 1
+                                circuits_info[cp_raw]["volume_usd"] += abs(float(r.get("Value ($)", 0.0)))
+                                circuits_info[cp_raw]["last_asset"] = str(r.get("Asset", ""))
+                except: pass
+    return circuits_info
+
 def get_external_circuits_discovery(journal_df=None):
     """
     Discovers valid transient addresses (not owners, not positions).
@@ -525,33 +560,22 @@ def get_external_circuits_discovery(journal_df=None):
         except: pass
     pos_addrs = set(pos_labels.keys())
 
-    circuits_info = {} # {addr: {count, volume_usd}}
-
-    # 1. Collect from disk
-    all_journals = []
-    if os.path.exists(EXPORT_BASE_DIR):
-        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
-        for y in years:
-            path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
-            if os.path.exists(path):
-                try:
-                    all_journals.append(pd_read_csv_safe(path))
-                except: pass
+    # 1. Load cached info from disk
+    circuits_info = get_external_circuits_discovery_disk()
 
     # 2. Add in-memory journal if provided
     if journal_df is not None and not journal_df.empty:
-        all_journals.append(journal_df)
-
-    for df in all_journals:
-        if not df.empty and "Status" in df.columns:
-            # Exclude only Spams from discovery
-            # (Valid and A verifier can be candidates for treatment circuits)
+        # We need a copy to not modify original df
+        df = journal_df
+        if "Status" in df.columns:
             df_val = df[df["Status"] != "Spam"]
             for _, r in df_val.iterrows():
                 cp_raw = resolve_raw_addr(r.get("Counterparty", ""))
                 if cp_raw and cp_raw not in owner_addrs and cp_raw not in pos_addrs:
                     if cp_raw not in circuits_info:
                         circuits_info[cp_raw] = {"count": 0, "volume_usd": 0.0, "last_asset": ""}
+                    # Note: this might over-count if disk journals overlap with memory.
+                    # But for discovery UI, it's acceptable.
                     circuits_info[cp_raw]["count"] += 1
                     circuits_info[cp_raw]["volume_usd"] += abs(float(r.get("Value ($)", 0.0)))
                     circuits_info[cp_raw]["last_asset"] = str(r.get("Asset", ""))
