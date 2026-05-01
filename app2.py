@@ -175,16 +175,16 @@ def merge_raw_data(year):
                 })
         except Exception: pass
 
-    # 2. Load Blockchain Txs (app.py) - ONLY LATEST FILES
+    # 2. Load Blockchain Txs (app.py and specialized importers) - ONLY LATEST FILES
     latest_files = get_latest_raw_files(year)
     for f_path in latest_files:
         f = os.path.basename(f_path)
-        file_addr = ""
-        parts = f.split("_")
-        for p in parts:
-            if p.startswith("0x") and len(p) >= 40:
-                file_addr = p.lower()
-                break
+
+        # Determine likely source/account from filename as fallback
+        file_source = "unknown"
+        parts = f.replace(".csv", "").split("_")
+        if len(parts) >= 2:
+            file_source = parts[-2].lower() # Usually the source ID part
 
         if f.startswith("raw_transactions_") and os.path.getsize(f_path) > 0:
             try:
@@ -194,7 +194,7 @@ def merge_raw_data(year):
                     t_addr_full = str(r.get("To", ""))
                     f_addr = resolve_raw_addr(f_addr_full)
                     acc_low = str(r.get("Account", "")).lower()
-                    if not acc_low or acc_low in ["nan", "0x..."]: acc_low = file_addr if file_addr else "unknown"
+                    if not acc_low or acc_low in ["nan", "0x..."]: acc_low = file_source
 
                     cp = str(r.get("Counterparty", ""))
                     if not cp or cp == "nan": cp = t_addr_full if f_addr == acc_low else f_addr_full
@@ -202,10 +202,7 @@ def merge_raw_data(year):
                     amount = float(r.get("Value ETH", 0.0))
                     if f_addr == acc_low: amount = -amount
 
-                    # --- AUTOMATIC SPAM DETECTION ---
-                    # 1. Known Blacklist
                     is_blacklisted = (resolve_raw_addr(cp) in spam_list or str(r.get("Chain", "")).lower() in spam_list)
-                    # 2. Empty Asset & Dust amount (User Request)
                     asset_name = str(r.get("Chain", "")).strip()
                     is_dust_empty = (asset_name == "" and abs(amount) < 1e-15)
 
@@ -219,14 +216,14 @@ def merge_raw_data(year):
                     })
             except Exception: pass
 
-        if f.startswith("raw_token_transfers_") and os.path.getsize(f_path) > 0:
+        elif f.startswith("raw_token_transfers_") and os.path.getsize(f_path) > 0:
             try:
                 df = pd_read_csv_safe(f_path)
                 for _, r in df.iterrows():
                     f_addr_full = str(r.get("From", ""))
                     f_addr = resolve_raw_addr(f_addr_full)
                     acc_low = str(r.get("Account", "")).lower()
-                    if not acc_low or acc_low in ["nan", "0x..."]: acc_low = file_addr if file_addr else "unknown"
+                    if not acc_low or acc_low in ["nan", "0x..."]: acc_low = file_source
 
                     cp = str(r.get("Counterparty", ""))
                     if not cp or cp == "nan": cp = str(r.get("To", "")) if f_addr == acc_low else f_addr_full
@@ -234,7 +231,6 @@ def merge_raw_data(year):
                     amount = float(r.get("Value", 0.0))
                     if f_addr == acc_low: amount = -amount
 
-                    # --- AUTOMATIC SPAM DETECTION ---
                     is_blacklisted = (resolve_raw_addr(cp) in spam_list or str(r.get("Token", "")).lower() in spam_list)
                     asset_name = str(r.get("Token", "")).strip()
                     is_dust_empty = (asset_name == "" and abs(amount) < 1e-15)

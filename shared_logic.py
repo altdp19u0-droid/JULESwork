@@ -47,32 +47,36 @@ def get_file_path(year, category):
 
 def get_latest_raw_files(year):
     """
-    Returns only the most recent raw CSV files per (address + type) in a given year directory.
+    Returns only the most recent raw CSV files per (source_id + file_type) in a given year directory.
+    Standard format: raw_{type}_{source}_{timestamp}.csv
     Example: raw_transactions_0x123_20260501.csv vs raw_transactions_0x123_20260430.csv
     """
     year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
     if not os.path.exists(year_dir): return []
 
-    # Map: (prefix_type, address) -> latest_filename
-    # Prefix types: raw_portfolio, raw_transactions, raw_token_transfers
+    # Map: (type, source_id) -> (full_filename, timestamp_part)
     latest_map = {}
 
     all_files = [f for f in os.listdir(year_dir) if f.endswith(".csv") and f.startswith("raw_")]
 
     for f in all_files:
-        parts = f.split("_")
-        if len(parts) < 4: continue
+        # Standardize naming: raw_transactions_token_transfers_0x123_...
+        # We need to extract the type and the source (address/platform)
+        # Type is everything between first 'raw_' and the last two parts (source and timestamp)
+        parts = f.replace(".csv", "").split("_")
+        if len(parts) < 4: continue # raw_{type}_{source}_{timestamp}
 
-        file_type = parts[1] # portfolio, transactions, token
-        addr = parts[2].lower()
+        timestamp = parts[-1]
+        source = parts[-2].lower()
+        # Everything in the middle is the type
+        file_type = "_".join(parts[1:-2])
 
-        # Key to group versions of the same harvest
-        key = (file_type, addr)
+        key = (file_type, source)
 
         if key not in latest_map:
             latest_map[key] = f
         else:
-            # Compare by filename (which contains timestamp YYYYMMDD_HHMMSS)
+            # Compare by lexicographical order of filename (contains timestamp)
             if f > latest_map[key]:
                 latest_map[key] = f
 
