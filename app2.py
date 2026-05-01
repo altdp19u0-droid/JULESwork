@@ -8,7 +8,8 @@ from datetime import datetime
 from shared_logic import (
     resolve_raw_addr, get_fiat_rate,
     load_external_circuits, save_external_circuits, get_external_circuits_discovery,
-    pd_read_csv_safe, detect_internal_transfers
+    pd_read_csv_safe, detect_internal_transfers,
+    load_owner_accounts, save_owner_accounts, get_owner_addresses
 )
 
 # --- Status Indicator ---
@@ -77,8 +78,11 @@ def apply_position_labels(df):
     ext_data = load_external_circuits()
     circ_labels = ext_data.get("labels", {})
 
-    # Merge both for display (Positions take priority)
-    combined_labels = {**circ_labels, **labels}
+    # 3. Load Owner Accounts
+    owners_map = load_owner_accounts()
+
+    # Merge all for display (Positions > Owners > Circuits)
+    combined_labels = {**circ_labels, **owners_map, **labels}
 
     if not combined_labels: return df
 
@@ -545,6 +549,59 @@ with st.sidebar:
             if st.button("✅ Supprimer de la liste noire"):
                 for item in to_remove: spam_list.remove(item)
                 save_spam_list(spam_list)
+                st.rerun()
+
+    with st.expander("👥 Gestion des Comptes Propriétaires"):
+        from shared_logic import load_owner_accounts, save_owner_accounts, get_owner_addresses
+
+        st.info("Définissez et fixez la liste de vos comptes propriétaires pour renforcer la détection des transferts internes.")
+
+        owner_mappings = load_owner_accounts()
+        all_detected = get_owner_addresses() # Contains both mapped and journal-found
+
+        # Table for management
+        owner_data = []
+        for addr in sorted(list(all_detected)):
+            owner_data.append({
+                "Address": addr,
+                "Label": owner_mappings.get(addr, ""),
+                "Verified": addr in owner_mappings
+            })
+
+        df_owners = pd.DataFrame(owner_data)
+        ed_owners = st.data_editor(
+            df_owners,
+            column_config={
+                "Address": st.column_config.TextColumn(disabled=True),
+                "Label": st.column_config.TextColumn("Nom / Label"),
+                "Verified": st.column_config.CheckboxColumn("Fixer comme Propriétaire"),
+            },
+            use_container_width=True,
+            key="owners_editor",
+            hide_index=True
+        )
+
+        if st.button("💾 Enregistrer les Comptes Propriétaires", use_container_width=True):
+            new_map = {}
+            for _, r in ed_owners.iterrows():
+                if r["Verified"]:
+                    new_map[r["Address"]] = str(r["Label"]).strip()
+            save_owner_accounts(new_map)
+            st.success("Configuration des comptes propriétaires mise à jour.")
+            st.rerun()
+
+        st.divider()
+        st.subheader("➕ Ajouter un compte manuellement")
+        c_add1, c_add2 = st.columns([2, 1])
+        new_owner_addr = c_add1.text_input("Adresse (0x...)", key="new_owner_addr")
+        new_owner_label = c_add2.text_input("Label", key="new_owner_label")
+        if st.button("➕ Ajouter aux Propriétaires"):
+            if new_owner_addr:
+                addr_clean = resolve_raw_addr(new_owner_addr)
+                curr_map = load_owner_accounts()
+                curr_map[addr_clean] = new_owner_label
+                save_owner_accounts(curr_map)
+                st.success(f"Compte {addr_clean} ajouté.")
                 st.rerun()
 
     with st.expander("🌐 Circuits de Traitement (Swaps/Bridges/External)"):

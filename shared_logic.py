@@ -11,6 +11,7 @@ EXPORT_BASE_DIR = "sanctuarisation"
 POSITIONS_FILE = "position_labels.json"
 PRICE_CACHE_FILE = "historical_prices_cache.json"
 EXTERNAL_CIRCUITS_FILE = "external_circuits.json"
+OWNERS_FILE = "owner_accounts.json"
 
 def resolve_raw_addr(addr_str):
     s = str(addr_str).strip().lower()
@@ -377,9 +378,28 @@ def save_external_circuits(data):
     with open(EXTERNAL_CIRCUITS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
+def load_owner_accounts():
+    if os.path.exists(OWNERS_FILE):
+        try:
+            with open(OWNERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except: return {}
+    return {}
+
+def save_owner_accounts(data):
+    with open(OWNERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
 def get_owner_addresses():
-    """Extracts all raw addresses identified as 'owners' from the journals."""
-    owners = set()
+    """
+    Extracts all raw addresses identified as 'owners'.
+    Combines verified owners from mapping file and auto-detected ones from journals.
+    """
+    # 1. Verified Owners (Fixed)
+    owners_map = load_owner_accounts()
+    owners = set(owners_map.keys())
+
+    # 2. Auto-Discovery from Journals
     if os.path.exists(EXPORT_BASE_DIR):
         years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
         for y in years:
@@ -499,25 +519,25 @@ def detect_internal_transfers(df):
         for h in hashes:
             if not h or len(h) < 10 or h.lower() in ["nan", "none", "0"]: continue
             mask = df["Tx Hash"] == h
-            # Only if at least two different accounts or directions are involved?
-            # Actually, if same hash appears twice in our journal, it's a transfer between two of our accounts.
+            # If same hash appears twice in our journal, it's a transfer between two of our accounts.
             if len(df[mask]) >= 2:
                 df.loc[mask, "Category"] = "Transfert Interne"
                 df.loc[mask, "Status"] = "Valide"
                 count_h += 1
 
     # 2. Detection by Owned Account/Counterparty
+    # Robust Detection: prioritizes verified owners then discovery
     all_my_accounts = get_owner_addresses()
     # Also add display names from the current journal
     all_my_accounts.update([str(a).lower() for a in df["Account"].dropna().unique()])
 
     def is_internal(cp_str):
         raw = resolve_raw_addr(cp_str)
+        # Check against both hex addresses and known labels (as fallback)
         return raw in all_my_accounts
 
     mask_internal = df["Counterparty"].fillna("").apply(is_internal)
     if mask_internal.any():
-        # Avoid overwriting already qualified categories if they are more specific?
         # User requested automatic identification.
         df.loc[mask_internal, "Category"] = "Transfert Interne"
         df.loc[mask_internal, "Status"] = "Valide"
