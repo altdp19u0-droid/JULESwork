@@ -6,7 +6,10 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import unicodedata
-from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur
+from shared_logic import (
+    resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
+    validate_spam_exclusion, load_spam_list, get_file_path
+)
 
 # --- Status Indicator ---
 def show_status():
@@ -22,27 +25,6 @@ PRICE_CACHE_FILE = "historical_prices_cache.json"
 POSITIONS_FILE = "position_labels.json"
 
 # --- Cache Engine ---
-def load_price_cache():
-    """Loads prices from both global cache and all annual sanctuarised files."""
-    combined = {}
-    if os.path.exists(PRICE_CACHE_FILE):
-        try:
-            with open(PRICE_CACHE_FILE, "r", encoding="utf-8", errors="replace") as f:
-                combined = json.load(f)
-        except: pass
-
-    # Merge with annual verified prices
-    if os.path.exists(EXPORT_BASE_DIR):
-        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
-        for y in years:
-            path = os.path.join(EXPORT_BASE_DIR, y, f"verified_prices_{y}.json")
-            if os.path.exists(path):
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        combined.update(json.load(f))
-                except: pass
-    return combined
-
 def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
         try:
@@ -57,20 +39,6 @@ def save_price_cache(cache):
         json.dump(cache, f)
 
 # --- Helpers ---
-def pd_read_csv_safe(path):
-    """Robust CSV reading for Windows with encoding fallbacks."""
-    try:
-        return pd.read_csv(path, encoding="utf-8-sig")
-    except:
-        try:
-            return pd.read_csv(path, encoding="latin-1")
-        except:
-            return pd.read_csv(path, encoding="utf-8", errors="replace")
-
-def get_qualified_path(year):
-    return os.path.join(EXPORT_BASE_DIR, str(year), f"qualified_journal_{year}.csv")
-
-
 def is_imposable_robust(val):
     s = str(val).upper().strip()
     return s in ["TRUE", "1", "1.0", "VRAI"]
@@ -115,7 +83,7 @@ with st.sidebar:
 
     # Data Freshness Warning
     from shared_logic import check_file_freshness
-    qual_path = get_qualified_path(target_year)
+    qual_path = get_file_path(target_year, 'qualified')
     if os.path.exists(qual_path):
         last_load = st.session_state.get("last_vgp_sync_time", 0)
         if check_file_freshness(qual_path, last_load):
@@ -125,7 +93,7 @@ with st.sidebar:
     show_status()
 
 # --- Main logic ---
-path = get_qualified_path(target_year)
+path = get_file_path(target_year, 'qualified')
 
 if not os.path.exists(path):
     st.warning(f"📂 En attente de données : Le fichier '{os.path.basename(path)}' n'existe pas encore.")
@@ -134,8 +102,16 @@ else:
     # --- Persistence Logic ---
     # We use session state to ensure UI updates after calculation
     if "journal_active" not in st.session_state or st.session_state.get("active_path") != path:
+        from shared_logic import pd_read_csv_safe
         journal = pd_read_csv_safe(path)
         journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
+
+        # --- DOUBLE VÉRIFICATION SPAM À L'OUVERTURE ---
+        leaked = validate_spam_exclusion(journal)
+        if leaked:
+            journal.loc[leaked, "Status"] = "Spam"
+            st.toast(f"🛡️ Art 150 VH bis : {len(leaked)} lignes spams écartées automatiquement.")
+
         st.session_state.journal_active = journal
         st.session_state.active_path = path
         st.session_state.last_vgp_sync_time = time.time()

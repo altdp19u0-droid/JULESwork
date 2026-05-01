@@ -6,7 +6,10 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import unicodedata
-from shared_logic import get_price_eur
+from shared_logic import (
+    get_price_eur, validate_spam_exclusion,
+    load_spam_list, pd_read_csv_safe
+)
 def show_status():
     st.sidebar.success("✅ Système Opérationnel")
     st.sidebar.caption(f"Logique Partagée : OK")
@@ -20,14 +23,6 @@ PRICE_CACHE_FILE = "historical_prices_cache.json"
 SPAM_FILE = "spam_blacklist.json"
 
 # --- Helpers ---
-def load_spam_list():
-    if os.path.exists(SPAM_FILE):
-        try:
-            with open(SPAM_FILE, "r", encoding="utf-8", errors="replace") as f:
-                return set(json.load(f))
-        except: return set()
-    return set()
-
 def load_price_cache():
     if os.path.exists(PRICE_CACHE_FILE):
         try:
@@ -40,13 +35,6 @@ def save_price_cache(cache):
     with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=4)
 
-def pd_read_csv_safe(path):
-    try: return pd.read_csv(path, encoding="utf-8-sig")
-    except:
-        try: return pd.read_csv(path, encoding="latin-1")
-        except: return pd.read_csv(path, encoding="utf-8", errors="replace")
-
-
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres de Scan")
@@ -58,6 +46,20 @@ with st.sidebar:
     selected_years = st.multiselect("Années à traiter", options=available_years, default=available_years, help="Sélectionnez une ou plusieurs années pour limiter le scan.")
 
     exclude_spam = st.checkbox("🛡️ Exclure les Spams (Statut App 2)", value=True, help="Ignore les assets et dates liés uniquement à des transactions marquées comme Spam dans le journal qualifié.")
+
+    # --- DOUBLE VÉRIFICATION SPAM À L'OUVERTURE ---
+    if exclude_spam:
+        total_leaked = 0
+        for y in selected_years:
+            q_path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
+            if os.path.exists(q_path):
+                try:
+                    df_q = pd_read_csv_safe(q_path)
+                    leaked = validate_spam_exclusion(df_q)
+                    if leaked: total_leaked += len(leaked)
+                except: pass
+        if total_leaked > 0:
+            st.sidebar.warning(f"🛡️ {total_leaked} lignes suspectes détectées via Blacklist. Elles seront ignorées du scan.")
 
     st.divider()
     show_status()
@@ -88,9 +90,12 @@ def scan_needed_prices(target_years, exclude_spams=True):
         if os.path.exists(qual_path):
             df = pd_read_csv_safe(qual_path)
             if not df.empty:
-                # Filtrage Spam si demandé
-                if exclude_spams and "Status" in df.columns:
-                    df = df[df["Status"] != "Spam"]
+                # --- DOUBLE VÉRIFICATION SPAM PENDANT LE SCAN ---
+                if exclude_spams:
+                    leaked = validate_spam_exclusion(df)
+                    if leaked: df.loc[leaked, "Status"] = "Spam"
+                    if "Status" in df.columns:
+                        df = df[df["Status"] != "Spam"]
 
                 df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
                 # Identify cessions
@@ -114,8 +119,11 @@ def scan_needed_prices(target_years, exclude_spams=True):
         if os.path.exists(qual_path):
             df_q = pd_read_csv_safe(qual_path)
             if not df_q.empty:
-                if exclude_spams and "Status" in df_q.columns:
-                    df_q = df_q[df_q["Status"] != "Spam"]
+                if exclude_spams:
+                    leaked = validate_spam_exclusion(df_q)
+                    if leaked: df_q.loc[leaked, "Status"] = "Spam"
+                    if "Status" in df_q.columns:
+                        df_q = df_q[df_q["Status"] != "Spam"]
                 assets_from_qual = set(df_q["Asset"].dropna().unique())
                 assets_in_year.update(assets_from_qual)
 

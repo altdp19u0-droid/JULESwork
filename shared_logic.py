@@ -267,6 +267,12 @@ def get_portfolio_snapshot(journal_or_year, target_date):
                 try:
                     df_y = pd_read_csv_safe(path_j)
                     df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
+
+                    # --- ABSOLUTE SPAM EXCLUSION (Recursive) ---
+                    leaked = validate_spam_exclusion(df_y)
+                    if leaked:
+                        df_y.loc[leaked, "Status"] = "Spam"
+
                     journals_to_process.append(df_y[df_y["Date"] <= target_date])
                 except: pass
 
