@@ -545,8 +545,12 @@ def get_external_circuits_discovery_disk():
 
 def get_external_circuits_discovery(journal_df=None):
     """
-    Discovers valid transient addresses (not owners, not positions).
-    Supports discovery from a provided DataFrame (in-memory) and journals on disk.
+    Discovers valid transient addresses (not owners, not positions) using RECURSIVE DISCOVERY RULE.
+    Rule:
+    1. Exclude Spams.
+    2. Exclude already declared Owners/Positions.
+    3. Collect accounts having Txs with Owners/Positions (Level 1).
+    4. Collect accounts having Txs with Level N collected accounts (Level 2+).
     """
     owner_addrs = get_owner_addresses(journal_df)
 
@@ -560,34 +564,77 @@ def get_external_circuits_discovery(journal_df=None):
         except: pass
     pos_addrs = set(pos_labels.keys())
 
-    # 1. Load cached info from disk
-    circuits_info = get_external_circuits_discovery_disk()
+    # Build the interaction graph from all available journals
+    # Graph format: {addr: {neighbor: {count, volume_usd, last_asset}}}
+    adj = {}
 
-    # 2. Add in-memory journal if provided
-    if journal_df is not None and not journal_df.empty:
-        # We need a copy to not modify original df
-        df = journal_df
-        if "Status" in df.columns:
-            df_val = df[df["Status"] != "Spam"]
-            for _, r in df_val.iterrows():
-                cp_raw = resolve_raw_addr(r.get("Counterparty", ""))
-                if cp_raw and cp_raw not in owner_addrs and cp_raw not in pos_addrs:
-                    if cp_raw not in circuits_info:
-                        circuits_info[cp_raw] = {"count": 0, "volume_usd": 0.0, "last_asset": ""}
-                    # Note: this might over-count if disk journals overlap with memory.
-                    # But for discovery UI, it's acceptable.
-                    circuits_info[cp_raw]["count"] += 1
-                    circuits_info[cp_raw]["volume_usd"] += abs(float(r.get("Value ($)", 0.0)))
-                    circuits_info[cp_raw]["last_asset"] = str(r.get("Asset", ""))
+    all_journals = []
+    if os.path.exists(EXPORT_BASE_DIR):
+        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
+        for y in years:
+            path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
+            if os.path.exists(path):
+                try: all_journals.append(pd_read_csv_safe(path))
+                except: pass
+    if journal_df is not None: all_journals.append(journal_df)
+
+    for df in all_journals:
+        if df.empty or "Status" not in df.columns: continue
+        # Rule 1: Exclude Spams
+        df_val = df[df["Status"] != "Spam"]
+        for _, r in df_val.iterrows():
+            acc = resolve_raw_addr(r.get("Account", ""))
+            cp = resolve_raw_addr(r.get("Counterparty", ""))
+            if not acc or not cp: continue
+
+            vol = abs(float(r.get("Value ($)", 0.0)))
+            asset = str(r.get("Asset", ""))
+
+            for src, dst in [(acc, cp), (cp, acc)]:
+                if src not in adj: adj[src] = {}
+                if dst not in adj[src]: adj[src][dst] = {"count": 0, "volume_usd": 0.0, "last_asset": ""}
+                adj[src][dst]["count"] += 1
+                adj[src][dst]["volume_usd"] += vol
+                adj[src][dst]["last_asset"] = asset
+
+    # Recursive collection logic
+    # Initial seeds: declared Owners and Positions
+    seeds = owner_addrs.union(pos_addrs)
+    collected = set()
+    to_visit = list(seeds)
+    visited = set()
+
+    # We perform a BFS to discover the component connected to owners/positions
+    while to_visit:
+        curr = to_visit.pop(0)
+        visited.add(curr)
+
+        neighbors = adj.get(curr, {})
+        for n in neighbors:
+            # Rule 2: Exclude Declared Owners/Positions from the "Circuits" list itself
+            if n not in seeds:
+                if n not in collected:
+                    collected.add(n)
+                    # Rule 4: Recursive (add to visit queue to find neighbors of neighbors)
+                    if n not in visited:
+                        to_visit.append(n)
 
     # Filter out hidden/already labeled ones
     ext_data = load_external_circuits()
     labels = ext_data.get("labels", {})
     hidden = set(ext_data.get("hidden", []))
 
+    # Aggregating stats for collected circuits
     final_list = []
-    for addr, stats in circuits_info.items():
+    for addr in collected:
         if addr not in hidden:
+            # Aggregate stats from all neighbors
+            stats = {"count": 0, "volume_usd": 0.0, "last_asset": ""}
+            for n, s in adj.get(addr, {}).items():
+                stats["count"] += s["count"]
+                stats["volume_usd"] += s["volume_usd"]
+                stats["last_asset"] = s["last_asset"]
+
             final_list.append({
                 "Address": addr,
                 "Label": labels.get(addr, ""),

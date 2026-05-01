@@ -681,8 +681,11 @@ with st.sidebar:
 
         with t_discovery:
             if not circuits:
-                st.info("Aucun nouveau circuit externe détecté dans les transactions.")
+                st.info("Aucun nouveau circuit externe détecté dans les transactions selon la règle récursive.")
             else:
+                st.subheader("🔗 Comptes qualifiés par propagation")
+                st.caption("Cette liste inclut les comptes en lien direct ou indirect avec vos comptes propriétaires/positions.")
+
                 df_circuits = pd.DataFrame(circuits)
 
                 # Action logic for labels
@@ -713,13 +716,14 @@ with st.sidebar:
 
                 st.divider()
                 st.subheader("🛠️ Actions sur les adresses détectées")
-                c_act1, c_act2, c_act3 = st.columns(3)
 
                 addr_target = st.selectbox("Choisir une adresse pour action", options=[""] + [c["Address"] for c in circuits])
 
                 if addr_target:
                     curr_info = next((c for c in circuits if c["Address"] == addr_target), {})
                     curr_label = curr_info.get("Label", "")
+
+                    c_act1, c_act2, c_act3 = st.columns(3)
 
                     if c_act1.button("👤 Promouvoir en PROPRIÉTAIRE", use_container_width=True):
                         owners = load_owner_accounts()
@@ -735,12 +739,12 @@ with st.sidebar:
                         st.success(f"Adresse {addr_target} ajoutée au mapping des protocoles.")
                         st.rerun()
 
-                    if c_act3.button("🚫 Cacher l'adresse", use_container_width=True):
+                    if c_act3.button("🗑️ Supprimer de la liste (Cacher)", use_container_width=True):
                         ext_data = load_external_circuits()
                         if "hidden" not in ext_data: ext_data["hidden"] = []
                         ext_data["hidden"].append(addr_target)
                         save_external_circuits(ext_data)
-                        st.success(f"Adresse {addr_target} cachée.")
+                        st.success(f"Adresse {addr_target} retirée de la découverte.")
                         st.rerun()
 
         with t_manage:
