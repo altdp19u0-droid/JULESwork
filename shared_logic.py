@@ -527,8 +527,8 @@ def get_external_circuits_discovery():
                 try:
                     df = pd_read_csv_safe(path)
                     if not df.empty and "Status" in df.columns:
-                        # Only Valid transactions
-                        df_val = df[df["Status"] == "Valide"]
+                        # Exclude only Spams from discovery
+                        df_val = df[df["Status"] != "Spam"]
                         for _, r in df_val.iterrows():
                             cp_raw = resolve_raw_addr(r.get("Counterparty", ""))
                             if cp_raw and cp_raw not in owner_addrs and cp_raw not in pos_addrs:

@@ -703,14 +703,51 @@ with st.sidebar:
                 st.success("Labels de circuits enregistrés.")
                 st.rerun()
 
-            addr_to_hide = st.selectbox("Cacher une adresse de cette liste", options=[""] + [c["Address"] for c in circuits])
-            if addr_to_hide and st.button("🚫 Cacher l'adresse"):
-                ext_data = load_external_circuits()
-                if "hidden" not in ext_data: ext_data["hidden"] = []
-                ext_data["hidden"].append(addr_to_hide)
-                save_external_circuits(ext_data)
-                st.success(f"Adresse {addr_to_hide} cachée.")
-                st.rerun()
+            st.divider()
+            st.subheader("🛠️ Actions sur les adresses détectées")
+            c_act1, c_act2, c_act3 = st.columns(3)
+
+            addr_target = st.selectbox("Choisir une adresse pour action", options=[""] + [c["Address"] for c in circuits])
+
+            if addr_target:
+                # Find current info for the selected address
+                curr_info = next((c for c in circuits if c["Address"] == addr_target), {})
+                curr_label = curr_info.get("Label", "")
+
+                if c_act1.button("👤 Promouvoir en PROPRIÉTAIRE", use_container_width=True):
+                    owners = load_owner_accounts()
+                    owners[addr_target] = curr_label if curr_label else f"Owner ({addr_target[:6]})"
+                    save_owner_accounts(owners)
+                    st.success(f"Adresse {addr_target} ajoutée aux comptes propriétaires.")
+                    st.rerun()
+
+                if c_act2.button("🏦 Promouvoir en POSITION", use_container_width=True):
+                    pos = load_position_labels()
+                    pos[addr_target] = curr_label if curr_label else f"Position ({addr_target[:6]})"
+                    save_position_labels(pos)
+                    st.success(f"Adresse {addr_target} ajoutée au mapping des protocoles.")
+                    st.rerun()
+
+                if c_act3.button("🚫 Cacher l'adresse", use_container_width=True):
+                    ext_data = load_external_circuits()
+                    if "hidden" not in ext_data: ext_data["hidden"] = []
+                    ext_data["hidden"].append(addr_target)
+                    save_external_circuits(ext_data)
+                    st.success(f"Adresse {addr_target} cachée.")
+                    st.rerun()
+
+            st.divider()
+            st.subheader("➕ Ajouter manuellement un circuit")
+            c_man1, c_act_m = st.columns([3, 1])
+            new_circ_addr = c_man1.text_input("Adresse du circuit (0x...)", key="new_circ_addr")
+            if c_act_m.button("➕ Ajouter au Circuits"):
+                if new_circ_addr:
+                    addr_clean = resolve_raw_addr(new_circ_addr)
+                    ext_data = load_external_circuits()
+                    ext_data["labels"][addr_clean] = "Manual Circuit"
+                    save_external_circuits(ext_data)
+                    st.success(f"Circuit {addr_clean} ajouté.")
+                    st.rerun()
 
         if st.button("🧹 Réinitialiser les Circuits (Vider labels & cachés)"):
             save_external_circuits({"labels": {}, "hidden": []})
