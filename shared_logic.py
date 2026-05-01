@@ -584,6 +584,90 @@ def detect_internal_transfers(df):
 
     return df, {"hash": count_h, "account": count_acc}
 
+def find_reconciliation_matches(df, time_window_days=3, val_tolerance_pct=0.05):
+    """
+    Analyzes the journal to propose links between Orphan transactions.
+    Supports Fiat-to-Crypto, Crypto-to-Crypto, and Fiat-to-Fiat.
+    """
+    if df.empty: return df, 0
+
+    df = df.copy()
+    if "Linked_ID" not in df.columns: df["Linked_ID"] = ""
+    if "Link_Status" not in df.columns: df["Link_Status"] = ""
+
+    # Filter for candidates: Status Valid or A verifier, and not confirmed linked
+    mask_candidates = (df["Status"] != "Spam") & (df["Link_Status"] != "Confirmed")
+    candidates = df[mask_candidates].copy()
+
+    if candidates.empty: return df, 0
+
+    count_proposed = 0
+    import uuid
+
+    # Sort by date to facilitate matching
+    candidates = candidates.sort_values("Date")
+
+    # 1. Separate Potential Legs
+    # Outbound: Bank exits, Crypto exits
+    exits = candidates[candidates["Amount"] < 0].copy()
+    # Inbound: Crypto entries, Bank entries
+    entries = candidates[candidates["Amount"] > 0].copy()
+
+    used_entry_indices = set()
+
+    for idx_ex, row_ex in exits.iterrows():
+        # Check if already has a proposed link from a previous pass
+        if row_ex["Linked_ID"]: continue
+
+        date_ex = row_ex["Date"]
+        # Value in USD or EUR (absolute)
+        val_ex = abs(float(row_ex.get("Value ($)", 0)))
+        if val_ex == 0 and row_ex["Asset"] == "EUR": val_ex = abs(row_ex["Amount"]) # Assume 1:1 if EUR
+
+        # Search window
+        min_date = date_ex
+        max_date = date_ex + pd.Timedelta(days=time_window_days)
+
+        potential_entries = entries[
+            (entries["Date"] >= min_date) &
+            (entries["Date"] <= max_date) &
+            (~entries.index.isin(used_entry_indices))
+        ]
+
+        for idx_en, row_en in potential_entries.iterrows():
+            # Check Counterparty match? (User mentioned "enchainement de contreparties")
+            # If Bank Exit CP matches Entry Account (or CP matches Account Label)
+            cp_ex = resolve_raw_addr(row_ex["Counterparty"]).lower()
+            acc_en = resolve_raw_addr(row_en["Account"]).lower()
+
+            # Match if:
+            # - Counterparty name matches Account name (fuzzy)
+            # - OR values are very close
+            val_en = abs(float(row_en.get("Value ($)", 0)))
+            if val_en == 0 and row_en["Asset"] == "EUR": val_en = abs(row_en["Amount"])
+
+            val_diff = abs(val_ex - val_en)
+            val_match = False
+            if val_ex > 0:
+                 val_match = (val_diff / val_ex) <= val_tolerance_pct
+            elif val_en == 0 and val_ex == 0:
+                 val_match = True # Both zero value (e.g. unknown price)
+
+            name_match = (cp_ex in acc_en or acc_en in cp_ex or cp_ex in str(row_en["Account"]).lower())
+
+            if name_match and val_match:
+                # Propose Link
+                link_id = f"PROP-{uuid.uuid4().hex[:8]}"
+                df.at[idx_ex, "Linked_ID"] = link_id
+                df.at[idx_ex, "Link_Status"] = "Proposed"
+                df.at[idx_en, "Linked_ID"] = link_id
+                df.at[idx_en, "Link_Status"] = "Proposed"
+                used_entry_indices.add(idx_en)
+                count_proposed += 1
+                break # Move to next exit
+
+    return df, count_proposed
+
 def calculate_fiscal_gains(cessions_df, initial_acq_price):
     """
     Calculates capital gains according to Art 150 VH bis.

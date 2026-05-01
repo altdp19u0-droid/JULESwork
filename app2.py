@@ -10,7 +10,8 @@ from shared_logic import (
     load_external_circuits, save_external_circuits, get_external_circuits_discovery,
     pd_read_csv_safe, detect_internal_transfers,
     load_owner_accounts, save_owner_accounts, get_owner_addresses,
-    get_latest_raw_files, check_file_freshness
+    get_latest_raw_files, check_file_freshness,
+    find_reconciliation_matches
 )
 
 # --- Status Indicator ---
@@ -30,7 +31,7 @@ POSITIONS_FILE = "position_labels.json"
 COLUMNS = [
     "Date", "Account", "Counterparty", "Asset", "Amount",
     "Value ($)", "Network", "Tx Hash", "Source Type",
-    "Category", "Status", "Imposable"
+    "Category", "Status", "Imposable", "Linked_ID", "Link_Status"
 ]
 
 # --- Helpers ---
@@ -251,7 +252,15 @@ def merge_raw_data(year):
             except Exception: pass
 
     df_final = pd.DataFrame(all_rows)
+    if df_final.empty:
+        df_final = pd.DataFrame(columns=COLUMNS)
+
     if not df_final.empty:
+        # Ensure all required columns exist
+        for col in COLUMNS:
+            if col not in df_final.columns:
+                df_final[col] = ""
+
         df_final["Date"] = pd.to_datetime(df_final["Date"], utc=True, errors="coerce", format="ISO8601")
 
         # Unified hash normalization
@@ -375,27 +384,32 @@ def sync_data(year):
             new_df["Tx Hash"] = new_df["Tx Hash"].apply(norm_hash)
             new_df["_d"] = new_df["Date"].dt.date
 
-            # --- FIDELITY ENGINE: Re-apply qualifications from old_df to new_df ---
+            # --- FIDELITY ENGINE: Re-apply qualifications and Links from old_df to new_df ---
             if not old_df.empty:
+                # Ensure Link columns exist in old_df
+                for c in ["Linked_ID", "Link_Status"]:
+                    if c not in old_df.columns: old_df[c] = ""
+
                 # 1. Map by Exact Hash (Strongest)
                 # We extract mapping tables from old_df
-                hash_map = old_df[old_df["Tx Hash"] != ""].drop_duplicates("Tx Hash").set_index("Tx Hash")[["Category", "Status", "Imposable", "VGP (EUR)"]].to_dict('index')
+                hash_map = old_df[old_df["Tx Hash"] != ""].drop_duplicates("Tx Hash").set_index("Tx Hash")[["Category", "Status", "Imposable", "VGP (EUR)", "Linked_ID", "Link_Status"]].to_dict('index')
 
                 # 2. Map by (Date, Account, Asset) for manual entries or synthetic
-                # Note: We use .date() to be slightly flexible if seconds changed, but ideally Date should be exact.
                 old_df["_d"] = old_df["Date"].dt.date
-                manual_map = old_df[old_df["Tx Hash"] == ""].drop_duplicates(["_d", "Account", "Asset"]).set_index(["_d", "Account", "Asset"])[["Category", "Status", "Imposable", "VGP (EUR)"]].to_dict('index')
+                manual_map = old_df[old_df["Tx Hash"] == ""].drop_duplicates(["_d", "Account", "Asset"]).set_index(["_d", "Account", "Asset"])[["Category", "Status", "Imposable", "VGP (EUR)", "Linked_ID", "Link_Status"]].to_dict('index')
 
                 def reapply(row):
                     h = row["Tx Hash"]
                     if h and h in hash_map:
                         m = hash_map[h]
                         row["Category"], row["Status"], row["Imposable"], row["VGP (EUR)"] = m["Category"], m["Status"], m["Imposable"], m["VGP (EUR)"]
+                        row["Linked_ID"], row["Link_Status"] = m.get("Linked_ID", ""), m.get("Link_Status", "")
                     else:
                         key = (row["_d"], row["Account"], row["Asset"])
                         if key in manual_map:
                             m = manual_map[key]
                             row["Category"], row["Status"], row["Imposable"], row["VGP (EUR)"] = m["Category"], m["Status"], m["Imposable"], m["VGP (EUR)"]
+                            row["Linked_ID"], row["Link_Status"] = m.get("Linked_ID", ""), m.get("Link_Status", "")
                     return row
 
                 new_df = new_df.apply(reapply, axis=1)
@@ -502,6 +516,8 @@ with st.sidebar:
         f_imp_options = {"Oui": True, "Non": False}
         f_imp_sel = st.multiselect("Filtrer par Imposable", options=list(f_imp_options.keys()))
         f_imp = [f_imp_options[x] for x in f_imp_sel]
+
+        f_orphan = st.checkbox("Afficher uniquement les Orphelins (Sans Maillon)")
 
         f_cp_search = st.text_input("Filtrer par Counterparty (0x...)", "")
 
@@ -710,6 +726,69 @@ with st.sidebar:
                 save_position_labels(pos_labels)
                 st.rerun()
 
+# --- Reconciliation Tab ---
+def reconciliation_dashboard():
+    st.subheader("🤝 Réconciliation & Maillons de Transaction")
+    if "journal_qualifie" not in st.session_state or st.session_state.journal_qualifie.empty:
+        st.warning("Aucune donnée disponible.")
+        return
+
+    df = st.session_state.journal_qualifie
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.write("**🔍 Détection de Maillons**")
+        win = st.number_input("Fenêtre de recherche (jours)", 1, 15, 3)
+        tol = st.slider("Tolérance de valeur (%)", 0.0, 0.20, 0.05)
+
+        if st.button("🚀 Lancer la recherche automatique", use_container_width=True):
+            df_new, count = find_reconciliation_matches(df, time_window_days=win, val_tolerance_pct=tol)
+            st.session_state.journal_qualifie = df_new
+            st.success(f"Détection terminée : {count} nouveaux maillons proposés.")
+            st.rerun()
+
+    with col2:
+        st.write("**⚙️ Actions de Masse**")
+        if st.button("✅ Confirmer TOUS les maillons proposés", use_container_width=True):
+            df.loc[df["Link_Status"] == "Proposed", "Link_Status"] = "Confirmed"
+            st.session_state.journal_qualifie = df
+            st.success("Tous les maillons proposés ont été confirmés.")
+            st.rerun()
+
+        if st.button("🗑️ Effacer les maillons NON confirmés", use_container_width=True):
+            df.loc[df["Link_Status"] == "Proposed", "Linked_ID"] = ""
+            df.loc[df["Link_Status"] == "Proposed", "Link_Status"] = ""
+            st.session_state.journal_qualifie = df
+            st.rerun()
+
+    st.divider()
+
+    # Dashboard View
+    t_prop, t_orphans = st.tabs(["💡 Liaisons Proposées", "👻 Mouvements Orphelins"])
+
+    with t_prop:
+        proposed = df[df["Link_Status"] == "Proposed"]
+        if proposed.empty:
+            st.info("Aucune liaison proposée à valider.")
+        else:
+            # We display by pairs (grouped by Linked_ID)
+            for lid, group in proposed.groupby("Linked_ID"):
+                with st.container(border=True):
+                    c_g1, c_g2 = st.columns([4, 1])
+                    c_g1.write(f"Maillon : `{lid}`")
+                    if c_g2.button("✅ Confirmer", key=f"conf_{lid}"):
+                        df.loc[df["Linked_ID"] == lid, "Link_Status"] = "Confirmed"
+                        st.session_state.journal_qualifie = df
+                        st.rerun()
+
+                    st.dataframe(group[["Date", "Account", "Counterparty", "Asset", "Amount", "Value ($)", "Source Type"]], hide_index=True)
+
+    with t_orphans:
+        st.info("Ces transactions n'ont pas de liaison identifiée. Elles représentent des flux d'entrée/sortie isolés.")
+        orphans = df[(df["Linked_ID"] == "") & (df["Status"] != "Spam")]
+        st.dataframe(orphans[["Date", "Account", "Counterparty", "Asset", "Amount", "Value ($)", "Category"]], use_container_width=True)
+
 # --- Main App ---
 @st.fragment
 def main_journal_fragment():
@@ -731,6 +810,8 @@ def main_journal_fragment():
         df_display = df_display[df_display["Category"].isin(f_cat)]
     if f_imp_sel:
         df_display = df_display[df_display["Imposable"].isin(f_imp)]
+    if f_orphan:
+        df_display = df_display[df_display["Linked_ID"] == ""]
     if f_cp_search:
         df_display = df_display[df_display["Counterparty"].astype(str).str.contains(f_cp_search, case=False, na=False)]
 
@@ -784,15 +865,22 @@ def main_journal_fragment():
         if col in st.session_state.journal_qualifie.columns:
             st.session_state.journal_qualifie[col] = st.session_state.journal_qualifie[col].fillna("").astype(str)
 
-    # Add highlighting for suspects
-    def style_suspects(row):
-        return ['background-color: #ffffcc' if row.name in suspect_indices else '' for _ in row]
-
-    # Note: style.apply removes some interactive features of data_editor in some Streamlit versions,
-    # but it's the requested way to highlight.
+    # Add highlighting for suspects and links
+    def style_journal(row):
+        styles = [''] * len(row)
+        # Duplicate suspect (Yellow)
+        if row.name in suspect_indices:
+            styles = ['background-color: #ffffcc'] * len(row)
+        # Proposed Link (Rose Pale)
+        elif str(row.get("Link_Status")) == "Proposed":
+            styles = ['background-color: #ffe6f2'] * len(row)
+        # Confirmed Link (Light Blue/Cyan)
+        elif str(row.get("Link_Status")) == "Confirmed":
+             styles = ['background-color: #e6ffff'] * len(row)
+        return styles
 
     edited_df = st.data_editor(
-        df_display.style.apply(style_suspects, axis=1) if suspect_indices else df_display,
+        df_display.style.apply(style_journal, axis=1),
         column_config={
             "Category": st.column_config.SelectboxColumn("Catégorie", options=categories, required=True),
             "Status": st.column_config.SelectboxColumn("Statut", options=statuses, required=True),
@@ -860,7 +948,14 @@ def main_journal_fragment():
         st.balloons()
         st.success(f"Journal qualifié enregistré dans {year_dir}")
 
-main_journal_fragment()
+tab_qual, tab_reconcile = st.tabs(["📋 Journal de Qualification", "🤝 Réconciliation"])
 
-st.sidebar.divider()
-st.sidebar.caption("Qualification v1.0 - app2")
+if __name__ == "__main__":
+    with tab_qual:
+        main_journal_fragment()
+
+    with tab_reconcile:
+        reconciliation_dashboard()
+
+    st.sidebar.divider()
+    st.sidebar.caption("Qualification v1.0 - app2")
