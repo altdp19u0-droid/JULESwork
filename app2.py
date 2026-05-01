@@ -345,7 +345,7 @@ def merge_raw_data(year):
         if not df_synth.empty:
             df_synth = df_synth.drop_duplicates(subset=["Asset", "Amount", "Account", "_d"], keep="first")
 
-        df_final = pd.concat([df_real, df_synth]).sort_values("Date", ascending=False)
+        df_final = pd.concat([df_real, df_synth]).sort_values("Date", ascending=False).reset_index(drop=True)
         df_final = df_final.drop(columns=["_pri", "_d"])
         df_final = apply_position_labels(df_final)
 
@@ -427,9 +427,9 @@ def sync_data(year):
 
                 only_old = old_df[~old_df.apply(is_new, axis=1)]
                 if not only_old.empty:
-                    new_df = pd.concat([new_df, only_old])
+                    new_df = pd.concat([new_df, only_old]).reset_index(drop=True)
 
-            new_df = new_df.drop(columns=["_d"]).sort_values("Date", ascending=False)
+            new_df = new_df.drop(columns=["_d"]).sort_values("Date", ascending=False).reset_index(drop=True)
             new_df = apply_position_labels(new_df)
             st.session_state.journal_qualifie = new_df
         else:
@@ -815,6 +815,9 @@ def main_journal_fragment():
     if f_cp_search:
         df_display = df_display[df_display["Counterparty"].astype(str).str.contains(f_cp_search, case=False, na=False)]
 
+    # ENSURE UNIQUE INDEX for Styler compatibility
+    df_display = df_display.reset_index(drop=True)
+
     # 1. Barre d'outils
     col_t1, col_t2, col_save = st.columns([1.5, 0.5, 1])
 
@@ -923,7 +926,7 @@ def main_journal_fragment():
             if f_imp_sel: mask_filtered &= full_df["Imposable"].isin(f_imp)
 
             non_filtered_df = full_df[~mask_filtered]
-            new_journal = pd.concat([non_filtered_df, edited_df]).sort_values("Date", ascending=False)
+            new_journal = pd.concat([non_filtered_df, edited_df]).sort_values("Date", ascending=False).reset_index(drop=True)
 
         # Nettoyage automatique des Doublons marqués manuellement
         if not new_journal.empty and "Category" in new_journal.columns:
