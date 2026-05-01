@@ -10,8 +10,9 @@ from shared_logic import (
     load_external_circuits, save_external_circuits, get_external_circuits_discovery,
     pd_read_csv_safe, detect_internal_transfers,
     load_owner_accounts, save_owner_accounts, get_owner_addresses,
-    get_latest_raw_files, check_file_freshness,
-    find_reconciliation_matches, get_file_path
+    get_all_raw_files, check_file_freshness,
+    find_reconciliation_matches, get_file_path,
+    extract_source_from_filename
 )
 
 # --- Status Indicator ---
@@ -175,16 +176,14 @@ def merge_raw_data(year):
                 })
         except Exception: pass
 
-    # 2. Load Blockchain Txs (app.py and specialized importers) - ONLY LATEST FILES
-    latest_files = get_latest_raw_files(year)
-    for f_path in latest_files:
-        f = os.path.basename(f_path)
+    # 2. Load Blockchain Txs (app.py and specialized importers) - LOAD ALL FILES
+    # Loading all files ensures a "complet de traitement".
+    # Sorting ensures latest versions are processed first.
+    all_files = get_all_raw_files(year)
 
-        # Determine likely source/account from filename as fallback
-        file_source = "unknown"
-        parts = f.replace(".csv", "").split("_")
-        if len(parts) >= 2:
-            file_source = parts[-2].lower() # Usually the source ID part
+    for f_path in all_files:
+        f = os.path.basename(f_path)
+        file_source = extract_source_from_filename(f)
 
         if f.startswith("raw_transactions_") and os.path.getsize(f_path) > 0:
             try:
@@ -241,6 +240,28 @@ def merge_raw_data(year):
                         "Amount": amount, "Value ($)": float(r.get("Value ($)") or 0.0), "Network": r.get("Chain"),
                         "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Token",
                         "Category": r.get("Category", "A vérifier"), "Status": status, "Imposable": is_imposable_robust(r.get("Imposable", False))
+                    })
+            except Exception: pass
+
+        elif f.startswith("raw_portfolio_") and os.path.getsize(f_path) > 0:
+            try:
+                df = pd_read_csv_safe(f_path)
+                for _, r in df.iterrows():
+                    acc_low = str(r.get("Account", "")).lower()
+                    if not acc_low or acc_low in ["nan", "0x..."]: acc_low = file_source
+
+                    asset = str(r.get("Asset", "UNKNOWN"))
+                    amount = float(r.get("Quantity", 0.0))
+
+                    # Portfolio rows are treated as 'Audit Balance' (snapshot at a point in time)
+                    # We use the current target year and EOY as a dummy date for these records
+                    # but they will be handled by the VGP logic
+                    all_rows.append({
+                        "Date": datetime(year, 12, 31), # Dummy EOY date for portfolio harvest
+                        "Account": acc_low, "Counterparty": "Blockchain Snapshot", "Asset": asset,
+                        "Amount": amount, "Value ($)": float(r.get("Value ($)") or 0.0), "Network": str(r.get("Chain", "")),
+                        "Tx Hash": f"PORT-{file_source}-{asset}", "Source Type": "Portfolio",
+                        "Category": "Inventaire", "Status": "Valide", "Imposable": False
                     })
             except Exception: pass
 
@@ -464,7 +485,7 @@ with st.sidebar:
         files_to_check = [
             os.path.join(year_dir, f"manual_fiat_{target_year}.csv"),
             os.path.join(year_dir, f"manual_swaps_{target_year}.csv")
-        ] + get_latest_raw_files(target_year)
+        ] + get_all_raw_files(target_year)
 
         last_load = st.session_state.get("last_sync_time", 0)
         is_stale = any(check_file_freshness(f, last_load) for f in files_to_check)

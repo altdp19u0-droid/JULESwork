@@ -45,42 +45,57 @@ def get_file_path(year, category):
         return os.path.join(base, f"inventory_EOY_{year}.csv")
     return None
 
-def get_latest_raw_files(year):
-    """
-    Returns only the most recent raw CSV files per (source_id + file_type) in a given year directory.
-    Standard format: raw_{type}_{source}_{timestamp}.csv
-    Example: raw_transactions_0x123_20260501.csv vs raw_transactions_0x123_20260430.csv
-    """
+def get_all_raw_files(year):
+    """Returns ALL raw CSV files in a given year directory, sorted by name descending (latest first)."""
     year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
     if not os.path.exists(year_dir): return []
+    files = [f for f in os.listdir(year_dir) if f.endswith(".csv") and f.startswith("raw_")]
+    return [os.path.join(year_dir, f) for f in sorted(files, reverse=True)]
 
-    # Map: (type, source_id) -> (full_filename, timestamp_part)
+def extract_source_from_filename(filename):
+    """Isolates the source/account identifier from a raw filename."""
+    import re
+    ts_pattern = re.compile(r'_(\d{8}(?:_\d{6})?)$')
+    basename = os.path.basename(filename).replace(".csv", "")
+
+    # Strip timestamp if exists
+    match = ts_pattern.search(basename)
+    prefix_full = basename[:match.start()] if match else basename
+
+    # Strip standard type prefixes
+    for t in ["raw_portfolio_", "raw_transactions_", "raw_token_transfers_"]:
+        if prefix_full.startswith(t):
+            return prefix_full.replace(t, "")
+    return prefix_full
+
+def get_latest_raw_files(year):
+    """
+    Returns only the most recent raw CSV files per source in a given year directory.
+    Identifies timestamps (YYYYMMDD or YYYYMMDD_HHMMSS) to group different versions of the same harvest.
+    """
+    all_raw = get_all_raw_files(year)
+    if not all_raw: return []
+
+    # Map: prefix -> latest_filename
     latest_map = {}
 
-    all_files = [f for f in os.listdir(year_dir) if f.endswith(".csv") and f.startswith("raw_")]
+    import re
+    ts_pattern = re.compile(r'_(\d{8}(?:_\d{6})?)$')
 
-    for f in all_files:
-        # Standardize naming: raw_transactions_token_transfers_0x123_...
-        # We need to extract the type and the source (address/platform)
-        # Type is everything between first 'raw_' and the last two parts (source and timestamp)
-        parts = f.replace(".csv", "").split("_")
-        if len(parts) < 4: continue # raw_{type}_{source}_{timestamp}
+    for f_path in all_raw:
+        f = os.path.basename(f_path)
+        basename = f.replace(".csv", "")
 
-        timestamp = parts[-1]
-        source = parts[-2].lower()
-        # Everything in the middle is the type
-        file_type = "_".join(parts[1:-2])
+        match = ts_pattern.search(basename)
+        prefix = basename[:match.start()] if match else basename
 
-        key = (file_type, source)
-
-        if key not in latest_map:
-            latest_map[key] = f
+        if prefix not in latest_map:
+            latest_map[prefix] = f_path
         else:
-            # Compare by lexicographical order of filename (contains timestamp)
-            if f > latest_map[key]:
-                latest_map[key] = f
+            if f_path > latest_map[prefix]:
+                latest_map[prefix] = f_path
 
-    return [os.path.join(year_dir, f) for f in latest_map.values()]
+    return list(latest_map.values())
 
 def check_file_freshness(path, last_load_time):
     """Returns True if the file has been modified since last_load_time."""

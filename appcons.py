@@ -162,13 +162,8 @@ def load_and_merge(files):
 
             # Resolve Account for raw files
             if "Account" not in temp_df.columns:
-                file_addr = ""
-                parts = os.path.basename(f_path).split("_")
-                for p in parts:
-                    if p.startswith("0x") and len(p) >= 40:
-                        file_addr = p.lower()
-                        break
-                temp_df["Account"] = file_addr if file_addr else "unknown"
+                from shared_logic import extract_source_from_filename
+                temp_df["Account"] = extract_source_from_filename(os.path.basename(f_path))
 
             # Resolve Counterparty for raw files
             if "Counterparty" not in temp_df.columns:
