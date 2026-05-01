@@ -261,7 +261,7 @@ def fragment_fiat():
         sort_order_f = cs2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_fiat_order", horizontal=True)
         df_fiat = df_fiat.sort_values(by=sort_col_f, ascending=(sort_order_f == "Croissant"))
 
-    st.info("💡 Cliquez sur une ligne pour la charger dans l'espace de saisie haut.")
+    st.info("💡 Cliquez sur une ligne pour la charger dans l'espace de saisie haut. Les lignes en **jaune** proviennent d'un transfert externe et attendent une saisie de montant.")
 
     # Type safety: force string type for text columns to avoid Streamlit FLOAT mismatch crash
     for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
@@ -271,8 +271,15 @@ def fragment_fiat():
     if "Mod." not in df_fiat.columns:
         df_fiat.insert(0, "Mod.", False)
 
+    # UI Highlight for rows with 0 amount (injected from app2)
+    def style_fiat(row):
+        if float(row.get("Montant EUR", 0)) == 0:
+            return ['background-color: #ffffcc'] * len(row)
+        return [''] * len(row)
+
+    df_fiat = df_fiat.reset_index(drop=True)
     edited_df = st.data_editor(
-        df_fiat,
+        df_fiat.style.apply(style_fiat, axis=1),
         column_config={
             "Mod.": st.column_config.CheckboxColumn("Mod.", default=False),
             "Date": st.column_config.DateColumn("Date", required=True),
@@ -546,18 +553,25 @@ def fragment_swaps():
         ss1, ss2 = st.columns([2, 1])
         sort_col_s = ss1.selectbox("Trier par", options=df_swaps.columns, index=list(df_swaps.columns).index("Date"), key="sort_col_swaps")
         sort_order_s = ss2.radio("Ordre", ["Décroissant", "Croissant"], key="sort_swap_order", horizontal=True)
-        df_swaps = df_swaps.sort_values(by=sort_col_s, ascending=(sort_order_f == "Croissant"))
+        # Use existing sort_order_f if defined, otherwise default to Descending
+        df_swaps = df_swaps.sort_values(by=sort_col_s, ascending=(sort_order_s == "Croissant"))
 
     for col in ["Account", "Counterparty", "Asset", "Type", "Tx Hash", "Source Type"]:
         if col in df_swaps.columns:
             df_swaps[col] = df_swaps[col].fillna("").astype(str)
 
-    st.info("💡 Cochez la colonne 'Mod.' pour charger une ligne dans le formulaire.")
+    st.info("💡 Cochez la colonne 'Mod.' pour charger une ligne dans le formulaire. Les lignes en **jaune** proviennent d'un transfert externe.")
     if "Mod." not in df_swaps.columns:
         df_swaps.insert(0, "Mod.", False)
 
+    def style_swaps(row):
+        if "Transfer from App2" in str(row.get("Source Type", "")):
+            return ['background-color: #ffffcc'] * len(row)
+        return [''] * len(row)
+
+    df_swaps = df_swaps.reset_index(drop=True)
     edited_df = st.data_editor(
-        df_swaps,
+        df_swaps.style.apply(style_swaps, axis=1),
         column_config={
             "Mod.": st.column_config.CheckboxColumn("Mod.", default=False),
             "Date": st.column_config.DateColumn("Date", required=True),

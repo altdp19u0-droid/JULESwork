@@ -712,6 +712,67 @@ def calculate_fiscal_gains(cessions_df, initial_acq_price):
 
     return pd.DataFrame(results), temp_acq
 
+def inject_to_app0(rows_list, target_type, year):
+    """
+    Appends specific transactions to the app0 registries.
+    target_type: 'Fiat' or 'Swap'
+    """
+    year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
+    os.makedirs(year_dir, exist_ok=True)
+
+    if target_type == "Fiat":
+        path = os.path.join(year_dir, f"manual_fiat_{year}.csv")
+        # App0 Fiat Schema: Date, Account, Counterparty, Compte/Label, Plateforme, Montant EUR, Type, Asset, Quantité, Tx Hash, Imposable
+        existing_df = pd_read_csv_safe(path) if os.path.exists(path) else pd.DataFrame()
+
+        new_data = []
+        for r in rows_list:
+            dt_raw = pd.to_datetime(r.get("Date")).date() if r.get("Date") else ""
+            new_data.append({
+                "Date": dt_raw,
+                "Account": r.get("Account", ""),
+                "Counterparty": r.get("Counterparty", ""),
+                "Compte/Label": r.get("Account", ""),
+                "Plateforme": r.get("Counterparty", ""),
+                "Montant EUR": 0.0, # TO BE FILLED BY USER IN APP0
+                "Type": "Achat (Virement vers Crypto)" if r.get("Amount", 0) > 0 else "Vente (Retour vers Banque)",
+                "Asset": r.get("Asset", ""),
+                "Quantité": abs(float(r.get("Amount", 0))),
+                "Tx Hash": r.get("Tx Hash", ""),
+                "Imposable": r.get("Imposable", False)
+            })
+
+        updated_df = pd.concat([existing_df, pd.DataFrame(new_data)]).reset_index(drop=True)
+        updated_df.to_csv(path, index=False, encoding="utf-8-sig")
+        return len(new_data)
+
+    elif target_type == "Swap":
+        path = os.path.join(year_dir, f"manual_swaps_{year}.csv")
+        # App0 Swaps Schema: Date, Account, Counterparty, Asset, Amount, Type, Tx Hash, Source Type, Imposable
+        existing_df = pd_read_csv_safe(path) if os.path.exists(path) else pd.DataFrame()
+
+        new_data = []
+        for r in rows_list:
+             dt_raw = pd.to_datetime(r.get("Date")).date() if r.get("Date") else ""
+             amt = float(r.get("Amount", 0))
+             new_data.append({
+                 "Date": dt_raw,
+                 "Account": r.get("Account", ""),
+                 "Counterparty": r.get("Counterparty", ""),
+                 "Asset": r.get("Asset", ""),
+                 "Amount": amt,
+                 "Type": "Swap In" if amt > 0 else "Swap Out",
+                 "Tx Hash": r.get("Tx Hash", ""),
+                 "Source Type": "Transfer from App2",
+                 "Imposable": r.get("Imposable", False)
+             })
+
+        updated_df = pd.concat([existing_df, pd.DataFrame(new_data)]).reset_index(drop=True)
+        updated_df.to_csv(path, index=False, encoding="utf-8-sig")
+        return len(new_data)
+
+    return 0
+
 if __name__ == "__main__":
     st.set_page_config(page_title="Jules Crypto - Status Shared Logic", page_icon="⚙️")
     st.title("⚙️ Module de Logique Partagée")

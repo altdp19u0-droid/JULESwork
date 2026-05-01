@@ -821,6 +821,7 @@ def main_journal_fragment():
     # 1. Barre d'outils
     col_t1, col_t2, col_save = st.columns([1.5, 0.5, 1])
 
+
     # Show suspicious duplicates count
     suspect_indices = []
     if not df_display.empty:
@@ -878,6 +879,10 @@ def main_journal_fragment():
         if col in st.session_state.journal_qualifie.columns:
             st.session_state.journal_qualifie[col] = st.session_state.journal_qualifie[col].fillna("").astype(str)
 
+    # Add Selection column
+    if "Sel." not in df_display.columns:
+        df_display.insert(0, "Sel.", False)
+
     # Add highlighting for suspects and links
     def style_journal(row):
         styles = [''] * len(row)
@@ -895,6 +900,7 @@ def main_journal_fragment():
     edited_df = st.data_editor(
         df_display.style.apply(style_journal, axis=1),
         column_config={
+            "Sel.": st.column_config.CheckboxColumn("Sel."),
             "Category": st.column_config.SelectboxColumn("Catégorie", options=categories, required=True),
             "Status": st.column_config.SelectboxColumn("Statut", options=statuses, required=True),
             "Imposable": st.column_config.CheckboxColumn("Imposable ?"),
@@ -908,11 +914,36 @@ def main_journal_fragment():
         key="qual_editor"
     )
 
-    # Sync back from editor to session state immediately?
-    # Streamlit fragments handle this well. We sync only on explicit save button.
+    # 3. Transfer Logic (After definition)
+    with st.expander("📤 Transférer vers Registre Manuel (App 0)"):
+        st.info("Sélectionnez des lignes dans le journal cochant la colonne 'Sel.', puis choisissez la destination.")
+        c_dest1, c_dest2 = st.columns(2)
+        if c_dest1.button("💶 Transférer comme Flux Fiat", use_container_width=True, key="btn_transfer_fiat"):
+             selected = edited_df[edited_df["Sel."] == True]
+             if not selected.empty:
+                 from shared_logic import inject_to_app0
+                 # We drop the helper 'Sel.' column before injecting
+                 clean_selected = selected.drop(columns=["Sel."])
+                 count = inject_to_app0(clean_selected.to_dict('records'), "Fiat", target_year)
+                 st.success(f"✅ {count} mouvements injectés dans le Registre Fiat (App 0).")
+             else:
+                 st.warning("Aucune ligne sélectionnée (Cochez 'Sel.').")
 
-    # 3. Save Logic
+        if c_dest2.button("🔄 Transférer comme Échange/Swap", use_container_width=True, key="btn_transfer_swap"):
+             selected = edited_df[edited_df["Sel."] == True]
+             if not selected.empty:
+                 from shared_logic import inject_to_app0
+                 clean_selected = selected.drop(columns=["Sel."])
+                 count = inject_to_app0(clean_selected.to_dict('records'), "Swap", target_year)
+                 st.success(f"✅ {count} mouvements injectés dans le Registre Swaps (App 0).")
+             else:
+                 st.warning("Aucune ligne sélectionnée (Cochez 'Sel.').")
+
+    # 4. Save Logic
     if st.button(f"💾 Sanctuariser la Sélection {target_year}", type="primary", use_container_width=True):
+        # Remove selection column before saving
+        if "Sel." in edited_df.columns:
+            edited_df = edited_df.drop(columns=["Sel."])
         # On fusionne les modifications du data_editor (filtré) dans la session_state (complète)
         # Pour simplifier, si on est en mode filtré, on prévient l'utilisateur
         if f_asset or f_acc or f_status or f_cat or f_imp_sel:
