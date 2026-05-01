@@ -51,11 +51,6 @@ def load_position_labels():
         except: return {}
     return {}
 
-    parts = s.split()
-    for p in parts:
-        if p.startswith("0x") and len(p) >= 40: return p
-    return s
-
 
 def save_price_cache(cache):
     with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:

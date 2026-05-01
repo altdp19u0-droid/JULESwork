@@ -43,10 +43,10 @@ def process_neverless_csv(df):
         raw_id = str(row.get("ID", ""))
         tx_hash = str(row.get("Blockchain transaction hash", ""))
 
-        # Robust synthetic Hash including timestamp and type to avoid collisions
+        # Robust synthetic Hash including timestamp and unique index to avoid collisions
         ts_ms = int(dt.timestamp() * 1000)
         if tx_hash == "nan" or not tx_hash:
-            base_hash = f"NVL-{ts_ms}-{raw_id}"
+            base_hash = f"NVL-{ts_ms}-{raw_id}-{i}"
         else:
             base_hash = tx_hash
 

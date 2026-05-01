@@ -822,14 +822,13 @@ def main_journal_fragment():
     col_t1, col_t2, col_save = st.columns([1.5, 0.5, 1])
 
     # Show suspicious duplicates count
-    df_active = st.session_state.journal_qualifie
     suspect_indices = []
-    if not df_active.empty:
-        df_active["_d"] = df_active["Date"].dt.date
+    if not df_display.empty:
+        df_display["_d"] = df_display["Date"].dt.date
         # Detection of potential duplicates (same day, same asset, same amount, same account but DIFFERENT hash)
         # We exclude rows already marked as 'Doublon à ignorer'
-        mask_not_ign = (df_active.get("Category", "") != "Doublon à ignorer") & (df_active.get("Category", "") != "Doublon (Fusionné)")
-        suspect_dups = df_active[mask_not_ign].copy()
+        mask_not_ign = (df_display.get("Category", "") != "Doublon à ignorer") & (df_display.get("Category", "") != "Doublon (Fusionné)")
+        suspect_dups = df_display[mask_not_ign].copy()
 
         # Identify duplicates based on characteristics
         dups_bool = suspect_dups.duplicated(subset=["Asset", "Amount", "Account", "_d"], keep=False)
@@ -842,13 +841,24 @@ def main_journal_fragment():
 
             if st.button("🤝 Fusionner Automatiquement les Doublons (Hashes différents)", use_container_width=True):
                 # Logic: In each group, keep one (prioritize qualified), mark others as "Doublon (Fusionné)"
+                # This affects the main session state journal
+                full_journal = st.session_state.journal_qualifie
+                full_journal["_d"] = full_journal["Date"].dt.date
+
                 for name, group in real_suspects.groupby(["Asset", "Amount", "Account", "_d"]):
-                    # Keep first
-                    best_idx = group.index[0]
-                    others = group.index[1:]
-                    df_active.loc[others, "Category"] = "Doublon (Fusionné)"
-                    df_active.loc[others, "Status"] = "Spam"
-                st.session_state.journal_qualifie = df_active
+                    # We map back to the full journal using properties because indices in df_display are reset
+                    mask_group = (full_journal["Asset"] == name[0]) & \
+                                 (full_journal["Amount"] == name[1]) & \
+                                 (full_journal["Account"] == name[2]) & \
+                                 (full_journal["_d"] == name[3])
+
+                    indices = full_journal[mask_group].index
+                    if len(indices) > 1:
+                        # Keep first, mark others
+                        full_journal.loc[indices[1:], "Category"] = "Doublon (Fusionné)"
+                        full_journal.loc[indices[1:], "Status"] = "Spam"
+
+                st.session_state.journal_qualifie = full_journal
                 st.success("Fusion terminée. Les doublons ont été marqués comme 'Spam' / 'Doublon (Fusionné)'.")
                 st.rerun()
 

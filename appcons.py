@@ -58,11 +58,6 @@ def apply_position_labels(df):
     df["Counterparty"] = df["Counterparty"].apply(format_cp)
     return df
 
-    parts = s.split()
-    for p in parts:
-        if p.startswith("0x") and len(p) >= 40: return p
-    return s
-
 
 def pdf_safe_str(val, use_unicode=True):
     """Sanitize string for PDF encoding.

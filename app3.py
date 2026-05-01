@@ -68,11 +68,6 @@ def load_position_labels():
         except: return {}
     return {}
 
-    parts = s.split()
-    for p in parts:
-        if p.startswith("0x") and len(p) >= 40: return p
-    return s
-
 
 def apply_position_labels(df):
     """Remplace l'adresse Counterparty par 'Label (0x...)' si un mapping existe."""
@@ -349,12 +344,17 @@ with tab_accounts:
             # Snapshot returns: Location, Asset, Report, Entrées, Sorties, Solde, Prix (EUR), Valeur (EUR), Is_Circuit
             full_snapshot = full_snapshot.rename(columns={"Location": "Account", "Solde": "Amount", "Entrées": "In", "Sorties": "Out"})
 
-            # Split Local vs External for UI legacy
-            mask_wallet = full_snapshot["Account"].str.contains("Account:", na=False)
-            derived_local = full_snapshot[mask_wallet].copy()
-            derived_local["Account"] = derived_local["Account"].str.replace("Account: ", "")
+        # Split Local vs Protocols vs Manual for UI legacy
+        mask_wallet = full_snapshot["Account"].str.startswith("Account:", na=False)
+        mask_manual = full_snapshot["Account"].str.startswith("Manual Position:", na=False)
 
-            df_protocols = full_snapshot[~mask_wallet].copy()
+        derived_local = full_snapshot[mask_wallet].copy()
+        derived_local["Account"] = derived_local["Account"].str.replace("Account: ", "")
+
+        df_manual_snap = full_snapshot[mask_manual].copy()
+        df_manual_snap["Account"] = df_manual_snap["Account"].str.replace("Manual Position: ", "")
+
+        df_protocols = full_snapshot[~mask_wallet & ~mask_manual].copy()
 
         # 4. Valorisation & Sanctuarisation
         col_v1, col_v2 = st.columns(2)
@@ -378,12 +378,12 @@ with tab_accounts:
                     st.session_state.proto_valued = df_protocols
 
                 # Positions Manuelles
-                if not pos_df.empty:
-                    unique_assets_man = set(pos_df["Asset"].unique())
+                if not df_manual_snap.empty:
+                    unique_assets_man = set(df_manual_snap["Asset"].unique())
                     prices_man = {a: get_price_eur(a, eoy_date) for a in unique_assets_man}
-                    pos_df["Prix (EUR)"] = pos_df["Asset"].map(prices_man)
-                    pos_df["Valeur (EUR)"] = pos_df["Quantité"] * pos_df["Prix (EUR)"]
-                    st.session_state.manual_pos_valued = pos_df
+                    df_manual_snap["Prix (EUR)"] = df_manual_snap["Asset"].map(prices_man)
+                    df_manual_snap["Valeur (EUR)"] = df_manual_snap["Amount"] * df_manual_snap["Prix (EUR)"]
+                    st.session_state.manual_pos_valued = df_manual_snap
 
                 st.success("Valorisation terminée.")
 
@@ -476,31 +476,18 @@ with tab_accounts:
 
         st.divider()
         st.write("**Positions déclarées manuellement (Off-chain, CEX, etc.) :**")
-        if not pos_df.empty:
-            # Mathematical model for manual: Report + In + Out = Final
-            pos_df["Date"] = pd.to_datetime(pos_df["Date"], utc=True, errors="coerce")
-            p_pre = pos_df[pos_df["Date"] < start_of_period].groupby(["Account", "Asset"])["Quantité"].sum().reset_index()
-            p_ytd = pos_df[pos_df["Date"] >= start_of_period].groupby(["Account", "Asset"])["Quantité"].agg([
-                ('In', lambda s: s[s > 0].sum()),
-                ('Out', lambda s: s[s < 0].sum())
-            ]).reset_index()
-
-            merged_p = pd.merge(p_pre, p_ytd, on=["Account", "Asset"], how="outer").fillna(0.0)
-            merged_p["Quantité"] = merged_p["Quantité"] + merged_p["In"] + merged_p["Out"]
-
-            p_final = merged_p[merged_p["Quantité"].abs() > 1e-8].copy()
-            for col in p_final.columns:
-                if p_final[col].dtype == object: p_final[col] = p_final[col].fillna("").astype(str)
-
-            p_final["Prix (EUR)"] = p_final["Asset"].map(eoy_prices).fillna(0.0)
+        if "manual_pos_valued" in st.session_state:
+            df_manual_valued = st.session_state.manual_pos_valued
+            for col in df_manual_valued.columns:
+                if df_manual_valued[col].dtype == object: df_manual_valued[col] = df_manual_valued[col].fillna("").astype(str)
 
             ed_manual = st.data_editor(
-                p_final,
+                df_manual_valued,
                 column_config={
                     "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
                     "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
-                    "Quantité": st.column_config.NumberColumn("Solde Final", format="%.6f", disabled=True),
-                    "Reported": st.column_config.NumberColumn("Report (Initial)", format="%.6f", disabled=True),
+                    "Amount": st.column_config.NumberColumn("Solde Final", format="%.6f", disabled=True),
+                    "Report": st.column_config.NumberColumn("Report (Initial)", format="%.6f", disabled=True),
                     "In": st.column_config.NumberColumn("Entrées (YTD)", format="%.6f", disabled=True),
                     "Out": st.column_config.NumberColumn("Sorties (YTD)", format="%.6f", disabled=True),
                     "Asset": st.column_config.TextColumn(disabled=True),
@@ -509,11 +496,10 @@ with tab_accounts:
                 use_container_width=True,
                 key="manual_pos_ed"
             )
-            # Recalcul de la valeur pour ces positions
-            ed_manual["Valeur (EUR)"] = ed_manual["Quantité"] * ed_manual["Prix (EUR)"].fillna(0.0)
+            ed_manual["Valeur (EUR)"] = ed_manual["Amount"] * ed_manual["Prix (EUR)"].fillna(0.0)
             st.session_state.manual_pos_valued = ed_manual
         else:
-            st.info("Aucune position manuelle saisie dans l'App 0.")
+            st.info("Aucune position manuelle valorisée.")
 
         # EXPORT CONSOLIDÉ CSV
         st.divider()
@@ -648,6 +634,7 @@ with tab_cessions:
 
                 if not df_results.empty:
                     st.session_state.bilan_fiscale = df_results
+                    st.session_state.final_acq_remaining = final_acq
                     st.success("Calcul terminé. Voir l'onglet Bilan.")
                 else:
                     st.warning("Aucune plus-value n'a pu être calculée. Vérifiez les valeurs VGP.")
@@ -663,16 +650,18 @@ with tab_bilan:
         total_cessions = df_bilan['Prix Cession'].sum()
 
         col_b1, col_b2, col_b3 = st.columns(3)
-        col_b1.metric("Plus-Value Totale Brute", f"{total_pv:,.2f} €", help="Somme des plus-values unitaires calculées par cession selon la formule du formulaire 2086.")
+        label_pv = "Plus-Value Totale Brute" if total_pv >= 0 else "Moins-Value Totale Brute"
+        col_b1.metric(label_pv, f"{total_pv:,.2f} €", help="Somme des plus-values unitaires calculées par cession selon la formule du formulaire 2086.")
 
         # Logique fiscale : exonération si total des prix de cession <= abattement (305€)
-        if total_cessions <= abattement:
+        if total_pv > 0 and total_cessions <= abattement:
             pv_nette = 0.0
             st.warning(f"💡 Exonération appliquée : Le total des cessions ({total_cessions:.2f}€) est inférieur au seuil de {abattement}€.")
         else:
             pv_nette = total_pv
 
-        col_b2.metric("Plus-Value Nette Imposable", f"{pv_nette:,.2f} €", help="Plus-value brute après application de l'abattement annuel de 305€ si applicable.")
+        label_nette = "Plus-Value Nette Imposable" if pv_nette >= 0 else "Moins-Value Nette Déclarant"
+        col_b2.metric(label_nette, f"{pv_nette:,.2f} €", help="Plus-value brute après application de l'abattement annuel de 305€ si applicable (uniquement sur gains).")
 
         impot = pv_nette * flat_tax_rate if pv_nette > 0 else 0.0
         col_b3.metric(f"Impôt Estimé ({int(flat_tax_rate*100)}%)", f"{impot:,.2f} €", delta_color="inverse", help="Calculé selon le taux du Prélèvement Forfaitaire Unique (PFU) en vigueur.")
@@ -712,6 +701,45 @@ with tab_bilan:
                     st.rerun()
 
         c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme factuelle des soldes par compte.")
+
+        # --- NOUVEAU : SYNTHÈSE PERFORMANCE ---
+        st.divider()
+        st.subheader("📈 Synthèse de Performance & Gains")
+
+        # 1. Plus-Value Réalisée (Déjà calculée dans le bilan fiscal)
+        gain_realise = total_pv
+
+        # 2. Plus-Value Non Réalisée (Latente)
+        # Formule : VGP 31/12 - Capital Restant (Prix d'achat non encore utilisé pour des cessions)
+        capital_restant = st.session_state.get("final_acq_remaining", total_acq)
+        gain_latent = vgp_end - capital_restant
+
+        # 3. Plus-Value Globale (Théorique)
+        gain_global = gain_realise + gain_latent
+
+        c_perf1, c_perf2, c_perf3 = st.columns(3)
+
+        # Affichage pédagogique
+        if gain_realise >= 0:
+            c_perf1.success(f"**Gain Réalisé**\n\n{gain_realise:,.2f} €")
+            c_perf1.caption("Gains effectifs suite à vos ventes de l'année.")
+        else:
+            c_perf1.warning(f"**Perte Réalisée**\n\n{gain_realise:,.2f} €")
+            c_perf1.caption("Pertes effectives suite à vos ventes de l'année.")
+
+        if gain_latent >= 0:
+            c_perf2.info(f"**Gain Latent**\n\n{gain_latent:,.2f} €")
+            c_perf2.caption("Plus-value potentielle si vous vendiez tout au 31/12.")
+        else:
+            c_perf2.error(f"**Perte Latente**\n\n{gain_latent:,.2f} €")
+            c_perf2.caption("Perte potentielle sur vos actifs restants au 31/12.")
+
+        if gain_global >= 0:
+            c_perf3.metric("Plus-Value Globale", f"{gain_global:,.2f} €")
+        else:
+            c_perf3.metric("Perte Globale", f"{gain_global:,.2f} €", delta_color="inverse")
+
+        st.info(f"💡 **Explication :** Votre performance globale ({gain_global:,.2f}€) combine les gains/pertes déjà 'encaissés' par vos ventes et la valeur actuelle de ce qu'il vous reste en portefeuille par rapport à ce qu'il vous a coûté ({capital_restant:,.2f}€ de capital restant).")
 
         st.divider()
         st.subheader("📥 Export de l'Historique Fiscal")
@@ -756,8 +784,11 @@ with tab_bilan:
             )
 
         st.divider()
-        st.write("📝 **Montant à reporter dans la case 3AN (ou 3BN si moins-value) :**")
-        st.code(f"{round(total_pv)}")
+        if total_pv >= 0:
+            st.write("📝 **Montant à reporter dans la case 3AN (Plus-value) :**")
+        else:
+            st.write("📝 **Montant à reporter dans la case 3BN (Moins-value) :**")
+        st.code(f"{abs(round(total_pv))}")
 
         st.info("💡 N'oubliez pas de joindre l'annexe 2086 à votre déclaration de revenus.")
 

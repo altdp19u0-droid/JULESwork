@@ -98,7 +98,8 @@ def process_bleap_csv(df):
 
         # Robust synthetic Hash including timestamp to avoid collisions
         ts_ms = int(dt.timestamp() * 1000)
-        safe_hash = f"BLP-{ts_ms}-{idx}"
+        # Use idx (row index) and a secondary counter to ensure absolute uniqueness
+        safe_hash = f"BLP-{ts_ms}-{idx}-{i}"
 
         # Create row
         new_rows.append({
