@@ -478,16 +478,22 @@ def auto_register_owner(addr_str):
         return True
     return False
 
-def get_owner_addresses():
+def get_owner_addresses(journal_df=None):
     """
     Extracts all raw addresses identified as 'owners'.
-    Combines verified owners from mapping file and auto-detected ones from journals.
+    Combines verified owners from mapping file and auto-detected ones from journals (disk + memory).
     """
     # 1. Verified Owners (Fixed)
     owners_map = load_owner_accounts()
     owners = set(owners_map.keys())
 
-    # 2. Auto-Discovery from Journals
+    # 2. Discovery from memory
+    if journal_df is not None and "Account" in journal_df.columns:
+        for a in journal_df["Account"].dropna().unique():
+            resolved = resolve_raw_addr(a)
+            if resolved.startswith("0x"): owners.add(resolved)
+
+    # 3. Auto-Discovery from Journals on disk
     if os.path.exists(EXPORT_BASE_DIR):
         years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
         for y in years:
@@ -502,9 +508,12 @@ def get_owner_addresses():
                 except: pass
     return owners
 
-def get_external_circuits_discovery():
-    """Discovers valid transient addresses (not owners, not positions)."""
-    owner_addrs = get_owner_addresses()
+def get_external_circuits_discovery(journal_df=None):
+    """
+    Discovers valid transient addresses (not owners, not positions).
+    Supports discovery from a provided DataFrame (in-memory) and journals on disk.
+    """
+    owner_addrs = get_owner_addresses(journal_df)
 
     pos_labels = {}
     if os.path.exists(POSITIONS_FILE):
@@ -518,26 +527,34 @@ def get_external_circuits_discovery():
 
     circuits_info = {} # {addr: {count, volume_usd}}
 
-    # Scan all journals
+    # 1. Collect from disk
+    all_journals = []
     if os.path.exists(EXPORT_BASE_DIR):
         years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
         for y in years:
             path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
             if os.path.exists(path):
                 try:
-                    df = pd_read_csv_safe(path)
-                    if not df.empty and "Status" in df.columns:
-                        # Exclude only Spams from discovery
-                        df_val = df[df["Status"] != "Spam"]
-                        for _, r in df_val.iterrows():
-                            cp_raw = resolve_raw_addr(r.get("Counterparty", ""))
-                            if cp_raw and cp_raw not in owner_addrs and cp_raw not in pos_addrs:
-                                if cp_raw not in circuits_info:
-                                    circuits_info[cp_raw] = {"count": 0, "volume_usd": 0.0, "last_asset": ""}
-                                circuits_info[cp_raw]["count"] += 1
-                                circuits_info[cp_raw]["volume_usd"] += abs(float(r.get("Value ($)", 0.0)))
-                                circuits_info[cp_raw]["last_asset"] = str(r.get("Asset", ""))
+                    all_journals.append(pd_read_csv_safe(path))
                 except: pass
+
+    # 2. Add in-memory journal if provided
+    if journal_df is not None and not journal_df.empty:
+        all_journals.append(journal_df)
+
+    for df in all_journals:
+        if not df.empty and "Status" in df.columns:
+            # Exclude only Spams from discovery
+            # (Valid and A verifier can be candidates for treatment circuits)
+            df_val = df[df["Status"] != "Spam"]
+            for _, r in df_val.iterrows():
+                cp_raw = resolve_raw_addr(r.get("Counterparty", ""))
+                if cp_raw and cp_raw not in owner_addrs and cp_raw not in pos_addrs:
+                    if cp_raw not in circuits_info:
+                        circuits_info[cp_raw] = {"count": 0, "volume_usd": 0.0, "last_asset": ""}
+                    circuits_info[cp_raw]["count"] += 1
+                    circuits_info[cp_raw]["volume_usd"] += abs(float(r.get("Value ($)", 0.0)))
+                    circuits_info[cp_raw]["last_asset"] = str(r.get("Asset", ""))
 
     # Filter out hidden/already labeled ones
     ext_data = load_external_circuits()

@@ -618,8 +618,9 @@ with st.sidebar:
 
         st.info("Définissez et fixez la liste de vos comptes propriétaires pour renforcer la détection des transferts internes.")
 
+        journal_active = st.session_state.get("journal_qualifie")
         owner_mappings = load_owner_accounts()
-        all_detected = get_owner_addresses() # Contains both mapped and journal-found
+        all_detected = get_owner_addresses(journal_active) # Contains both mapped and journal-found
 
         # Table for management
         owner_data = []
@@ -671,9 +672,10 @@ with st.sidebar:
 
         st.info("Détectez et étiquetez les comptes tiers utilisés pour les swaps ou bridges. Ces comptes sont exclus de la VGP par défaut.")
 
-        circuits = get_external_circuits_discovery()
+        journal_active = st.session_state.get("journal_qualifie")
+        circuits = get_external_circuits_discovery(journal_active)
         if not circuits:
-            st.write("Aucun circuit externe détecté dans les transactions validées.")
+            st.write("Aucun circuit externe détecté dans les transactions.")
         else:
             df_circuits = pd.DataFrame(circuits)
 
