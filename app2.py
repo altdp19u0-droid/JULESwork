@@ -12,7 +12,8 @@ from shared_logic import (
     load_owner_accounts, save_owner_accounts, get_owner_addresses,
     get_all_raw_files, check_file_freshness,
     find_reconciliation_matches, get_file_path,
-    extract_source_from_filename
+    extract_source_from_filename, validate_spam_exclusion,
+    load_spam_list
 )
 
 # --- Status Indicator ---
@@ -41,14 +42,6 @@ def is_imposable_robust(val):
     if pd.isna(val): return False
     s = str(val).upper().strip()
     return s in ["TRUE", "1", "1.0", "VRAI", "YES", "OUI"]
-
-def load_spam_list():
-    if os.path.exists(SPAM_FILE):
-        try:
-            with open(SPAM_FILE, "r", encoding="utf-8", errors="replace") as f:
-                return set(json.load(f))
-        except: return set()
-    return set()
 
 def save_spam_list(spam_set):
     with open(SPAM_FILE, "w", encoding="utf-8") as f:
@@ -1062,6 +1055,15 @@ def main_journal_fragment():
 
             non_filtered_df = full_df[~mask_filtered]
             new_journal = pd.concat([non_filtered_df, edited_df]).sort_values("Date", ascending=False).reset_index(drop=True)
+
+        # --- DOUBLE VÉRIFICATION SPAM AVANT SAUVEGARDE ---
+        if not new_journal.empty:
+            leaked_indices = validate_spam_exclusion(new_journal)
+            if leaked_indices:
+                st.warning(f"⚠️ {len(leaked_indices)} transactions correspondent à la Blacklist mais ne sont pas marquées 'Spam'.")
+                if st.checkbox("Appliquer l'exclusion Spam sur ces lignes avant de sauvegarder ?", value=True, key="chk_apply_spam_save"):
+                    new_journal.loc[leaked_indices, "Status"] = "Spam"
+                    st.info("Statut mis à jour en 'Spam'.")
 
         # Nettoyage automatique des Doublons marqués manuellement
         if not new_journal.empty and "Category" in new_journal.columns:

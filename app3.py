@@ -2,7 +2,12 @@ import os
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur, get_fiat_rate, pd_read_csv_safe, load_price_cache, save_price_cache, calculate_fiscal_gains, get_file_path, check_file_freshness
+from shared_logic import (
+    resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
+    get_fiat_rate, pd_read_csv_safe, load_price_cache, save_price_cache,
+    calculate_fiscal_gains, get_file_path, check_file_freshness,
+    validate_spam_exclusion
+)
 from fpdf import FPDF
 from io import BytesIO, StringIO
 import json
@@ -130,11 +135,18 @@ def load_data(year):
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
-            # FILTRAGE ANTI-SPAM GLOBAL (uniquement pour le journal qualifié)
-            if key == 'journal' and 'Status' in df.columns:
-                df = df[df['Status'] != 'Spam']
-
             if key == 'journal':
+                # --- DOUBLE VÉRIFICATION SPAM À L'OUVERTURE ---
+                leaked_indices = validate_spam_exclusion(df)
+                if leaked_indices:
+                    df.loc[leaked_indices, "Status"] = "Spam"
+                    # Only show toast/message once for the whole dataset
+                    st.toast(f"🛡️ Art 150 VH bis : {len(leaked_indices)} lignes spams écartées automatiquement.")
+
+                # FILTRAGE ANTI-SPAM GLOBAL
+                if 'Status' in df.columns:
+                    df = df[df['Status'] != 'Spam']
+
                 df = apply_position_labels(df)
 
             data[key] = df

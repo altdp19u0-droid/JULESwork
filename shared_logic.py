@@ -12,6 +12,7 @@ POSITIONS_FILE = "position_labels.json"
 PRICE_CACHE_FILE = "historical_prices_cache.json"
 EXTERNAL_CIRCUITS_FILE = "external_circuits.json"
 OWNERS_FILE = "owner_accounts.json"
+SPAM_FILE = "spam_blacklist.json"
 
 def resolve_raw_addr(addr_str):
     s = str(addr_str).strip().lower()
@@ -508,41 +509,6 @@ def get_owner_addresses(journal_df=None):
                 except: pass
     return owners
 
-@st.cache_data(ttl=600)
-def get_external_circuits_discovery_disk():
-    """Discovers transient addresses from all journals saved on disk."""
-    owner_addrs = get_owner_addresses()
-
-    pos_labels = {}
-    if os.path.exists(POSITIONS_FILE):
-        try:
-            with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
-                mappings = json.load(f)
-                for addr, val in mappings.items():
-                    pos_labels[addr] = val.get("label") if isinstance(val, dict) else val
-        except: pass
-
-    circuits_info = {} # {addr: {count, volume_usd}}
-    if os.path.exists(EXPORT_BASE_DIR):
-        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
-        for y in years:
-            path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
-            if os.path.exists(path):
-                try:
-                    df = pd_read_csv_safe(path)
-                    if not df.empty and "Status" in df.columns:
-                        df_val = df[df["Status"] != "Spam"]
-                        for _, r in df_val.iterrows():
-                            cp_raw = resolve_raw_addr(r.get("Counterparty", ""))
-                            if cp_raw and cp_raw not in owner_addrs and cp_raw not in pos_addrs:
-                                if cp_raw not in circuits_info:
-                                    circuits_info[cp_raw] = {"count": 0, "volume_usd": 0.0, "last_asset": ""}
-                                circuits_info[cp_raw]["count"] += 1
-                                circuits_info[cp_raw]["volume_usd"] += abs(float(r.get("Value ($)", 0.0)))
-                                circuits_info[cp_raw]["last_asset"] = str(r.get("Asset", ""))
-                except: pass
-    return circuits_info
-
 def get_external_circuits_discovery(journal_df=None):
     """
     Discovers valid transient addresses (not owners, not positions) using RECURSIVE DISCOVERY RULE.
@@ -676,6 +642,43 @@ def get_known_accounts(include_mappings=True):
     # Clean and sort
     clean_known = sorted([str(x).strip() for x in known if str(x).strip() and str(x).lower() != "nan"])
     return clean_known
+
+def load_spam_list():
+    """Loads the global spam blacklist."""
+    if os.path.exists(SPAM_FILE):
+        try:
+            with open(SPAM_FILE, "r", encoding="utf-8", errors="replace") as f:
+                return set(json.load(f))
+        except: return set()
+    return set()
+
+def validate_spam_exclusion(df):
+    """
+    Checks if any row in the dataframe matches the global spam blacklist
+    but hasn't been marked as 'Spam' status.
+    Returns: List of leaked indices.
+    """
+    if df.empty or "Status" not in df.columns: return []
+
+    spam_list = load_spam_list()
+    if not spam_list: return []
+
+    # Prepare search terms (all lowercase)
+    def is_leaked_spam(row):
+        if str(row.get("Status")) == "Spam": return False
+
+        # Check Counterparty address
+        cp_raw = resolve_raw_addr(row.get("Counterparty", ""))
+        if cp_raw.lower() in spam_list: return True
+
+        # Check Asset name
+        asset = str(row.get("Asset", "")).lower().strip()
+        if asset in spam_list: return True
+
+        return False
+
+    leaked_mask = df.apply(is_leaked_spam, axis=1)
+    return df.index[leaked_mask].tolist()
 
 def detect_internal_transfers(df):
     """
