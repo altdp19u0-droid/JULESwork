@@ -465,6 +465,19 @@ def save_owner_accounts(data):
     with open(OWNERS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
+def auto_register_owner(addr_str):
+    """Adds an address to owner_accounts.json if it looks like a hex address and is missing."""
+    raw = resolve_raw_addr(addr_str)
+    if not raw.startswith("0x") or len(raw) < 40:
+        return False
+
+    owners = load_owner_accounts()
+    if raw not in owners:
+        owners[raw] = f"Auto-Discovered ({raw[:6]}...)"
+        save_owner_accounts(owners)
+        return True
+    return False
+
 def get_owner_addresses():
     """
     Extracts all raw addresses identified as 'owners'.

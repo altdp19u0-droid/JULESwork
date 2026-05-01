@@ -185,6 +185,11 @@ def merge_raw_data(year):
         f = os.path.basename(f_path)
         file_source = extract_source_from_filename(f)
 
+        # --- AUTO-REGISTER OWNER ---
+        # If the file source is a hex address, make sure it's in our owners list
+        from shared_logic import auto_register_owner
+        auto_register_owner(file_source)
+
         if f.startswith("raw_transactions_") and os.path.getsize(f_path) > 0:
             try:
                 df = pd_read_csv_safe(f_path)
