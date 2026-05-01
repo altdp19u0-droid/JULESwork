@@ -100,7 +100,11 @@ with st.sidebar:
     target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=st.session_state.current_year)
 
     if target_year != st.session_state.current_year:
+        # Full Reset on Year Switch
+        for k in list(st.session_state.keys()):
+            if k not in ["current_year"]: del st.session_state[k]
         st.session_state.current_year = target_year
+        st.cache_data.clear()
         load_manual_data(target_year)
         st.rerun()
 

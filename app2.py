@@ -9,7 +9,8 @@ from shared_logic import (
     resolve_raw_addr, get_fiat_rate,
     load_external_circuits, save_external_circuits, get_external_circuits_discovery,
     pd_read_csv_safe, detect_internal_transfers,
-    load_owner_accounts, save_owner_accounts, get_owner_addresses
+    load_owner_accounts, save_owner_accounts, get_owner_addresses,
+    get_latest_raw_files, check_file_freshness
 )
 
 # --- Status Indicator ---
@@ -176,10 +177,10 @@ def merge_raw_data(year):
                 })
         except Exception: pass
 
-    # 2. Load Blockchain Txs (app.py)
-    files = os.listdir(year_dir)
-    for f in files:
-        f_path = os.path.join(year_dir, f)
+    # 2. Load Blockchain Txs (app.py) - ONLY LATEST FILES
+    latest_files = get_latest_raw_files(year)
+    for f_path in latest_files:
+        f = os.path.basename(f_path)
         file_addr = ""
         parts = f.split("_")
         for p in parts:
@@ -344,7 +345,11 @@ def merge_raw_data(year):
 # --- Logic ---
 def sync_data(year):
     qual_path = get_qualified_path(year)
+    # new_df is the source of truth for existence and values
     new_df = merge_raw_data(year)
+
+    # Track load timestamp
+    st.session_state.last_sync_time = time.time()
 
     # Unified normalization for hashes
     def norm_hash(h):
@@ -359,63 +364,67 @@ def sync_data(year):
             if "Tx Hash" in old_df.columns:
                 old_df["Tx Hash"] = old_df["Tx Hash"].apply(norm_hash)
 
-            # --- AUTO-REPAIR : Nettoyage des lignes Fiat corrompues (v1 legacy) ---
-            # Si Source Type est 'Fiat' mais Asset n'est pas 'EUR', c'est une erreur de transposition ancienne.
-            if not old_df.empty and "Source Type" in old_df.columns:
-                corrupted_mask = (old_df["Source Type"] == "Fiat") & (old_df["Asset"] != "EUR")
-                if corrupted_mask.any():
-                    old_df = old_df[~corrupted_mask]
-                    st.info(f"🔧 {corrupted_mask.sum()} lignes Fiat corrompues nettoyées du journal historique.")
-
             # Force numeric
-            for col in ["Amount", "Value ($)"]:
+            for col in ["Amount", "Value ($)", "VGP (EUR)"]:
                 if col in old_df.columns:
                     old_df[col] = pd.to_numeric(old_df[col], errors='coerce').fillna(0.0)
         except Exception:
             old_df = pd.DataFrame(columns=COLUMNS)
 
-        # Fusion : On privilégie old_df (données déjà qualifiées) sur new_df (données brutes).
-        if "Tx Hash" in new_df.columns:
+        if not new_df.empty:
             new_df["Tx Hash"] = new_df["Tx Hash"].apply(norm_hash)
+            new_df["_d"] = new_df["Date"].dt.date
 
-        # 1. First Pass: Deduplication by Exact Hash
-        # Proactive pruning: We remove rows marked as 'Doublon à ignorer' from old_df
-        # so they don't block new, potentially better data from new_df.
-        if not old_df.empty and "Category" in old_df.columns:
-            old_df = old_df[old_df["Category"] != "Doublon à ignorer"]
+            # --- FIDELITY ENGINE: Re-apply qualifications from old_df to new_df ---
+            if not old_df.empty:
+                # 1. Map by Exact Hash (Strongest)
+                # We extract mapping tables from old_df
+                hash_map = old_df[old_df["Tx Hash"] != ""].drop_duplicates("Tx Hash").set_index("Tx Hash")[["Category", "Status", "Imposable", "VGP (EUR)"]].to_dict('index')
 
-        combined = pd.concat([old_df, new_df])
-        combined["_d"] = combined["Date"].dt.date
-        combined = combined.drop_duplicates(subset=["Tx Hash", "Asset", "Account", "Amount", "_d"], keep="first")
+                # 2. Map by (Date, Account, Asset) for manual entries or synthetic
+                # Note: We use .date() to be slightly flexible if seconds changed, but ideally Date should be exact.
+                old_df["_d"] = old_df["Date"].dt.date
+                manual_map = old_df[old_df["Tx Hash"] == ""].drop_duplicates(["_d", "Account", "Asset"]).set_index(["_d", "Account", "Asset"])[["Category", "Status", "Imposable", "VGP (EUR)"]].to_dict('index')
 
-        # 2. Second Pass: Collapse Legacy/Synthetic Hashes
-        # We identify synthetic rows in the combined set
-        def is_synthetic(h):
-            return any(str(h).startswith(p) for p in ["BLP-", "NVL-", "OUT-", "IN-", "FEE-"]) or str(h) == ""
+                def reapply(row):
+                    h = row["Tx Hash"]
+                    if h and h in hash_map:
+                        m = hash_map[h]
+                        row["Category"], row["Status"], row["Imposable"], row["VGP (EUR)"] = m["Category"], m["Status"], m["Imposable"], m["VGP (EUR)"]
+                    else:
+                        key = (row["_d"], row["Account"], row["Asset"])
+                        if key in manual_map:
+                            m = manual_map[key]
+                            row["Category"], row["Status"], row["Imposable"], row["VGP (EUR)"] = m["Category"], m["Status"], m["Imposable"], m["VGP (EUR)"]
+                    return row
 
-        mask_synth = combined["Tx Hash"].apply(is_synthetic)
-        df_real = combined[~mask_synth]
-        df_synth = combined[mask_synth]
+                new_df = new_df.apply(reapply, axis=1)
 
-        if not df_synth.empty:
-            # Collapse synthetic duplicates by ignoring the hash itself
-            df_synth = df_synth.drop_duplicates(subset=["Asset", "Account", "Amount", "_d"], keep="first")
+            # Preserve rows that are ONLY in old_df (added manually in app2)
+            # A row is considered "Only in old_df" if its hash AND its (Date, Account, Asset) are not in new_df
+            if not old_df.empty:
+                new_hashes = set(new_df["Tx Hash"].unique())
+                new_keys = set(zip(new_df["_d"], new_df["Account"], new_df["Asset"]))
 
-        combined = pd.concat([df_real, df_synth]).sort_values("Date", ascending=False)
-        combined = combined.drop(columns=["_d"])
+                def is_new(r):
+                    if r["Tx Hash"] != "" and r["Tx Hash"] in new_hashes: return True
+                    if (r["_d"], r["Account"], r["Asset"]) in new_keys: return True
+                    return False
 
-        if not combined.empty and "Date" in combined.columns:
-            combined = combined.sort_values("Date", ascending=False)
-            # Re-appliquer les labels si de nouveaux mappings ont été créés
-            combined = apply_position_labels(combined)
-            st.session_state.journal_qualifie = combined
+                only_old = old_df[~old_df.apply(is_new, axis=1)]
+                if not only_old.empty:
+                    new_df = pd.concat([new_df, only_old])
+
+            new_df = new_df.drop(columns=["_d"]).sort_values("Date", ascending=False)
+            new_df = apply_position_labels(new_df)
+            st.session_state.journal_qualifie = new_df
         else:
-            st.session_state.journal_qualifie = combined
+            st.session_state.journal_qualifie = old_df
     else:
-        if not new_df.empty and "Date" in new_df.columns:
+        if not new_df.empty:
             st.session_state.journal_qualifie = new_df.sort_values("Date", ascending=False)
         else:
-            st.session_state.journal_qualifie = new_df
+            st.session_state.journal_qualifie = pd.DataFrame(columns=COLUMNS)
 
 # --- UI Sidebar ---
 with st.sidebar:
@@ -424,6 +433,10 @@ with st.sidebar:
 
     # Initialisation data si nécessaire
     if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
+        # Full Reset on Year Switch
+        for k in list(st.session_state.keys()):
+            if k not in ["last_year"]: del st.session_state[k]
+        st.cache_data.clear()
         sync_data(target_year)
         st.session_state.last_year = target_year
 
@@ -437,6 +450,20 @@ with st.sidebar:
     if st.button("🔄 Actualiser & Fusionner les Brutes", use_container_width=True):
         sync_data(target_year)
         st.success("Fusion terminée.")
+
+    # Data Freshness Warning
+    year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
+    if os.path.exists(year_dir):
+        files_to_check = [
+            os.path.join(year_dir, f"manual_fiat_{target_year}.csv"),
+            os.path.join(year_dir, f"manual_swaps_{target_year}.csv")
+        ] + get_latest_raw_files(target_year)
+
+        last_load = st.session_state.get("last_sync_time", 0)
+        is_stale = any(check_file_freshness(f, last_load) for f in files_to_check)
+
+        if is_stale:
+            st.warning("⚠️ Données sur disque plus récentes. Veuillez 'Actualiser'.")
 
     if st.button("🚨 Réinitialiser depuis les Brutes", use_container_width=True, help="ATTENTION : Écrase tout le travail de qualification effectué pour repartir du journal brut."):
         new_df = merge_raw_data(target_year)
@@ -712,15 +739,34 @@ def main_journal_fragment():
 
     # Show suspicious duplicates count
     df_active = st.session_state.journal_qualifie
+    suspect_indices = []
     if not df_active.empty:
         df_active["_d"] = df_active["Date"].dt.date
         # Detection of potential duplicates (same day, same asset, same amount, same account but DIFFERENT hash)
-        suspect_dups = df_active[df_active.duplicated(subset=["Asset", "Amount", "Account", "_d"], keep=False)]
-        suspect_dups = suspect_dups[suspect_dups["Tx Hash"] != ""]
-        # We only count if they have DIFFERENT hashes
-        real_suspects = suspect_dups.groupby(["Asset", "Amount", "Account", "_d"]).filter(lambda x: x["Tx Hash"].nunique() > 1)
+        # We exclude rows already marked as 'Doublon à ignorer'
+        mask_not_ign = (df_active.get("Category", "") != "Doublon à ignorer") & (df_active.get("Category", "") != "Doublon (Fusionné)")
+        suspect_dups = df_active[mask_not_ign].copy()
+
+        # Identify duplicates based on characteristics
+        dups_bool = suspect_dups.duplicated(subset=["Asset", "Amount", "Account", "_d"], keep=False)
+        real_suspects = suspect_dups[dups_bool].groupby(["Asset", "Amount", "Account", "_d"]).filter(lambda x: x["Tx Hash"].nunique() > 1)
+
         if not real_suspects.empty:
-            st.warning(f"⚠️ {real_suspects['Tx Hash'].nunique()} suspicions de doublons détectées (Hashes différents pour mêmes caractéristiques).")
+            count_suspects = len(real_suspects.groupby(["Asset", "Amount", "Account", "_d"]))
+            st.warning(f"⚠️ {count_suspects} groupes de suspicions de doublons détectés (Hashes différents pour mêmes caractéristiques).")
+            suspect_indices = real_suspects.index.tolist()
+
+            if st.button("🤝 Fusionner Automatiquement les Doublons (Hashes différents)", use_container_width=True):
+                # Logic: In each group, keep one (prioritize qualified), mark others as "Doublon (Fusionné)"
+                for name, group in real_suspects.groupby(["Asset", "Amount", "Account", "_d"]):
+                    # Keep first
+                    best_idx = group.index[0]
+                    others = group.index[1:]
+                    df_active.loc[others, "Category"] = "Doublon (Fusionné)"
+                    df_active.loc[others, "Status"] = "Spam"
+                st.session_state.journal_qualifie = df_active
+                st.success("Fusion terminée. Les doublons ont été marqués comme 'Spam' / 'Doublon (Fusionné)'.")
+                st.rerun()
 
     if col_t1.button("🔍 Détecter Transferts Internes", use_container_width=True, key="btn_detect_internal"):
         df = st.session_state.journal_qualifie
@@ -730,7 +776,7 @@ def main_journal_fragment():
         st.rerun()
 
     # 2. Data Editor
-    categories = ["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense Staking", "Airdrop", "Frais", "Perte/Vol", "Autre", "Doublon à ignorer"]
+    categories = ["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense Staking", "Airdrop", "Frais", "Perte/Vol", "Autre", "Doublon à ignorer", "Doublon (Fusionné)"]
     statuses = ["A vérifier", "Valide", "Spam"]
 
     # Type safety
@@ -738,8 +784,15 @@ def main_journal_fragment():
         if col in st.session_state.journal_qualifie.columns:
             st.session_state.journal_qualifie[col] = st.session_state.journal_qualifie[col].fillna("").astype(str)
 
+    # Add highlighting for suspects
+    def style_suspects(row):
+        return ['background-color: #ffffcc' if row.name in suspect_indices else '' for _ in row]
+
+    # Note: style.apply removes some interactive features of data_editor in some Streamlit versions,
+    # but it's the requested way to highlight.
+
     edited_df = st.data_editor(
-        df_display,
+        df_display.style.apply(style_suspects, axis=1) if suspect_indices else df_display,
         column_config={
             "Category": st.column_config.SelectboxColumn("Catégorie", options=categories, required=True),
             "Status": st.column_config.SelectboxColumn("Statut", options=statuses, required=True),
@@ -787,7 +840,12 @@ def main_journal_fragment():
         # Nettoyage automatique des Doublons marqués manuellement
         if not new_journal.empty and "Category" in new_journal.columns:
             count_dup = (new_journal["Category"] == "Doublon à ignorer").sum()
-            if count_dup > 0:
+            count_fusion = (new_journal["Category"] == "Doublon (Fusionné)").sum()
+            if count_dup > 0 or count_fusion > 0:
+                # We remove 'Doublon à ignorer' but keep 'Doublon (Fusionné)' as Spam records?
+                # User requested "non prise en compte de la ligne".
+                # Marking as Spam and Category Doublon is good for audit trail.
+                # If they really want them gone:
                 new_journal = new_journal[new_journal["Category"] != "Doublon à ignorer"]
                 st.info(f"🗑️ {count_dup} doublons manuels supprimés avant sauvegarde.")
 

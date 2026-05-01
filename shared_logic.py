@@ -28,6 +28,45 @@ def pd_read_csv_safe(path):
         try: return pd.read_csv(path, encoding="latin-1")
         except: return pd.read_csv(path, encoding="utf-8", errors="replace")
 
+def get_latest_raw_files(year):
+    """
+    Returns only the most recent raw CSV files per (address + type) in a given year directory.
+    Example: raw_transactions_0x123_20260501.csv vs raw_transactions_0x123_20260430.csv
+    """
+    year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
+    if not os.path.exists(year_dir): return []
+
+    # Map: (prefix_type, address) -> latest_filename
+    # Prefix types: raw_portfolio, raw_transactions, raw_token_transfers
+    latest_map = {}
+
+    all_files = [f for f in os.listdir(year_dir) if f.endswith(".csv") and f.startswith("raw_")]
+
+    for f in all_files:
+        parts = f.split("_")
+        if len(parts) < 4: continue
+
+        file_type = parts[1] # portfolio, transactions, token
+        addr = parts[2].lower()
+
+        # Key to group versions of the same harvest
+        key = (file_type, addr)
+
+        if key not in latest_map:
+            latest_map[key] = f
+        else:
+            # Compare by filename (which contains timestamp YYYYMMDD_HHMMSS)
+            if f > latest_map[key]:
+                latest_map[key] = f
+
+    return [os.path.join(year_dir, f) for f in latest_map.values()]
+
+def check_file_freshness(path, last_load_time):
+    """Returns True if the file has been modified since last_load_time."""
+    if not os.path.exists(path): return False
+    mtime = os.path.getmtime(path)
+    return mtime > last_load_time
+
 def load_price_cache():
     combined = {}
     if os.path.exists(PRICE_CACHE_FILE):

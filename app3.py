@@ -131,6 +131,9 @@ def load_data(year):
         'positions': get_file_path(year, 'positions')
     }
 
+    # Track load time for freshness
+    st.session_state.last_app3_sync_time = time.time()
+
     data = {}
     for key, path in paths.items():
         if os.path.exists(path) and os.path.getsize(path) > 0:
@@ -189,12 +192,9 @@ with st.sidebar:
         st.session_state.last_target_year = target_year
 
     if target_year != st.session_state.last_target_year:
-        keys_to_clear = [
-            "journal_df", "local_valued", "proto_valued", "manual_pos_valued",
-            "bilan_fiscale", "fiscal_pdf_bytes", "full_inventory_csv"
-        ]
-        for k in keys_to_clear:
-            if k in st.session_state: del st.session_state[k]
+        # Full Reset on Year Switch
+        for k in list(st.session_state.keys()):
+            if k not in ["last_target_year"]: del st.session_state[k]
         st.session_state.last_target_year = target_year
         st.cache_data.clear()
         st.rerun()
@@ -215,6 +215,14 @@ with st.sidebar:
         st.cache_data.clear()
         st.success("Données rechargées.")
         st.rerun()
+
+    # Data Freshness Warning
+    from shared_logic import check_file_freshness, get_file_path
+    qual_path = get_file_path(target_year, 'qualified')
+    if os.path.exists(qual_path):
+        last_load = st.session_state.get("last_app3_sync_time", 0)
+        if check_file_freshness(qual_path, last_load):
+            st.warning("⚠️ Données qualifiées mises à jour. Veuillez 'Recharger'.")
 
     if st.button("🧮 Recalculer tout (Session)", key="btn_recalc_all"):
         st.cache_data.clear()

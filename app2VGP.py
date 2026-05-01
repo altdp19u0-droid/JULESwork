@@ -90,8 +90,9 @@ with st.sidebar:
         st.session_state.last_vgp_year = target_year
 
     if target_year != st.session_state.last_vgp_year:
-        if "journal_active" in st.session_state: del st.session_state.journal_active
-        if "active_path" in st.session_state: del st.session_state.active_path
+        # Full Reset on Year Switch
+        for k in list(st.session_state.keys()):
+            if k not in ["last_vgp_year"]: del st.session_state[k]
         st.session_state.last_vgp_year = target_year
         st.cache_data.clear()
         st.rerun()
@@ -117,6 +118,14 @@ with st.sidebar:
         st.success("Données rechargées.")
         st.rerun()
 
+    # Data Freshness Warning
+    from shared_logic import check_file_freshness
+    qual_path = get_qualified_path(target_year)
+    if os.path.exists(qual_path):
+        last_load = st.session_state.get("last_vgp_sync_time", 0)
+        if check_file_freshness(qual_path, last_load):
+            st.warning("⚠️ Journal qualifié mis à jour sur disque. Veuillez 'Recharger'.")
+
     st.divider()
     show_status()
 
@@ -134,6 +143,7 @@ else:
         journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
         st.session_state.journal_active = journal
         st.session_state.active_path = path
+        st.session_state.last_vgp_sync_time = time.time()
 
     journal = st.session_state.journal_active
 
