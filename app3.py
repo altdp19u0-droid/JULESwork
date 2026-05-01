@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur, get_fiat_rate, pd_read_csv_safe, load_price_cache, save_price_cache, calculate_fiscal_gains
+from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur, get_fiat_rate, pd_read_csv_safe, load_price_cache, save_price_cache, calculate_fiscal_gains, get_file_path, check_file_freshness
 from fpdf import FPDF
 from io import BytesIO, StringIO
 import json
@@ -25,19 +25,6 @@ EXPORT_BASE_DIR = "sanctuarisation"
 POSITIONS_FILE = "position_labels.json"
 
 # --- Helpers ---
-def get_file_path(year, category):
-    # category: 'qualified', 'fiat', 'positions', 'prices'
-    base = os.path.join(EXPORT_BASE_DIR, str(year))
-    if category == 'qualified':
-        return os.path.join(base, f"qualified_journal_{year}.csv")
-    if category == 'fiat':
-        return os.path.join(base, f"manual_fiat_{year}.csv")
-    if category == 'positions':
-        return os.path.join(base, f"manual_positions_{year}.csv")
-    if category == 'prices':
-        return os.path.join(base, f"eoy_prices_{year}.json")
-    return None
-
 def load_eoy_prices(year):
     path = get_file_path(year, 'prices')
     if path and os.path.exists(path):
@@ -212,7 +199,6 @@ with st.sidebar:
         st.rerun()
 
     # Data Freshness Warning
-    from shared_logic import check_file_freshness, get_file_path
     qual_path = get_file_path(target_year, 'qualified')
     if os.path.exists(qual_path):
         last_load = st.session_state.get("last_app3_sync_time", 0)

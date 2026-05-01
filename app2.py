@@ -11,7 +11,7 @@ from shared_logic import (
     pd_read_csv_safe, detect_internal_transfers,
     load_owner_accounts, save_owner_accounts, get_owner_addresses,
     get_latest_raw_files, check_file_freshness,
-    find_reconciliation_matches
+    find_reconciliation_matches, get_file_path
 )
 
 # --- Status Indicator ---
@@ -64,9 +64,6 @@ def load_position_labels():
 def save_position_labels(labels_dict):
     with open(POSITIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(labels_dict, f, indent=4)
-
-def get_qualified_path(year):
-    return os.path.join(EXPORT_BASE_DIR, str(year), f"qualified_journal_{year}.csv")
 
 # --- Engine: Merging & Cleaning ---
 def apply_position_labels(df):
@@ -353,7 +350,7 @@ def merge_raw_data(year):
 
 # --- Logic ---
 def sync_data(year):
-    qual_path = get_qualified_path(year)
+    qual_path = get_file_path(year, 'qualified')
     # new_df is the source of truth for existence and values
     new_df = merge_raw_data(year)
 
@@ -988,7 +985,7 @@ def main_journal_fragment():
         # SUPPRESSION de la propagation automatique asset/adresse vers la blacklist globale.
         # Seul un bannissement via la Sidebar est définitif pour le futur.
 
-        st.session_state.journal_qualifie.to_csv(get_qualified_path(target_year), index=False, encoding="utf-8-sig")
+        st.session_state.journal_qualifie.to_csv(get_file_path(target_year, 'qualified'), index=False, encoding="utf-8-sig")
         st.balloons()
         st.success(f"Journal qualifié enregistré dans {year_dir}")
 

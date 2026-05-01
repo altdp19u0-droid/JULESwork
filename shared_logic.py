@@ -28,6 +28,23 @@ def pd_read_csv_safe(path):
         try: return pd.read_csv(path, encoding="latin-1")
         except: return pd.read_csv(path, encoding="utf-8", errors="replace")
 
+def get_file_path(year, category):
+    """Centralized path resolution for all apps."""
+    base = os.path.join(EXPORT_BASE_DIR, str(year))
+    if category == 'qualified':
+        return os.path.join(base, f"qualified_journal_{year}.csv")
+    if category == 'fiat':
+        return os.path.join(base, f"manual_fiat_{year}.csv")
+    if category == 'positions':
+        return os.path.join(base, f"manual_positions_{year}.csv")
+    if category == 'swaps':
+        return os.path.join(base, f"manual_swaps_{year}.csv")
+    if category == 'prices':
+        return os.path.join(base, f"eoy_prices_{year}.json")
+    if category == 'inventory_eoy':
+        return os.path.join(base, f"inventory_EOY_{year}.csv")
+    return None
+
 def get_latest_raw_files(year):
     """
     Returns only the most recent raw CSV files per (address + type) in a given year directory.
