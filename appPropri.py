@@ -65,10 +65,86 @@ def get_owner_history(year):
     if not all_txs: return pd.DataFrame()
     return pd.concat(all_txs).sort_values("Date", ascending=False).reset_index(drop=True)
 
+@st.cache_data
+def get_complementary_history(year):
+    """Loads movements from manual positions and internal transfer receivables."""
+    owners_map = load_owner_accounts()
+    owner_addrs = set(owners_map.keys())
+
+    all_txs = []
+    for y in range(2020, year + 1):
+        # 1. Manual Positions
+        path_m = get_file_path(y, 'positions')
+        if os.path.exists(path_m):
+            try:
+                df_m = pd_read_csv_safe(path_m)
+                if not df_m.empty:
+                    df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True)
+                    # Standardize columns to match history schema
+                    df_m = df_m.rename(columns={"Quantité": "Amount"})
+                    df_m["Category"] = "Position Manuelle"
+                    df_m["Status"] = "Valide"
+                    df_m["Counterparty"] = "Saisie Manuelle"
+                    all_txs.append(df_m)
+            except: pass
+
+        # 2. Receivables from Internal Transfers to unknown accounts
+        path_q = get_file_path(y, 'qualified')
+        if os.path.exists(path_q):
+            try:
+                df_q = pd_read_csv_safe(path_q)
+                if df_q.empty: continue
+
+                leaked = validate_spam_exclusion(df_q)
+                if leaked: df_q.loc[leaked, "Status"] = "Spam"
+                df_q = df_q[df_q["Status"] != "Spam"].copy()
+
+                # Filter for Internal Transfers where Counterparty is NOT an owner
+                mask_int = (df_q["Category"] == "Transfert Interne")
+                df_q["cp_raw"] = df_q["Counterparty"].apply(resolve_raw_addr)
+                df_receivable = df_q[mask_int & (~df_q["cp_raw"].isin(owner_addrs))].copy()
+
+                if not df_receivable.empty:
+                    df_receivable["Date"] = pd.to_datetime(df_receivable["Date"], utc=True)
+                    # In VGP calculation, the receivable is the negative of the leg
+                    df_receivable["Amount"] = -df_receivable["Amount"]
+                    df_receivable["Account"] = df_receivable["Counterparty"]
+                    df_receivable["Category"] = "Créance (Transfert Interne Sortant)"
+                    all_txs.append(df_receivable)
+            except: pass
+
+    if not all_txs: return pd.DataFrame()
+    return pd.concat(all_txs).sort_values("Date", ascending=False).reset_index(drop=True)
+
+# --- Helpers for UI ---
+def valuate_dataframe(df, cache):
+    """Calculates Valeur EUR (Date) for a transaction dataframe."""
+    if df.empty: return df
+    df = df.copy()
+    # Optimization: Group by (Asset, Date) to minimize redundant price calls
+    df["Date_Only"] = df["Date"].dt.date
+    unique_pairs = df[["Asset", "Date_Only"]].drop_duplicates()
+
+    prices_map = {}
+    for _, r in unique_pairs.iterrows():
+        p_eur = get_price_eur(r["Asset"], r["Date_Only"], cache=cache)
+        prices_map[(r["Asset"], r["Date_Only"])] = p_eur
+
+    def valuate_row(row):
+        p_eur = prices_map.get((row["Asset"], row["Date_Only"]), 0.0)
+        return abs(float(row["Amount"])) * p_eur
+
+    df["Valeur EUR (Date)"] = df.apply(valuate_row, axis=1)
+    return df
+
+# --- Shared Constants ---
+DISPLAY_COLS = ["Date", "Account", "Asset", "Quantité Entrée", "Quantité Sortie", "Valeur EUR (Date)", "Category", "Counterparty"]
+
 # --- Main App ---
 history = get_owner_history(target_year)
+comp_history = get_complementary_history(target_year)
 
-if history.empty:
+if history.empty and comp_history.empty:
     st.warning(f"Aucune transaction trouvée pour les comptes propriétaires jusqu'en {target_year}.")
     st.info("💡 Vérifiez que vos comptes sont bien enregistrés dans la **Gestion des Comptes Propriétaires** (App 2).")
 else:
@@ -90,47 +166,54 @@ else:
     perf_net = vgp_eoy - total_acq
     c3.metric("Performance Latente Globale", f"{perf_net:,.2f} €", delta=perf_net, delta_color="normal")
 
-    # 2. TABLE 1: Transactions de l'année
+    # 2. TABLE 1: Transactions de l'année (Comptes Propriétaires)
     st.divider()
     st.subheader(f"📑 Mouvements des Comptes Propriétaires ({target_year})")
+
+    from shared_logic import load_price_cache
+    global_cache = load_price_cache()
 
     # Filter for current year only
     mask_year = history["Date"].dt.year == target_year
     df_year = history[mask_year].copy()
 
     if df_year.empty:
-        st.info(f"Aucun mouvement détecté spécifiquement en {target_year}.")
+        st.info(f"Aucun mouvement détecté pour les comptes propriétaires en {target_year}.")
     else:
-        # Valuation at transaction date
-        with st.spinner("Calcul de la valeur des mouvements à date..."):
-            from shared_logic import load_price_cache
-            cache = load_price_cache()
+        with st.spinner("Calcul de la valeur des mouvements propriétaires..."):
+            df_year = valuate_dataframe(df_year, global_cache)
 
-            # Optimization: Group by (Asset, Date) to minimize redundant price calls
-            # Use only date (not time) for historical price lookup to increase cache hits
-            df_year["Date_Only"] = df_year["Date"].dt.date
-
-            # Identify unique asset-date pairs
-            unique_pairs = df_year[["Asset", "Date_Only"]].drop_duplicates()
-
-            prices_map = {}
-            for _, r in unique_pairs.iterrows():
-                p_eur = get_price_eur(r["Asset"], r["Date_Only"], cache=cache)
-                prices_map[(r["Asset"], r["Date_Only"])] = p_eur
-
-            def valuate_row(row):
-                p_eur = prices_map.get((row["Asset"], row["Date_Only"]), 0.0)
-                return abs(float(row["Amount"])) * p_eur
-
-            df_year["Valeur EUR (Date)"] = df_year.apply(valuate_row, axis=1)
-
-            # Split In/Out for display
             df_year["Quantité Entrée"] = df_year["Amount"].apply(lambda x: x if x > 0 else 0.0)
             df_year["Quantité Sortie"] = df_year["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
 
-            display_cols = ["Date", "Account", "Asset", "Quantité Entrée", "Quantité Sortie", "Valeur EUR (Date)", "Category", "Counterparty"]
             st.dataframe(
-                df_year[display_cols],
+                df_year[DISPLAY_COLS],
+                column_config={
+                    "Valeur EUR (Date)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €"),
+                    "Quantité Entrée": st.column_config.NumberColumn(format="%.6f"),
+                    "Quantité Sortie": st.column_config.NumberColumn(format="%.6f"),
+                    "Date": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+
+    # 2b. TABLE 1b: Mouvements Complémentaires (Positions Manuelles & Créances)
+    st.subheader(f"📑 Mouvements Complémentaires - Manuels & Créances ({target_year})")
+    mask_year_comp = comp_history["Date"].dt.year == target_year
+    df_year_comp = comp_history[mask_year_comp].copy()
+
+    if df_year_comp.empty:
+        st.info(f"Aucun mouvement complémentaire détecté en {target_year}.")
+    else:
+        with st.spinner("Calcul de la valeur des mouvements complémentaires..."):
+            df_year_comp = valuate_dataframe(df_year_comp, global_cache)
+
+            df_year_comp["Quantité Entrée"] = df_year_comp["Amount"].apply(lambda x: x if x > 0 else 0.0)
+            df_year_comp["Quantité Sortie"] = df_year_comp["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+
+            st.dataframe(
+                df_year_comp[DISPLAY_COLS],
                 column_config={
                     "Valeur EUR (Date)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €"),
                     "Quantité Entrée": st.column_config.NumberColumn(format="%.6f"),
@@ -143,18 +226,16 @@ else:
 
     # 3. TABLE 2: Balances par Compte
     st.divider()
-    st.subheader(f"🏦 État des Lieux par Compte (au 31/12/{target_year})")
+    st.subheader(f"🏦 État des Lieux par Compte Propriétaire (au 31/12/{target_year})")
 
     if snapshot_df.empty:
         st.info("Aucun solde à afficher.")
     else:
-        # filter snapshot for Owners only (already handles circuits)
-        # Snapshot returns Location as "Account: Name" or labels
+        # 1. Filter snapshot for Owners
         mask_owner = snapshot_df["Location"].str.startswith("Account:", na=False)
         df_balances = snapshot_df[mask_owner].copy()
         df_balances["Compte"] = df_balances["Location"].str.replace("Account: ", "")
 
-        # Display
         display_bal_cols = ["Compte", "Asset", "Entrées", "Sorties", "Solde", "Prix (EUR)", "Valeur (EUR)"]
         st.dataframe(
             df_balances[display_bal_cols],
@@ -166,6 +247,34 @@ else:
             use_container_width=True,
             hide_index=True
         )
+
+        # 3b. TABLE 2b: Balances Complémentaires (Manuelles & Créances)
+        st.subheader(f"🏦 Positions Complémentaires - Manuelles & Créances (au 31/12/{target_year})")
+
+        # Filter for non-owners (Manual Positions and Receivables)
+        # Receivables in snapshot usually have labels like "External/CEX: ..." or derived from position_labels
+        # Manual Positions start with "Manual Position:"
+        # So complementary balances = (Everything except Account:) AND Is_Circuit != True
+        mask_comp_bal = (~mask_owner) & (snapshot_df["Is_Circuit"] != True)
+
+        df_comp_bal = snapshot_df[mask_comp_bal].copy()
+        # Ensure model matches exactly by using 'Compte' as column name
+        df_comp_bal["Compte"] = df_comp_bal["Location"].str.replace("Manual Position: ", "")
+
+        if df_comp_bal.empty:
+            st.info("Aucune position complémentaire détectée.")
+        else:
+            # Match display_bal_cols exactly: ["Compte", "Asset", "Entrées", "Sorties", "Solde", "Prix (EUR)", "Valeur (EUR)"]
+            st.dataframe(
+                df_comp_bal[display_bal_cols],
+                column_config={
+                    "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €"),
+                    "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
+                    "Solde": st.column_config.NumberColumn("Quantité Finale", format="%.6f"),
+                },
+                use_container_width=True,
+                hide_index=True
+            )
 
 st.sidebar.divider()
 st.sidebar.caption("Dashboard Patrimoine v1.0 - appPropri")

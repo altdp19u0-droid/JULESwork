@@ -29,6 +29,10 @@ def pd_read_csv_safe(path):
         try: return pd.read_csv(path, encoding="latin-1")
         except: return pd.read_csv(path, encoding="utf-8", errors="replace")
 
+def is_imposable_robust(val):
+    s = str(val).upper().strip()
+    return s in ["TRUE", "1", "1.0", "VRAI", "YES", "OUI"]
+
 def get_file_path(year, category):
     """Centralized path resolution for all apps."""
     base = os.path.join(EXPORT_BASE_DIR, str(year))
