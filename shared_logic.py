@@ -143,7 +143,10 @@ def get_fiat_rate(from_currency, date_obj):
     except: pass
     return 0.0
 
-def get_price_eur(asset, date_obj):
+def get_price_eur(asset, date_obj, cache=None):
+    if not isinstance(date_obj, datetime):
+        date_obj = datetime.combine(date_obj, datetime.min.time()).replace(tzinfo=None)
+
     # Unified normalization
     nuance_map = {
         "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
@@ -164,7 +167,7 @@ def get_price_eur(asset, date_obj):
     if asset_clean == "ZCHF": return get_fiat_rate("CHF", date_obj)
 
     d_str = date_obj.strftime("%d-%m-%Y")
-    cache = load_price_cache()
+    cache = cache if cache is not None else load_price_cache()
     cache_key = f"{asset_clean}_{d_str}"
     if cache_key in cache: return float(cache[cache_key])
 
@@ -300,7 +303,10 @@ def get_portfolio_snapshot(journal_or_year, target_date):
     all_assets = set()
     if not df_j.empty: all_assets.update(df_j["Asset"].unique())
     if not df_m.empty: all_assets.update(df_m["Asset"].unique())
-    asset_prices = {a: get_price_eur(a, target_date) for a in all_assets}
+
+    # Optimization: pre-load cache for batch pricing
+    price_cache = load_price_cache()
+    asset_prices = {a: get_price_eur(a, target_date, cache=price_cache) for a in all_assets}
 
     details = []
 

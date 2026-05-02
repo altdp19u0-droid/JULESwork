@@ -103,8 +103,23 @@ else:
     else:
         # Valuation at transaction date
         with st.spinner("Calcul de la valeur des mouvements à date..."):
+            from shared_logic import load_price_cache
+            cache = load_price_cache()
+
+            # Optimization: Group by (Asset, Date) to minimize redundant price calls
+            # Use only date (not time) for historical price lookup to increase cache hits
+            df_year["Date_Only"] = df_year["Date"].dt.date
+
+            # Identify unique asset-date pairs
+            unique_pairs = df_year[["Asset", "Date_Only"]].drop_duplicates()
+
+            prices_map = {}
+            for _, r in unique_pairs.iterrows():
+                p_eur = get_price_eur(r["Asset"], r["Date_Only"], cache=cache)
+                prices_map[(r["Asset"], r["Date_Only"])] = p_eur
+
             def valuate_row(row):
-                p_eur = get_price_eur(row["Asset"], row["Date"])
+                p_eur = prices_map.get((row["Asset"], row["Date_Only"]), 0.0)
                 return abs(float(row["Amount"])) * p_eur
 
             df_year["Valeur EUR (Date)"] = df_year.apply(valuate_row, axis=1)
