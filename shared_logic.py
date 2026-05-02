@@ -814,6 +814,21 @@ def find_reconciliation_matches(df, time_window_days=3, val_tolerance_pct=0.05):
 
     return df, count_proposed
 
+def get_total_acquisition_value(target_year):
+    """Sums all fiat purchases from all years up to target_year."""
+    total = 0.0
+    for y in range(2020, target_year + 1):
+        path = get_file_path(y, 'fiat')
+        if os.path.exists(path):
+            try:
+                df = pd_read_csv_safe(path)
+                if not df.empty:
+                    # Filter for 'Achat' types (Euros moving into Crypto)
+                    mask = df['Type'].str.contains("Achat", case=False, na=False)
+                    total += df[mask]['Montant EUR'].sum()
+            except: pass
+    return total
+
 def calculate_fiscal_gains(cessions_df, initial_acq_price):
     """
     Calculates capital gains according to Art 150 VH bis.

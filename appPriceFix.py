@@ -8,7 +8,8 @@ from datetime import datetime
 import unicodedata
 from shared_logic import (
     get_price_eur, validate_spam_exclusion,
-    load_spam_list, pd_read_csv_safe
+    load_spam_list, pd_read_csv_safe,
+    load_price_cache, save_price_cache
 )
 def show_status():
     st.sidebar.success("✅ Système Opérationnel")
@@ -23,17 +24,6 @@ PRICE_CACHE_FILE = "historical_prices_cache.json"
 SPAM_FILE = "spam_blacklist.json"
 
 # --- Helpers ---
-def load_price_cache():
-    if os.path.exists(PRICE_CACHE_FILE):
-        try:
-            with open(PRICE_CACHE_FILE, "r", encoding="utf-8", errors="replace") as f:
-                return json.load(f)
-        except: return {}
-    return {}
-
-def save_price_cache(cache):
-    with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=4)
 
 # --- Sidebar ---
 with st.sidebar:

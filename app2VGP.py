@@ -8,7 +8,8 @@ from datetime import datetime
 import unicodedata
 from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
-    validate_spam_exclusion, load_spam_list, get_file_path
+    validate_spam_exclusion, load_spam_list, get_file_path,
+    load_price_cache, save_price_cache
 )
 
 # --- Status Indicator ---
@@ -34,9 +35,6 @@ def load_position_labels():
     return {}
 
 
-def save_price_cache(cache):
-    with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f)
 
 # --- Helpers ---
 def is_imposable_robust(val):
