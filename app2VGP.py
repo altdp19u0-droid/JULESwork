@@ -10,7 +10,7 @@ import shared_logic
 from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
     validate_spam_exclusion, load_spam_list, get_file_path,
-    check_file_freshness, pd_read_csv_safe
+    check_file_freshness, pd_read_csv_safe, standardize_df_addresses
 )
 
 # --- Status Indicator ---
@@ -101,6 +101,8 @@ else:
     # We use session state to ensure UI updates after calculation
     if "journal_active" not in st.session_state or st.session_state.get("active_path") != path:
         journal = pd_read_csv_safe(path)
+        # UNIFICATION
+        journal = standardize_df_addresses(journal)
         journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
 
         # --- DOUBLE VÉRIFICATION SPAM À L'OUVERTURE ---

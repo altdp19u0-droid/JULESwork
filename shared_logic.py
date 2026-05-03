@@ -23,6 +23,36 @@ def resolve_raw_addr(addr_str):
         if p.startswith("0x") and len(p) >= 40: return p
     return s
 
+def standardize_address_string(addr_str):
+    """
+    Returns the string as-is if it's a label, but forces lowercase
+    if it's a raw 0x hex address (or contains one in parens).
+    """
+    if not addr_str: return ""
+    s = str(addr_str).strip()
+
+    # Check for raw 0x
+    if s.lower().startswith("0x"):
+        return s.lower()
+
+    # Check for Label (0x...)
+    if "(" in s and ")" in s:
+        prefix = s.split("(")[0].strip()
+        addr_part = s.split("(")[1].split(")")[0].strip().lower()
+        if addr_part.startswith("0x"):
+            return f"{prefix} ({addr_part})"
+
+    return s
+
+def standardize_df_addresses(df):
+    """Applies unification in lowercase for technical addresses in a DataFrame."""
+    if df.empty: return df
+    df = df.copy()
+    for col in ["Account", "Counterparty"]:
+        if col in df.columns:
+            df[col] = df[col].apply(standardize_address_string)
+    return df
+
 def pd_read_csv_safe(path):
     try: return pd.read_csv(path, encoding="utf-8-sig")
     except:
@@ -266,6 +296,8 @@ def get_portfolio_snapshot(journal_or_year, target_date):
     for y in range(start_scan_year, target_year_val + 1):
         if y == target_year_val and isinstance(journal_or_year, pd.DataFrame):
             df_y = journal_or_year.copy()
+            # UNIFICATION CASE (Lowering 0x addresses)
+            df_y = standardize_df_addresses(df_y)
             df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
             journals_to_process.append(df_y[df_y["Date"] <= target_date])
         else:
@@ -273,6 +305,8 @@ def get_portfolio_snapshot(journal_or_year, target_date):
             if os.path.exists(path_j):
                 try:
                     df_y = pd_read_csv_safe(path_j)
+                    # UNIFICATION CASE
+                    df_y = standardize_df_addresses(df_y)
                     df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
 
                     # --- ABSOLUTE SPAM EXCLUSION (Recursive) ---
@@ -462,11 +496,18 @@ def load_external_circuits():
     if os.path.exists(EXTERNAL_CIRCUITS_FILE):
         try:
             with open(EXTERNAL_CIRCUITS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                # UNIFICATION
+                data["labels"] = {str(k).lower(): v for k, v in data.get("labels", {}).items()}
+                data["hidden"] = [str(x).lower() for x in data.get("hidden", [])]
+                return data
         except: return {"labels": {}, "hidden": []}
     return {"labels": {}, "hidden": []}
 
 def save_external_circuits(data):
+    # UNIFICATION
+    data["labels"] = {str(k).lower(): v for k, v in data.get("labels", {}).items()}
+    data["hidden"] = [str(x).lower() for x in data.get("hidden", [])]
     with open(EXTERNAL_CIRCUITS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
@@ -474,13 +515,17 @@ def load_owner_accounts():
     if os.path.exists(OWNERS_FILE):
         try:
             with open(OWNERS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                # UNIFICATION
+                return {str(k).lower(): v for k, v in data.items()}
         except: return {}
     return {}
 
 def save_owner_accounts(data):
+    # UNIFICATION
+    lower_data = {str(k).lower(): v for k, v in data.items()}
     with open(OWNERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
+        json.dump(lower_data, f, indent=4)
 
 def auto_register_owner(addr_str):
     """Adds an address to owner_accounts.json if it looks like a hex address and is missing."""
@@ -508,6 +553,7 @@ def get_owner_addresses(journal_df=None):
     if journal_df is not None and "Account" in journal_df.columns:
         for a in journal_df["Account"].dropna().unique():
             resolved = resolve_raw_addr(a)
+            # resolve_raw_addr already handles .lower()
             if resolved.startswith("0x"): owners.add(resolved)
 
     # 3. Auto-Discovery from Journals on disk
@@ -664,7 +710,8 @@ def load_spam_list():
     if os.path.exists(SPAM_FILE):
         try:
             with open(SPAM_FILE, "r", encoding="utf-8", errors="replace") as f:
-                return set(json.load(f))
+                data = json.load(f)
+                return {str(x).lower() for x in data}
         except: return set()
     return set()
 
@@ -702,6 +749,9 @@ def detect_internal_transfers(df):
     Returns the updated dataframe and a dictionary of counts.
     """
     if df.empty: return df, {"hash": 0, "account": 0}
+
+    # Ensure addresses are standardized for detection
+    df = standardize_df_addresses(df)
 
     count_h = 0
     count_acc = 0
@@ -748,6 +798,8 @@ def find_reconciliation_matches(df, time_window_days=3, val_tolerance_pct=0.05):
     if df.empty: return df, 0
 
     df = df.copy()
+    # Unification
+    df = standardize_df_addresses(df)
     if "Linked_ID" not in df.columns: df["Linked_ID"] = ""
     if "Link_Status" not in df.columns: df["Link_Status"] = ""
 

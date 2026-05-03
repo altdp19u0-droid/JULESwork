@@ -13,7 +13,7 @@ from shared_logic import (
     get_all_raw_files, check_file_freshness,
     find_reconciliation_matches, get_file_path,
     extract_source_from_filename, validate_spam_exclusion,
-    load_spam_list
+    load_spam_list, standardize_df_addresses
 )
 
 # --- Status Indicator ---
@@ -51,13 +51,15 @@ def load_position_labels():
     if os.path.exists(POSITIONS_FILE):
         try:
             with open(POSITIONS_FILE, "r", encoding="utf-8", errors="replace") as f:
-                return json.load(f)
+                data = json.load(f)
+                return {str(k).lower(): v for k, v in data.items()}
         except: return {}
     return {}
 
 def save_position_labels(labels_dict):
+    lower_data = {str(k).lower(): v for k, v in labels_dict.items()}
     with open(POSITIONS_FILE, "w", encoding="utf-8") as f:
-        json.dump(labels_dict, f, indent=4)
+        json.dump(lower_data, f, indent=4)
 
 # --- Engine: Merging & Cleaning ---
 def apply_position_labels(df):
@@ -359,6 +361,8 @@ def merge_raw_data(year):
 
         df_final = pd.concat([df_real, df_synth]).sort_values("Date", ascending=False).reset_index(drop=True)
         df_final = df_final.drop(columns=["_pri", "_d"])
+        # UNIFICATION
+        df_final = standardize_df_addresses(df_final)
         df_final = apply_position_labels(df_final)
 
     return df_final
@@ -381,6 +385,8 @@ def sync_data(year):
     if os.path.exists(qual_path) and os.path.getsize(qual_path) > 0:
         try:
             old_df = pd_read_csv_safe(qual_path)
+            # UNIFICATION
+            old_df = standardize_df_addresses(old_df)
             old_df["Date"] = pd.to_datetime(old_df["Date"], utc=True, errors="coerce", format="ISO8601")
             if "Tx Hash" in old_df.columns:
                 old_df["Tx Hash"] = old_df["Tx Hash"].apply(norm_hash)

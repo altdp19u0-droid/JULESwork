@@ -6,7 +6,7 @@ from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
     get_fiat_rate, pd_read_csv_safe, load_price_cache, save_price_cache,
     calculate_fiscal_gains, get_file_path, check_file_freshness,
-    validate_spam_exclusion
+    validate_spam_exclusion, standardize_df_addresses
 )
 from fpdf import FPDF
 from io import BytesIO, StringIO
@@ -125,6 +125,8 @@ def load_data(year):
     for key, path in paths.items():
         if os.path.exists(path) and os.path.getsize(path) > 0:
             df = pd_read_csv_safe(path)
+            # UNIFICATION
+            df = standardize_df_addresses(df)
             # Standardisation Date
             if 'Date' in df.columns:
                 df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')

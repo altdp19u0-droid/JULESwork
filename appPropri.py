@@ -5,7 +5,7 @@ from datetime import datetime
 from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
     pd_read_csv_safe, get_file_path, validate_spam_exclusion,
-    load_owner_accounts, get_total_acquisition_value
+    load_owner_accounts, get_total_acquisition_value, standardize_df_addresses
 )
 
 # --- Status Indicator ---
@@ -46,6 +46,8 @@ def get_owner_history(year):
             try:
                 df = pd_read_csv_safe(path)
                 if df.empty: continue
+                # UNIFICATION
+                df = standardize_df_addresses(df)
 
                 # 1. Absolute Spam Exclusion
                 leaked = validate_spam_exclusion(df)
@@ -78,6 +80,8 @@ def get_complementary_history(year):
         if os.path.exists(path_m):
             try:
                 df_m = pd_read_csv_safe(path_m)
+                # UNIFICATION
+                df_m = standardize_df_addresses(df_m)
                 if not df_m.empty and "Date" in df_m.columns:
                     df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True, errors="coerce")
                     # Standardize columns to match history schema
@@ -94,6 +98,8 @@ def get_complementary_history(year):
             try:
                 df_q = pd_read_csv_safe(path_q)
                 if df_q.empty: continue
+                # UNIFICATION
+                df_q = standardize_df_addresses(df_q)
 
                 leaked = validate_spam_exclusion(df_q)
                 if leaked: df_q.loc[leaked, "Status"] = "Spam"
