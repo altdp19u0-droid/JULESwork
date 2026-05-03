@@ -6,10 +6,11 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import unicodedata
+import shared_logic
 from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
     validate_spam_exclusion, load_spam_list, get_file_path,
-    load_price_cache, save_price_cache
+    check_file_freshness, pd_read_csv_safe
 )
 
 # --- Status Indicator ---
@@ -80,7 +81,6 @@ with st.sidebar:
         st.rerun()
 
     # Data Freshness Warning
-    from shared_logic import check_file_freshness
     qual_path = get_file_path(target_year, 'qualified')
     if os.path.exists(qual_path):
         last_load = st.session_state.get("last_vgp_sync_time", 0)
@@ -100,7 +100,6 @@ else:
     # --- Persistence Logic ---
     # We use session state to ensure UI updates after calculation
     if "journal_active" not in st.session_state or st.session_state.get("active_path") != path:
-        from shared_logic import pd_read_csv_safe
         journal = pd_read_csv_safe(path)
         journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
 
@@ -285,7 +284,7 @@ else:
                 col_save_audit1, col_save_audit2 = st.columns(2)
 
                 if col_save_audit1.button("💾 Enregistrer ces prix dans le cache"):
-                    cache = load_price_cache()
+                    cache = shared_logic.load_price_cache()
                     d_str = selected_date.strftime("%d-%m-%Y")
 
                     # On identifie les prix modifiés par rapport au cache actuel
@@ -297,7 +296,7 @@ else:
                             cache[f"{a_clean}_{d_str}"] = p_val
                             count += 1
 
-                    save_price_cache(cache)
+                    shared_logic.save_price_cache(cache)
 
                     # Sanctuarisation annuelle automatique pour pérennité
                     y = str(selected_date.year)

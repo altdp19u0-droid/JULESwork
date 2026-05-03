@@ -78,8 +78,8 @@ def get_complementary_history(year):
         if os.path.exists(path_m):
             try:
                 df_m = pd_read_csv_safe(path_m)
-                if not df_m.empty:
-                    df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True)
+                if not df_m.empty and "Date" in df_m.columns:
+                    df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True, errors="coerce")
                     # Standardize columns to match history schema
                     df_m = df_m.rename(columns={"Quantité": "Amount"})
                     df_m["Category"] = "Position Manuelle"
@@ -100,21 +100,25 @@ def get_complementary_history(year):
                 df_q = df_q[df_q["Status"] != "Spam"].copy()
 
                 # Filter for Internal Transfers where Counterparty is NOT an owner
-                mask_int = (df_q["Category"] == "Transfert Interne")
-                df_q["cp_raw"] = df_q["Counterparty"].apply(resolve_raw_addr)
-                df_receivable = df_q[mask_int & (~df_q["cp_raw"].isin(owner_addrs))].copy()
+                if "Category" in df_q.columns and "Counterparty" in df_q.columns:
+                    mask_int = (df_q["Category"] == "Transfert Interne")
+                    df_q["cp_raw"] = df_q["Counterparty"].apply(resolve_raw_addr)
+                    df_receivable = df_q[mask_int & (~df_q["cp_raw"].isin(owner_addrs))].copy()
 
-                if not df_receivable.empty:
-                    df_receivable["Date"] = pd.to_datetime(df_receivable["Date"], utc=True)
-                    # In VGP calculation, the receivable is the negative of the leg
-                    df_receivable["Amount"] = -df_receivable["Amount"]
-                    df_receivable["Account"] = df_receivable["Counterparty"]
-                    df_receivable["Category"] = "Créance (Transfert Interne Sortant)"
-                    all_txs.append(df_receivable)
+                    if not df_receivable.empty and "Date" in df_receivable.columns:
+                        df_receivable["Date"] = pd.to_datetime(df_receivable["Date"], utc=True, errors="coerce")
+                        # In VGP calculation, the receivable is the negative of the leg
+                        df_receivable["Amount"] = -df_receivable["Amount"]
+                        df_receivable["Account"] = df_receivable["Counterparty"]
+                        df_receivable["Category"] = "Créance (Transfert Interne Sortant)"
+                        all_txs.append(df_receivable)
             except: pass
 
     if not all_txs: return pd.DataFrame()
-    return pd.concat(all_txs).sort_values("Date", ascending=False).reset_index(drop=True)
+    res = pd.concat(all_txs)
+    if "Date" in res.columns:
+        return res.sort_values("Date", ascending=False).reset_index(drop=True)
+    return res.reset_index(drop=True)
 
 # --- Helpers for UI ---
 def valuate_dataframe(df, cache):
@@ -174,8 +178,11 @@ else:
     global_cache = load_price_cache()
 
     # Filter for current year only
-    mask_year = history["Date"].dt.year == target_year
-    df_year = history[mask_year].copy()
+    if not history.empty:
+        mask_year = history["Date"].dt.year == target_year
+        df_year = history[mask_year].copy()
+    else:
+        df_year = pd.DataFrame()
 
     if df_year.empty:
         st.info(f"Aucun mouvement détecté pour les comptes propriétaires en {target_year}.")
@@ -200,8 +207,11 @@ else:
 
     # 2b. TABLE 1b: Mouvements Complémentaires (Positions Manuelles & Créances)
     st.subheader(f"📑 Mouvements Complémentaires - Manuels & Créances ({target_year})")
-    mask_year_comp = comp_history["Date"].dt.year == target_year
-    df_year_comp = comp_history[mask_year_comp].copy()
+    if not comp_history.empty and "Date" in comp_history.columns:
+        mask_year_comp = comp_history["Date"].dt.year == target_year
+        df_year_comp = comp_history[mask_year_comp].copy()
+    else:
+        df_year_comp = pd.DataFrame()
 
     if df_year_comp.empty:
         st.info(f"Aucun mouvement complémentaire détecté en {target_year}.")
