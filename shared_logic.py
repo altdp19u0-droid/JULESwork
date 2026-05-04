@@ -13,6 +13,7 @@ PRICE_CACHE_FILE = "historical_prices_cache.json"
 EXTERNAL_CIRCUITS_FILE = "external_circuits.json"
 OWNERS_FILE = "owner_accounts.json"
 SPAM_FILE = "spam_blacklist.json"
+NOTES_FILE = "manual_notes.json"
 
 def resolve_raw_addr(addr_str):
     s = str(addr_str).strip().lower()
@@ -536,6 +537,36 @@ def save_owner_accounts(data):
     lower_data = {str(k).lower(): v for k, v in data.items()}
     with open(OWNERS_FILE, "w", encoding="utf-8") as f:
         json.dump(lower_data, f, indent=4)
+
+def load_manual_notes():
+    if os.path.exists(NOTES_FILE):
+        try:
+            with open(NOTES_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except: return {}
+    return {}
+
+def save_manual_notes(notes_dict):
+    with open(NOTES_FILE, "w", encoding="utf-8") as f:
+        json.dump(notes_dict, f, indent=4)
+
+def get_note_key(row):
+    """Generates a stable key for a transaction row to associate a note."""
+    # Ensure date handling
+    raw_date = row.get("Date")
+    if pd.isna(raw_date): date_str = "NoDate"
+    else: date_str = pd.to_datetime(raw_date).strftime("%Y%m%d_%H%M%S")
+
+    h = str(row.get("Tx Hash", "")).strip()
+    acc = str(row.get("Account", "")).lower().strip()
+    asset = str(row.get("Asset", "")).upper().strip()
+
+    # Robust amount detection (handles 'Amount' or 'Solde' for snapshots)
+    amt_val = row.get("Amount")
+    if amt_val is None: amt_val = row.get("Solde", 0.0)
+
+    amt_str = f"{float(amt_val):.8f}"
+    return f"{date_str}_{acc}_{asset}_{amt_str}_{h}"
 
 def auto_register_owner(addr_str):
     """Adds an address to owner_accounts.json if it looks like a hex address and is missing."""
