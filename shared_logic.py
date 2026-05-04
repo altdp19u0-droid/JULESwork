@@ -195,8 +195,12 @@ def get_price_eur(asset, date_obj, cache=None):
     asset_clean = unicodedata.normalize('NFKC', asset_clean).upper().strip()
 
     # 1. Stables & Direct Mappings
-    if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC"]: return 1.0
-    if asset_clean in ["USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS", "TWCOMPOUNDUSDC"]:
+    if asset_clean in ["EUR", "EURA", "AGEUR", "STEUR", "EURC", "EURT", "EURCV"]: return 1.0
+    if asset_clean in [
+        "USD", "USDC", "USDT", "DAI", "USDC.E", "STUSD", "SUSDS",
+        "TWCOMPOUNDUSDC", "TWCOMPUSDC", "CUSDC", "CUSDT", "CDAI",
+        "FDUSD", "PYUSD", "BUSD", "FRAX", "LUSD", "GUSD", "ZUSD", "USDS"
+    ]:
         return get_fiat_rate("USD", date_obj)
     if asset_clean == "ZCHF": return get_fiat_rate("CHF", date_obj)
 
