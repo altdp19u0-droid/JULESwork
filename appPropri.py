@@ -72,7 +72,7 @@ def get_owner_history(year):
                 # Map to standard schema
                 f_rows = []
                 for _, r in raw_f.iterrows():
-                    qty = float(r["Quantité"])
+                    qty = float(r.get("Quantité", 0.0))
                     f_rows.append({
                         "Date": r["Date"], "Account": r.get("Account", r.get("Compte/Label")),
                         "Counterparty": r.get("Counterparty", r.get("Plateforme")),
@@ -100,6 +100,9 @@ def get_owner_history(year):
         combined = pd.concat([df_q, df_manual])
         if not combined.empty:
             combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
+            # --- CRITICAL FIX: Filter out rows with None dates ---
+            combined = combined[combined["Date"].notna()]
+
             combined["_day"] = combined["Date"].dt.date
             combined["_amt"] = combined["Amount"].astype(float).round(8)
             combined["_acc"] = combined["Account"].astype(str).str.lower()
@@ -130,6 +133,8 @@ def get_acquisition_history(year):
 
                 if not df_acq.empty:
                     df_acq["Date"] = pd.to_datetime(df_acq["Date"], utc=True, errors="coerce")
+                    # --- CRITICAL FIX: Filter out rows with None dates ---
+                    df_acq = df_acq[df_acq["Date"].notna()]
                     # Map to requested structure
                     df_acq = df_acq.rename(columns={
                         "Montant EUR": "Fiat Mobilisé (EUR)",
@@ -218,6 +223,9 @@ def get_cessions_history(year):
         combined = pd.concat([df_q, df_f_cess, df_s_cess])
         if not combined.empty:
             combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
+            # --- CRITICAL FIX: Filter out rows with None dates ---
+            combined = combined[combined["Date"].notna()]
+
             combined["_day"] = combined["Date"].dt.date
             combined["_amt"] = combined["Amount"].astype(float).round(8)
             combined["_acc"] = combined["Account"].astype(str).str.lower()
@@ -409,8 +417,14 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                 if not df_results.empty:
                     # We merge on Date and Asset for matching
                     df_results = df_results.rename(columns={"Abattement Acq": "Abattement", "Plus-Value Brute": "Gain/Perte"})
+                    # Ensure same date precision for merge
+                    df_results["Date"] = pd.to_datetime(df_results["Date"], utc=True)
+                    cess_history["Date"] = pd.to_datetime(cess_history["Date"], utc=True)
                     # Merge logic: cess_history and df_results have unique dates
                     cess_history = pd.merge(cess_history, df_results[["Date", "Abattement", "Gain/Perte"]], on="Date", how="left")
+                    # Fill missing after merge (for non-calculated cessions)
+                    cess_history["Abattement"] = cess_history["Abattement"].fillna(0.0)
+                    cess_history["Gain/Perte"] = cess_history["Gain/Perte"].fillna(0.0)
 
                 cess_history = cess_history.rename(columns={
                     "Prix de Cession (EUR)": "Montant EUR Retrouvé",
