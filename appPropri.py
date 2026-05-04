@@ -39,34 +39,76 @@ with st.sidebar:
 # --- Logic: Loading and Filtering ---
 @st.cache_data
 def get_owner_history(year):
-    """Loads all qualified journals up to 'year' and filters for owner accounts."""
+    """Loads all qualified journals and manual records up to 'year' and filters for owner accounts."""
     owners_map = load_owner_accounts()
     owner_addrs = set(owners_map.keys())
 
     all_txs = []
     for y in range(2020, year + 1):
+        # 1. From Qualified Journal
+        df_q = pd.DataFrame()
         path = get_file_path(y, 'qualified')
         if os.path.exists(path):
             try:
-                df = pd_read_csv_safe(path)
-                if df.empty: continue
-                # UNIFICATION
-                df = standardize_df_addresses(df)
-
-                # 1. Absolute Spam Exclusion
-                leaked = validate_spam_exclusion(df)
-                if leaked: df.loc[leaked, "Status"] = "Spam"
-                df = df[df["Status"] != "Spam"].copy()
-
-                # 2. Filter for Owners
-                # Keep rows where 'Account' is a known owner address
-                df["acc_raw"] = df["Account"].apply(resolve_raw_addr)
-                df_owner = df[df["acc_raw"].isin(owner_addrs)].copy()
-
-                if not df_owner.empty:
-                    df_owner["Date"] = pd.to_datetime(df_owner["Date"], utc=True)
-                    all_txs.append(df_owner)
+                df_q = pd_read_csv_safe(path)
+                df_q = standardize_df_addresses(df_q)
+                leaked = validate_spam_exclusion(df_q)
+                if leaked: df_q.loc[leaked, "Status"] = "Spam"
+                df_q = df_q[df_q["Status"] != "Spam"].copy()
+                df_q["acc_raw"] = df_q["Account"].apply(resolve_raw_addr)
+                df_q = df_q[df_q["acc_raw"].isin(owner_addrs)].copy()
             except: pass
+
+        # 2. From Manual registries (Fiat/Swaps) to catch real-time edits in app0
+        # This prevents the "empty dashboard" when user adds items but hasn't synced Step 2 yet.
+        df_manual = pd.DataFrame()
+
+        # 2a. Fiat
+        path_f = get_file_path(y, 'fiat')
+        if os.path.exists(path_f):
+            try:
+                raw_f = pd_read_csv_safe(path_f)
+                raw_f = standardize_df_addresses(raw_f)
+                # Map to standard schema
+                f_rows = []
+                for _, r in raw_f.iterrows():
+                    qty = float(r["Quantité"])
+                    f_rows.append({
+                        "Date": r["Date"], "Account": r.get("Account", r.get("Compte/Label")),
+                        "Counterparty": r.get("Counterparty", r.get("Plateforme")),
+                        "Asset": r["Asset"], "Amount": qty if "Achat" in str(r["Type"]) else -qty,
+                        "Source Type": "Manual Fiat", "Category": str(r["Type"]), "Status": "Valide"
+                    })
+                df_manual = pd.concat([df_manual, pd.DataFrame(f_rows)])
+            except: pass
+
+        # 2b. Swaps
+        path_s = get_file_path(y, 'swaps')
+        if os.path.exists(path_s):
+            try:
+                raw_s = pd_read_csv_safe(path_s)
+                raw_s = standardize_df_addresses(raw_s)
+                raw_s["Source Type"] = "Manual Swap"
+                df_manual = pd.concat([df_manual, raw_s])
+            except: pass
+
+        if not df_manual.empty:
+            df_manual["acc_raw"] = df_manual["Account"].apply(resolve_raw_addr)
+            df_manual = df_manual[df_manual["acc_raw"].isin(owner_addrs)].copy()
+
+        # Merge and Deduplicate
+        combined = pd.concat([df_q, df_manual])
+        if not combined.empty:
+            combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
+            combined["_day"] = combined["Date"].dt.date
+            combined["_amt"] = combined["Amount"].astype(float).round(8)
+            combined["_acc"] = combined["Account"].astype(str).str.lower()
+            combined["_asset"] = combined["Asset"].astype(str).str.upper()
+
+            combined["_src_pri"] = combined["Source Type"].apply(lambda x: 0 if "Manual" not in str(x) else 1)
+            combined = combined.sort_values("_src_pri").drop_duplicates(subset=["_day", "_acc", "_asset", "_amt"], keep="first")
+            combined = combined.drop(columns=["_day", "_amt", "_acc", "_asset", "_src_pri", "acc_raw"])
+            all_txs.append(combined)
 
     if not all_txs: return pd.DataFrame()
     return pd.concat(all_txs).sort_values("Date", ascending=False).reset_index(drop=True)
@@ -108,32 +150,92 @@ def get_acquisition_history(year):
 
 @st.cache_data
 def get_cessions_history(year):
-    """Loads all qualified cessions from 2020 to 'year'."""
-    from shared_logic import is_imposable_robust
+    """Loads all qualified and manual imposable cessions from 2020 to 'year'."""
+    from shared_logic import is_imposable_robust, get_fiat_rate
     all_cessions = []
+
     for y in range(2020, year + 1):
-        path = get_file_path(y, 'qualified')
-        if os.path.exists(path):
+        # 1. From Qualified Journal (consolidated truth)
+        path_q = get_file_path(y, 'qualified')
+        df_q = pd.DataFrame()
+        if os.path.exists(path_q):
             try:
-                df = pd_read_csv_safe(path)
-                if df.empty: continue
-                # UNIFICATION
-                df = standardize_df_addresses(df)
+                df_q = pd_read_csv_safe(path_q)
+                df_q = standardize_df_addresses(df_q)
+                mask_cess = (df_q['Imposable'].apply(is_imposable_robust) |
+                             df_q['Category'].fillna("").str.contains("Vente", case=False)) & (df_q['Asset'] != 'EUR')
+                df_q = df_q[mask_cess].copy()
+            except: df_q = pd.DataFrame()
 
-                mask_cess = (df['Imposable'].apply(is_imposable_robust) |
-                             df['Category'].fillna("").str.contains("Vente", case=False)) & (df['Asset'] != 'EUR')
-                df_cess = df[mask_cess].copy()
-
-                if not df_cess.empty:
-                    df_cess["Date"] = pd.to_datetime(df_cess["Date"], utc=True, errors="coerce")
-                    # Force conversion
-                    df_cess["Prix de Cession (EUR)"] = pd.to_numeric(df_cess.get("Prix de Cession (EUR)", 0.0), errors="coerce").fillna(0.0)
-                    df_cess["VGP (EUR)"] = pd.to_numeric(df_cess.get("VGP (EUR)", 0.0), errors="coerce").fillna(0.0)
-                    all_cessions.append(df_cess)
+        # 2. From Manual Fiat (detecting non-synced sales)
+        path_f = get_file_path(y, 'fiat')
+        df_f_cess = pd.DataFrame()
+        if os.path.exists(path_f):
+            try:
+                raw_f = pd_read_csv_safe(path_f)
+                raw_f = standardize_df_addresses(raw_f)
+                # Sales (Vente) marked as imposable
+                mask_f_cess = raw_f['Type'].fillna("").str.contains("Vente", case=False) & raw_f['Imposable'].apply(is_imposable_robust)
+                df_f_raw = raw_f[mask_f_cess].copy()
+                if not df_f_raw.empty:
+                    rows = []
+                    for _, r in df_f_raw.iterrows():
+                        rows.append({
+                            "Date": r["Date"], "Account": r.get("Account", r.get("Compte/Label")),
+                            "Asset": r["Asset"], "Amount": -float(r["Quantité"]),
+                            "Prix de Cession (EUR)": float(r["Montant EUR"]),
+                            "VGP (EUR)": 0.0, "Network": "Fiat", "Source Type": "Manual Fiat",
+                            "Category": "Vente", "Status": "Valide", "Imposable": True
+                        })
+                    df_f_cess = pd.DataFrame(rows)
             except: pass
 
+        # 3. From Manual Swaps (detecting non-synced imposable swaps)
+        path_s = get_file_path(y, 'swaps')
+        df_s_cess = pd.DataFrame()
+        if os.path.exists(path_s):
+            try:
+                raw_s = pd_read_csv_safe(path_s)
+                raw_s = standardize_df_addresses(raw_s)
+                mask_s_cess = raw_s['Imposable'].apply(is_imposable_robust)
+                df_s_raw = raw_s[mask_s_cess].copy()
+                if not df_s_raw.empty:
+                    rows = []
+                    for _, r in df_s_raw.iterrows():
+                        # A swap usually has two legs in appPropri, here we focus on the disposal (neg amount)
+                        amt = float(r["Amount"])
+                        if amt < 0:
+                            rows.append({
+                                "Date": r["Date"], "Account": r["Account"], "Asset": r["Asset"], "Amount": amt,
+                                "Prix de Cession (EUR)": 0.0, "VGP (EUR)": 0.0, "Network": "Manual",
+                                "Source Type": "Manual Swap", "Category": "Swap", "Status": "Valide", "Imposable": True
+                            })
+                    df_s_cess = pd.DataFrame(rows)
+            except: pass
+
+        # Merge and Deduplicate (by Date, Account, Asset, Amount)
+        # We prioritize df_q (qualified journal)
+        combined = pd.concat([df_q, df_f_cess, df_s_cess])
+        if not combined.empty:
+            combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
+            combined["_day"] = combined["Date"].dt.date
+            combined["_amt"] = combined["Amount"].astype(float).round(8)
+            combined["_acc"] = combined["Account"].astype(str).str.lower()
+            combined["_asset"] = combined["Asset"].astype(str).str.upper()
+
+            # Drop duplicates keeping the one from qualified journal if possible
+            # We sort such that df_q rows (which usually have more metadata) are first
+            combined["_src_pri"] = combined["Source Type"].apply(lambda x: 0 if x not in ["Manual Fiat", "Manual Swap"] else 1)
+            combined = combined.sort_values("_src_pri").drop_duplicates(subset=["_day", "_acc", "_asset", "_amt"], keep="first")
+            combined = combined.drop(columns=["_day", "_amt", "_acc", "_asset", "_src_pri"])
+            all_cessions.append(combined)
+
     if not all_cessions: return pd.DataFrame()
-    return pd.concat(all_cessions).sort_values("Date", ascending=True).reset_index(drop=True)
+    res = pd.concat(all_cessions)
+    # Final type safety
+    res["Prix de Cession (EUR)"] = pd.to_numeric(res.get("Prix de Cession (EUR)", 0.0), errors="coerce").fillna(0.0)
+    res["VGP (EUR)"] = pd.to_numeric(res.get("VGP (EUR)", 0.0), errors="coerce").fillna(0.0)
+    return res.sort_values("Date", ascending=True).reset_index(drop=True)
 
 @st.cache_data
 def get_complementary_history(year):
