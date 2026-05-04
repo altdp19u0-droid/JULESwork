@@ -142,7 +142,8 @@ def valuate_dataframe(df, cache):
 
     def valuate_row(row):
         p_eur = prices_map.get((row["Asset"], row["Date_Only"]), 0.0)
-        return abs(float(row["Amount"])) * p_eur
+        # Force sign preservation
+        return float(row["Amount"]) * p_eur
 
     df["Valeur EUR (Date)"] = df.apply(valuate_row, axis=1)
     return df
@@ -176,6 +177,11 @@ else:
     perf_net = vgp_eoy - total_acq
     c3.metric("Performance Latente Globale", f"{perf_net:,.2f} €", delta=perf_net, delta_color="normal")
 
+    # Sign Helper
+    def signed_format(val):
+        if pd.isna(val): return "0.00"
+        return f"{val:,.2f} €" if val >= 0 else f"- {abs(val):,.2f} €"
+
     # 2. TABLE 1: Transactions de l'année (Comptes Propriétaires)
     st.divider()
     st.subheader(f"📑 Mouvements des Comptes Propriétaires ({target_year})")
@@ -197,12 +203,12 @@ else:
             df_year = valuate_dataframe(df_year, global_cache)
 
             df_year["Quantité Entrée"] = df_year["Amount"].apply(lambda x: x if x > 0 else 0.0)
-            df_year["Quantité Sortie"] = df_year["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+            df_year["Quantité Sortie"] = df_year["Amount"].apply(lambda x: x if x < 0 else 0.0)
 
             st.dataframe(
                 df_year[DISPLAY_COLS],
                 column_config={
-                    "Valeur EUR (Date)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €"),
+                    "Valeur EUR (Date)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f"), # Metric/Formatting handled by standard
                     "Quantité Entrée": st.column_config.NumberColumn(format="%.6f"),
                     "Quantité Sortie": st.column_config.NumberColumn(format="%.6f"),
                     "Date": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")
@@ -226,12 +232,12 @@ else:
             df_year_comp = valuate_dataframe(df_year_comp, global_cache)
 
             df_year_comp["Quantité Entrée"] = df_year_comp["Amount"].apply(lambda x: x if x > 0 else 0.0)
-            df_year_comp["Quantité Sortie"] = df_year_comp["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+            df_year_comp["Quantité Sortie"] = df_year_comp["Amount"].apply(lambda x: x if x < 0 else 0.0)
 
             st.dataframe(
                 df_year_comp[DISPLAY_COLS],
                 column_config={
-                    "Valeur EUR (Date)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €"),
+                    "Valeur EUR (Date)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f"),
                     "Quantité Entrée": st.column_config.NumberColumn(format="%.6f"),
                     "Quantité Sortie": st.column_config.NumberColumn(format="%.6f"),
                     "Date": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")
@@ -256,9 +262,11 @@ else:
         st.dataframe(
             df_balances[display_bal_cols],
             column_config={
-                "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €"),
+                "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f"),
                 "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
                 "Solde": st.column_config.NumberColumn("Quantité Finale", format="%.6f"),
+                "Entrées": st.column_config.NumberColumn(format="%.6f"),
+                "Sorties": st.column_config.NumberColumn(format="%.6f"),
             },
             use_container_width=True,
             hide_index=True
@@ -284,9 +292,11 @@ else:
             st.dataframe(
                 df_comp_bal[display_bal_cols],
                 column_config={
-                    "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €"),
+                    "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f"),
                     "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
                     "Solde": st.column_config.NumberColumn("Quantité Finale", format="%.6f"),
+                    "Entrées": st.column_config.NumberColumn(format="%.6f"),
+                    "Sorties": st.column_config.NumberColumn(format="%.6f"),
                 },
                 use_container_width=True,
                 hide_index=True

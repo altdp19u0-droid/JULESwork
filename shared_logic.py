@@ -388,7 +388,8 @@ def get_portfolio_snapshot(journal_or_year, target_date):
                 p = asset_prices.get(r["Asset"], 0.0)
                 details.append({
                     "Location": f"Account: {r['Account']}", "Asset": r["Asset"],
-                    "Report": r["Reported"], "Entrées": r["In"], "Sorties": abs(r["Out"]),
+                    "Report": r["Reported"], "Entrées": r["In"],
+                    "Sorties": r["Out"], # Preserve negative sign
                     "Solde": r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": r["Final_Bal"] * p
                 })
 
@@ -438,11 +439,15 @@ def get_portfolio_snapshot(journal_or_year, target_date):
                 label = circuit_labels.get(raw_cp, pos_labels.get(raw_cp, f"External/CEX: {r['Counterparty']}"))
 
                 p = asset_prices.get(r["Asset"], 0.0)
+                # For a receivable, journal outflow (neg) is asset entry (pos)
+                # and journal inflow (pos) is asset exit (neg)
                 val_eur = (-r["Final_Bal"]) * p
 
                 details.append({
                     "Location": label, "Asset": r["Asset"],
-                    "Report": -r["Reported"], "Entrées": abs(r["In"]), "Sorties": abs(r["Out"]),
+                    "Report": -r["Reported"],
+                    "Entrées": abs(r["In"]), # Journal outflow is Receivable inflow
+                    "Sorties": -abs(r["Out"]), # Journal inflow is Receivable outflow
                     "Solde": -r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": val_eur,
                     "Is_Circuit": is_circuit # Meta field for filtering
                 })
@@ -474,7 +479,8 @@ def get_portfolio_snapshot(journal_or_year, target_date):
                 p = asset_prices.get(r["Asset"], 0.0)
                 details.append({
                     "Location": f"Manual Position: {r['Account']}", "Asset": r["Asset"],
-                    "Report": r["Reported"], "Entrées": r["In"], "Sorties": abs(r["Out"]),
+                    "Report": r["Reported"], "Entrées": r["In"],
+                    "Sorties": r["Out"], # Preserve sign
                     "Solde": r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": r["Final_Bal"] * p
                 })
 
