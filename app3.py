@@ -6,7 +6,8 @@ from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
     get_fiat_rate, pd_read_csv_safe, load_price_cache, save_price_cache,
     calculate_fiscal_gains, get_file_path, check_file_freshness,
-    validate_spam_exclusion, standardize_df_addresses
+    validate_spam_exclusion, standardize_df_addresses, is_imposable_robust,
+    show_status
 )
 from fpdf import FPDF
 from io import BytesIO, StringIO
@@ -16,11 +17,6 @@ import unicodedata
 import traceback
 import time
 import requests
-
-# --- Status Indicator ---
-def show_status():
-    st.sidebar.success("✅ Système Opérationnel")
-    st.sidebar.caption(f"Logique Partagée : OK")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Fiscalité (app3)", layout="wide")
@@ -200,7 +196,7 @@ with st.sidebar:
     abattement = st.number_input("Abattement annuel (EUR)", value=305.0)
 
     st.divider()
-    if st.button("🔄 Forcer recharge (Disque)", key="btn_reload_disk", help="Relit les journaux qualifiés depuis le disque."):
+    if st.button("🔄 Forcer la recharge (Disque)", key="btn_reload_disk", help="Relit les journaux qualifiés depuis le disque pour prendre en compte les modifs de l'App 2."):
         # Clear specific session states to force reload from CSV
         keys_to_clear = [
             "journal_df", "local_valued", "proto_valued", "manual_pos_valued",
@@ -332,8 +328,24 @@ with tab_accounts:
         st.info("Ces positions servent à calculer la Valeur Globale du Portefeuille (VGP).")
 
         # 2. Factual Balance Calculation (Unified Snapshot)
+        # In app3, we strictly use the sanctuarized inventory N-1 or prompt for full history
+        st.divider()
+        st.subheader("🛠️ Récupération d'Historique")
+        c_hist1, c_hist2 = st.columns(2)
+        with c_hist1:
+            force_full = st.checkbox("Recalculer tout l'historique", value=False, key="force_full_app3")
+        with c_hist2:
+            start_year = st.number_input("Année de départ", 2015, 2030, 2020, key="start_year_app3") if force_full else 2020
+
+        # Check for missing inventory N-1
+        prev_year = target_year - 1
+        inv_path = get_file_path(prev_year, 'inventory_eoy')
+        if not os.path.exists(inv_path) and not force_full and target_year > 2020:
+            st.error(f"🚨 **Inventaire manquant :** Le fichier `inventory_EOY_{prev_year}.csv` est introuvable.")
+            st.warning("Veuillez soit générer l'inventaire N-1 dans l'app2VGP, soit cocher 'Recalculer tout l'historique'.")
+
         eoy_date = datetime(target_year, 12, 31)
-        full_snapshot, _ = get_portfolio_snapshot(target_year, eoy_date)
+        full_snapshot, _ = get_portfolio_snapshot(target_year, eoy_date, force_full_history=force_full, start_recalc_year=start_year)
 
         if full_snapshot.empty:
             st.warning("Aucun solde détecté pour cette année.")
@@ -579,9 +591,6 @@ with tab_cessions:
     else:
         # On cherche les lignes marquées comme Imposable ou étant des retraits Fiat (Vente)
         # Mais on exclut formellement les lignes EUR (Fiat pur)
-        def is_imposable_robust(val):
-            s = str(val).upper().strip()
-            return s in ["TRUE", "1", "1.0", "VRAI"]
 
         cessions = journal[
             (journal['Imposable'].apply(is_imposable_robust) |
@@ -695,7 +704,10 @@ with tab_bilan:
                 with st.spinner("Calcul en cours..."):
                     # Use the shared logic to get a factual snapshot
                     eoy_date = datetime(target_year, 12, 31)
-                    _, vgp_val = get_portfolio_snapshot(target_year, eoy_date)
+                    # Use the settings from tab_accounts if available or defaults
+                    ff = st.session_state.get("force_full_app3", False)
+                    sy = st.session_state.get("start_year_app3", 2020)
+                    _, vgp_val = get_portfolio_snapshot(target_year, eoy_date, force_full_history=ff, start_recalc_year=sy)
                     st.session_state[f"vgp_eoy_{target_year}"] = vgp_val
                     st.success(f"VGP calculée : {vgp_val:,.2f} €")
                     st.rerun()

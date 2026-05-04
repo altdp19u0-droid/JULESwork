@@ -3,10 +3,12 @@ import pandas as pd
 import requests
 from datetime import datetime
 import time
-from shared_logic import get_price_eur, get_fiat_rate
+import importlib
+import os
+from shared_logic import get_price_eur, get_fiat_rate, show_status
 
 # --- Configuration ---
-st.set_page_config(page_title="Jules Crypto Tracker Harvest Pro", layout="wide")
+st.set_page_config(page_title="Jules Crypto Hub - Navigation", layout="wide")
 
 # Configuration des Réseaux (Architecture demandée)
 NETWORKS_CFG = {
@@ -232,7 +234,7 @@ def fetch_data(address, api_key, network):
     return df
 
 # --- UI PRINCIPALE ---
-st.sidebar.title("Jules Crypto Pro V3")
+st.sidebar.title("💎 Jules Crypto Hub")
 
 # Auto-discovery of owner accounts (ONLY from identified transactions in the journal)
 def get_discovered_accounts():
@@ -248,8 +250,26 @@ def get_discovered_accounts():
     return sorted([str(x) for x in discovered if str(x).strip()])
 
 with st.sidebar:
-    # Key renamed to ensure absolute uniqueness across refreshes
-    menu = st.selectbox("Navigation", ["Harvest", "Consultation", "Frais & Fiscalité", "Settings"], key="main_nav_v11_unified")
+    # Unified Navigation
+    st.subheader("🚀 Navigation")
+    menu_options = {
+        "🏠 Accueil": "home",
+        "🚜 Step 1: Harvest (app)": "app",
+        "🏦 Step 0: Registre Manuel (app0)": "app0",
+        "⚖️ Step 2: Qualification (app2)": "app2",
+        "🧮 Step 3a: Calcul VGP (app2VGP)": "app2VGP",
+        "👤 Step 3b: Dashboard Patrimoine (appPropri)": "appPropri",
+        "🏛️ Step 3c: Fiscalité (app3)": "app3",
+        "🔍 Fix: Collecteur Prix (appPriceFix)": "appPriceFix",
+        "🧪 Live Harvest Pro (main)": "live_harvest"
+    }
+
+    menu_selection = st.selectbox(
+        "Accéder à un module :",
+        options=list(menu_options.keys()),
+        key="main_hub_nav_v12"
+    )
+    menu = menu_options[menu_selection]
 
     st.divider()
     st.subheader("🏦 Comptes Propriétaires")
@@ -269,8 +289,21 @@ with st.sidebar:
             st.session_state.accounts_metadata[new_acc] = {"Count": 0, "Manual": True}
             st.rerun()
 
-if menu == "Harvest":
-    st.header("🚜 Récolte Massive de Données")
+# --- Routing Logic ---
+if menu == "home":
+    st.header("Bienvenue dans votre Hub Crypto Jules")
+    st.write("Sélectionnez un module dans la barre latérale pour commencer votre traitement fiscal.")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.info("### 🚜 Étape 1 : Récolte\nCollectez vos données on-chain via Blockscout et Etherscan.")
+    with c2:
+        st.info("### ⚖️ Étape 2 : Qualification\nNettoyez les spams et qualifiez vos mouvements.")
+    with c3:
+        st.info("### 🏛️ Étape 3 : Fiscalité\nCalculez votre VGP et générez votre rapport fiscal.")
+
+elif menu == "live_harvest":
+    st.header("🚜 Récolte Massive de Données (Live)")
     t1, t2 = st.tabs(["Exploration Automatique", "Saisie Manuelle"])
 
     with t1:
@@ -322,7 +355,7 @@ if menu == "Harvest":
             if c2.button("Supprimer", key=f"del_{acc}"):
                 del st.session_state.accounts_metadata[acc]; st.rerun()
 
-elif menu == "Consultation":
+elif menu == "live_consultation":
     st.header("🔍 Consultation & Inventaire")
     show_spam = st.sidebar.checkbox("Afficher les transactions Spam", value=False)
 
@@ -374,7 +407,7 @@ elif menu == "Consultation":
                         st.session_state.transactions.loc[st.session_state.transactions['Counterparty'].str.lower() == cp, 'Is_Spam'] = False
             st.success("Enregistré ! (Propagation appliquée)"); st.rerun()
 
-elif menu == "Frais & Fiscalité":
+elif menu == "live_fiscal":
     st.header("⚖️ Fiscalité (Art. 150 VH bis)")
     st.session_state.fiat_accounts = st.data_editor(st.session_state.fiat_accounts, num_rows="dynamic", width='stretch')
     clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
@@ -389,10 +422,31 @@ elif menu == "Frais & Fiscalité":
             pv = prix_vent - (prix_acq * (prix_vent / vgp))
             st.success(f"Plus-value : {pv:,.2f} € | Impôt estimé (30%) : {pv*0.3:,.2f} €")
 
-elif menu == "Settings":
+elif menu == "live_settings":
     if st.button("🗑️ Vider toute la base de données"):
         st.session_state.transactions = pd.DataFrame(columns=REQUIRED_COLS)
         st.session_state.accounts_metadata = {}; st.rerun()
 
+# --- Integrated Module Loading ---
+elif menu in ["app", "app0", "app2", "app2VGP", "appPropri", "app3", "appPriceFix"]:
+    module_name = menu
+    try:
+        # We dynamicallly import and run the module's main logic
+        # Note: most apps run on import because of their structure
+        # To avoid re-importing identical UI, we can use run_module pattern
+        st.info(f"Chargement du module `{module_name}.py`...")
+
+        # Method: Execution of the script content in the current context
+        # This keeps the sidebar and session state unified
+        with open(f"{module_name}.py", "r", encoding="utf-8") as f:
+            code = f.read()
+            # We strip the set_page_config call if present to avoid Streamlit error
+            code = code.replace("st.set_page_config", "# st.set_page_config")
+            exec(code, globals())
+
+    except Exception as e:
+        st.error(f"Erreur lors du chargement du module {module_name} : {e}")
+        st.exception(e)
+
 st.sidebar.divider(); show_status()
-st.sidebar.divider(); st.sidebar.caption("Jules AI Harvest Pro v3.0")
+st.sidebar.divider(); st.sidebar.caption("Jules Crypto Hub v1.0")

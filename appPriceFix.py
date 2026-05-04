@@ -9,11 +9,9 @@ import unicodedata
 from shared_logic import (
     get_price_eur, validate_spam_exclusion,
     load_spam_list, pd_read_csv_safe,
-    load_price_cache, save_price_cache
+    load_price_cache, save_price_cache,
+    show_status
 )
-def show_status():
-    st.sidebar.success("✅ Système Opérationnel")
-    st.sidebar.caption(f"Logique Partagée : OK")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Explorateur de Prix (appPriceFix)", layout="wide")

@@ -6,13 +6,9 @@ from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
     pd_read_csv_safe, get_file_path, validate_spam_exclusion,
     load_owner_accounts, get_total_acquisition_value, standardize_df_addresses,
-    load_manual_notes, save_manual_notes, get_note_key
+    load_manual_notes, save_manual_notes, get_note_key,
+    show_status
 )
-
-# --- Status Indicator ---
-def show_status():
-    st.sidebar.success("✅ Système Opérationnel")
-    st.sidebar.caption(f"Logique Partagée : OK")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Propriété & Patrimoine (appPropri)", layout="wide")

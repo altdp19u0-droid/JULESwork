@@ -10,13 +10,9 @@ import shared_logic
 from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
     validate_spam_exclusion, load_spam_list, get_file_path,
-    check_file_freshness, pd_read_csv_safe, standardize_df_addresses
+    check_file_freshness, pd_read_csv_safe, standardize_df_addresses,
+    is_imposable_robust, show_status
 )
-
-# --- Status Indicator ---
-def show_status():
-    st.sidebar.success("✅ Système Opérationnel")
-    st.sidebar.caption(f"Logique Partagée : OK")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Calcul VGP Pro (app2VGP)", layout="wide")
@@ -38,9 +34,6 @@ def load_position_labels():
 
 
 # --- Helpers ---
-def is_imposable_robust(val):
-    s = str(val).upper().strip()
-    return s in ["TRUE", "1", "1.0", "VRAI"]
 
 # --- UI sidebar ---
 with st.sidebar:
@@ -86,6 +79,14 @@ with st.sidebar:
         last_load = st.session_state.get("last_vgp_sync_time", 0)
         if check_file_freshness(qual_path, last_load):
             st.warning("⚠️ Journal qualifié mis à jour sur disque. Veuillez 'Recharger'.")
+
+    st.divider()
+    st.subheader("🛠️ Récupération d'Historique")
+    force_full = st.checkbox("Recalculer tout l'historique", value=False, help="Ignore l'inventaire N-1 et recalcule depuis le début.")
+    if force_full:
+        start_year = st.number_input("Année de départ", 2015, 2030, 2020)
+    else:
+        start_year = 2020
 
     st.divider()
     show_status()
@@ -171,18 +172,20 @@ else:
             with st.expander("🔍 Voir les cessions sans VGP"):
                 st.write(cessions_all[mask_manquant][["Date", "Asset", "Amount"]])
 
+            # Check for missing inventory N-1
+            prev_year = target_year - 1
+            inv_path = get_file_path(prev_year, 'inventory_eoy')
+            if not os.path.exists(inv_path) and not force_full and target_year > 2020:
+                st.error(f"🚨 **Inventaire manquant :** Le fichier `inventory_EOY_{prev_year}.csv` est introuvable.")
+                st.warning("Le calcul de VGP ne sera pas exact sans point de départ sanctuarisé. Veuillez soit générer l'inventaire N-1, soit cocher 'Recalculer tout l'historique' dans la barre latérale.")
+
             if st.button("🚀 Lancer le calcul automatique (Incrémental)", type="primary", width='stretch'):
                 pbar = st.progress(0)
-                # On ne calcule que pour les manquants
                 to_calc = cessions_all[cessions_all["VGP (EUR)"] <= 0]
-
-                # Sort to ensure chronological progression if needed,
-                # though get_portfolio_snapshot handles historical lookup.
                 to_calc = to_calc.sort_values("Date", ascending=True)
 
                 for idx, (i, row) in enumerate(to_calc.iterrows()):
-                    # Use the shared logic which now supports EOY inventory carryover
-                    _, vgp_val = get_portfolio_snapshot(journal, row["Date"])
+                    _, vgp_val = get_portfolio_snapshot(journal, row["Date"], force_full_history=force_full, start_recalc_year=start_year)
                     journal.at[i, "VGP (EUR)"] = vgp_val
                     pbar.progress((idx + 1) / len(to_calc))
 
@@ -232,7 +235,7 @@ else:
         selected_date = st.selectbox("Choisir une date pour voir le détail", options=audit_options, format_func=lambda x: f"{x.strftime('%d/%m/%Y')} {'(🏁 Fin d’année)' if x == eoy_date else '(📈 Cession)'}")
 
         if selected_date:
-            snapshot_df, total_val = get_portfolio_snapshot(journal, selected_date)
+            snapshot_df, total_val = get_portfolio_snapshot(journal, selected_date, force_full_history=force_full, start_recalc_year=start_year)
             if not snapshot_df.empty:
                 st.write(f"Composition du portefeuille au **{selected_date}** :")
 

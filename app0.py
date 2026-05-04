@@ -3,12 +3,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import unicodedata
-from shared_logic import get_known_accounts, resolve_raw_addr
-
-# --- Status Indicator ---
-def show_status():
-    st.sidebar.success("✅ Système Opérationnel")
-    st.sidebar.caption(f"Logique Partagée : OK")
+from shared_logic import get_known_accounts, resolve_raw_addr, is_imposable_robust, show_status
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Registre Fiat & Positions (app0)", layout="wide")

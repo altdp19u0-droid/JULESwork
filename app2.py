@@ -13,13 +13,9 @@ from shared_logic import (
     get_all_raw_files, check_file_freshness,
     find_reconciliation_matches, get_file_path,
     extract_source_from_filename, validate_spam_exclusion,
-    load_spam_list, standardize_df_addresses
+    load_spam_list, standardize_df_addresses, is_imposable_robust,
+    show_status
 )
-
-# --- Status Indicator ---
-def show_status():
-    st.sidebar.success("✅ Système Opérationnel")
-    st.sidebar.caption(f"Logique Partagée : OK")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Qualification (app2)", layout="wide")
@@ -37,12 +33,6 @@ COLUMNS = [
 ]
 
 # --- Helpers ---
-def is_imposable_robust(val):
-    """Robust boolean detection for various CSV formats."""
-    if pd.isna(val): return False
-    s = str(val).upper().strip()
-    return s in ["TRUE", "1", "1.0", "VRAI", "YES", "OUI"]
-
 def save_spam_list(spam_set):
     with open(SPAM_FILE, "w", encoding="utf-8") as f:
         json.dump(list(spam_set), f)
@@ -420,16 +410,23 @@ def sync_data(year):
 
                 def reapply(row):
                     h = row["Tx Hash"]
+                    found_m = None
                     if h and h in hash_map:
-                        m = hash_map[h]
-                        row["Category"], row["Status"], row["Imposable"], row["VGP (EUR)"] = m["Category"], m["Status"], m["Imposable"], m["VGP (EUR)"]
-                        row["Linked_ID"], row["Link_Status"] = m.get("Linked_ID", ""), m.get("Link_Status", "")
+                        found_m = hash_map[h]
                     else:
                         key = (row["_d"], row["Account"], row["Asset"])
                         if key in manual_map:
-                            m = manual_map[key]
-                            row["Category"], row["Status"], row["Imposable"], row["VGP (EUR)"] = m["Category"], m["Status"], m["Imposable"], m["VGP (EUR)"]
-                            row["Linked_ID"], row["Link_Status"] = m.get("Linked_ID", ""), m.get("Link_Status", "")
+                            found_m = manual_map[key]
+
+                    if found_m:
+                        row["Category"], row["Status"] = found_m["Category"], found_m["Status"]
+                        # Fidelity: Keep imposable=True if either new_df (raw app0) OR old_df (qualifier) has it.
+                        row["Imposable"] = is_imposable_robust(row["Imposable"]) or is_imposable_robust(found_m["Imposable"])
+                        row["VGP (EUR)"] = found_m["VGP (EUR)"]
+                        row["Linked_ID"], row["Link_Status"] = found_m.get("Linked_ID", ""), found_m.get("Link_Status", "")
+                    else:
+                        # Ensure Imposable is boolean for new rows
+                        row["Imposable"] = is_imposable_robust(row["Imposable"])
                     return row
 
                 new_df = new_df.apply(reapply, axis=1)
@@ -920,11 +917,9 @@ def main_journal_fragment():
     if not df_display.empty:
         df_display["_d"] = df_display["Date"].dt.date
         # Detection of potential duplicates (same day, same asset, same amount, same account but DIFFERENT hash)
-        # We exclude rows already marked as 'Doublon à ignorer'
         mask_not_ign = (df_display.get("Category", "") != "Doublon à ignorer") & (df_display.get("Category", "") != "Doublon (Fusionné)")
         suspect_dups = df_display[mask_not_ign].copy()
 
-        # Identify duplicates based on characteristics
         dups_bool = suspect_dups.duplicated(subset=["Asset", "Amount", "Account", "_d"], keep=False)
         real_suspects = suspect_dups[dups_bool].groupby(["Asset", "Amount", "Account", "_d"]).filter(lambda x: x["Tx Hash"].nunique() > 1)
 
@@ -933,28 +928,31 @@ def main_journal_fragment():
             st.warning(f"⚠️ {count_suspects} groupes de suspicions de doublons détectés (Hashes différents pour mêmes caractéristiques).")
             suspect_indices = real_suspects.index.tolist()
 
-            if st.button("🤝 Fusionner Automatiquement les Doublons (Hashes différents)", width='stretch'):
-                # Logic: In each group, keep one (prioritize qualified), mark others as "Doublon (Fusionné)"
-                # This affects the main session state journal
-                full_journal = st.session_state.journal_qualifie
-                full_journal["_d"] = full_journal["Date"].dt.date
+            with st.expander("🔍 Voir et Fusionner les Doublons Suspects"):
+                st.dataframe(real_suspects[["Date", "Account", "Asset", "Amount", "Tx Hash", "Source Type", "Category"]], width='stretch')
 
-                for name, group in real_suspects.groupby(["Asset", "Amount", "Account", "_d"]):
-                    # We map back to the full journal using properties because indices in df_display are reset
-                    mask_group = (full_journal["Asset"] == name[0]) & \
-                                 (full_journal["Amount"] == name[1]) & \
-                                 (full_journal["Account"] == name[2]) & \
-                                 (full_journal["_d"] == name[3])
+                if st.button("🤝 Fusionner Automatiquement (Gardé: le plus qualifié/récent)", width='stretch', key="btn_merge_dups"):
+                    full_journal = st.session_state.journal_qualifie
+                    full_journal["_d"] = full_journal["Date"].dt.date
 
-                    indices = full_journal[mask_group].index
-                    if len(indices) > 1:
-                        # Keep first, mark others
-                        full_journal.loc[indices[1:], "Category"] = "Doublon (Fusionné)"
-                        full_journal.loc[indices[1:], "Status"] = "Spam"
+                    for name, group in real_suspects.groupby(["Asset", "Amount", "Account", "_d"]):
+                        mask_group = (full_journal["Asset"] == name[0]) & \
+                                     (full_journal["Amount"] == name[1]) & \
+                                     (full_journal["Account"] == name[2]) & \
+                                     (full_journal["_d"] == name[3])
 
-                st.session_state.journal_qualifie = full_journal
-                st.success("Fusion terminée. Les doublons ont été marqués comme 'Spam' / 'Doublon (Fusionné)'.")
-                st.rerun()
+                        indices = full_journal[mask_group].index
+                        if len(indices) > 1:
+                            # Prioritize: 1. Manual source 2. Already qualified 3. Most recent
+                            sorted_indices = full_journal.loc[indices].sort_values(
+                                by=["Category", "Source Type"], ascending=[False, True]
+                            ).index
+                            full_journal.loc[sorted_indices[1:], "Category"] = "Doublon (Fusionné)"
+                            full_journal.loc[sorted_indices[1:], "Status"] = "Spam"
+
+                    st.session_state.journal_qualifie = full_journal
+                    st.success("Fusion terminée.")
+                    st.rerun()
 
     if col_t1.button("🔍 Détecter Transferts Internes", width='stretch', key="btn_detect_internal"):
         df = st.session_state.journal_qualifie
@@ -964,7 +962,14 @@ def main_journal_fragment():
         st.rerun()
 
     # 2. Data Editor
-    categories = ["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense Staking", "Airdrop", "Frais", "Perte/Vol", "Autre", "Doublon à ignorer", "Doublon (Fusionné)"]
+    # Dynamically build categories from current session state + standard defaults
+    standard_cats = ["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense Staking", "Airdrop", "Frais", "Perte/Vol", "Autre", "Doublon à ignorer", "Doublon (Fusionné)"]
+    if "journal_qualifie" in st.session_state:
+        found_cats = st.session_state.journal_qualifie["Category"].dropna().unique().tolist()
+        categories = sorted(list(set(standard_cats + [str(c) for c in found_cats if str(c).strip()])))
+    else:
+        categories = standard_cats
+
     statuses = ["A vérifier", "Valide", "Spam"]
 
     # Type safety

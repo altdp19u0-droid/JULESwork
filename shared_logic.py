@@ -253,11 +253,11 @@ def get_price_eur(asset, date_obj, cache=None):
 
     return 0.0
 
-def get_portfolio_snapshot(journal_or_year, target_date):
+def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=False, start_recalc_year=2020):
     """
     Factual Account-based calculation of VGP.
     journal_or_year: either a dataframe or a year (int) to load current year data.
-    Uses inventory_EOY_{year-1}.csv as a starting point if available.
+    Mandatory starting point: inventory_EOY_{year-1}.csv if force_full_history is False.
     """
     pos_labels = {}
     if os.path.exists(POSITIONS_FILE):
@@ -276,26 +276,28 @@ def get_portfolio_snapshot(journal_or_year, target_date):
     manual_to_process = []
     starting_balances = [] # List of DataFrames: [Location, Asset, Solde]
 
-    # 1. Try to find the latest sanctuarized inventory before target_year_val
+    # 1. Mandatory Inventory Check
     found_inventory = False
-    for y_inv in range(target_year_val - 1, 2019, -1):
-        inv_path = os.path.join(EXPORT_BASE_DIR, str(y_inv), f"inventory_EOY_{y_inv}.csv")
+    if not force_full_history:
+        prev_year = target_year_val - 1
+        inv_path = os.path.join(EXPORT_BASE_DIR, str(prev_year), f"inventory_EOY_{prev_year}.csv")
         if os.path.exists(inv_path):
             try:
                 df_inv = pd_read_csv_safe(inv_path)
-                # Map EOY format to snapshot internal logic
-                # EOY typically has: Location, Asset, Solde, ...
                 if not df_inv.empty:
                     df_start = df_inv[["Location", "Asset", "Solde"]].copy()
                     df_start = df_start.rename(columns={"Solde": "Amount"})
                     starting_balances.append(df_start)
                     found_inventory = True
-                    start_scan_year = y_inv + 1
-                    break
+                    start_scan_year = target_year_val
             except: pass
 
     if not found_inventory:
-        start_scan_year = 2020
+        # If no inventory found or full history requested
+        start_scan_year = start_recalc_year
+        if not force_full_history and target_year_val > 2020:
+             # This will trigger an alert in UI because found_inventory is False
+             pass
 
     # 2. Load journals from start_scan_year to target_year_val
     for y in range(start_scan_year, target_year_val + 1):
@@ -916,6 +918,10 @@ def find_reconciliation_matches(df, time_window_days=3, val_tolerance_pct=0.05):
                 break # Move to next exit
 
     return df, count_proposed
+
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
 
 def get_total_acquisition_value(target_year):
     """Sums all fiat purchases from all years up to target_year."""

@@ -7,11 +7,7 @@ import pandas as pd
 from datetime import datetime
 from dateutil import tz
 from web3 import Web3
-
-# --- Status Indicator ---
-def show_status():
-    st.sidebar.success("✅ Système Opérationnel")
-    st.sidebar.caption(f"Logique Partagée : OK")
+from shared_logic import show_status
 
 # --- Configuration & Initialization ---
 st.set_page_config(page_title="Jules Crypto Harvest Pro - Sanctuarisation V7", layout="wide")
