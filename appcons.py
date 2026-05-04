@@ -274,14 +274,14 @@ with tab_list:
         if df[col].dtype == object:
             df[col] = df[col].fillna("").astype(str)
 
-    st.data_editor(df, use_container_width=True, disabled=True, key="cons_editor")
+    st.data_editor(df, width='stretch', disabled=True, key="cons_editor")
 
     st.download_button(
         "📥 Exporter cette vue en CSV",
         df.to_csv(index=False, encoding="utf-8-sig"),
         "export_consolidated.csv",
         "text/csv",
-        use_container_width=True
+        width='stretch'
     )
 
 with tab_vgp:
@@ -318,7 +318,7 @@ with tab_vgp:
             st.divider()
             st.write("📈 **Valorisation des actifs**")
 
-            if st.button("🚀 Rechercher les prix & Calculer la VGP", type="primary", use_container_width=True):
+            if st.button("🚀 Rechercher les prix & Calculer la VGP", type="primary", width='stretch'):
                 pbar = st.progress(0)
                 assets_unique = balances["Asset"].unique()
                 prices = {}
@@ -342,7 +342,7 @@ with tab_vgp:
 
                 # Total par compte
                 st.write("🔍 **Détail par Compte et Asset**")
-                st.dataframe(res_df, use_container_width=True)
+                st.dataframe(res_df, width='stretch')
 
                 st.divider()
                 col_v1, col_v2 = st.columns(2)
@@ -354,7 +354,7 @@ with tab_vgp:
                 # 2. Total par Compte
                 st.write("📊 **Répartition par Compte**")
                 by_acc = res_df.groupby("Account")["Valeur (EUR)"].sum().reset_index()
-                st.dataframe(by_acc, use_container_width=True)
+                st.dataframe(by_acc, width='stretch')
 
                 # Export results
                 st.divider()
@@ -364,7 +364,7 @@ with tab_vgp:
                     res_df.to_csv(index=False, encoding="utf-8-sig"),
                     f"vgp_snapshot_{end_date.strftime('%Y%m%d')}.csv",
                     "text/csv",
-                    use_container_width=True
+                    width='stretch'
                 )
 
                 # PDF Generation
@@ -424,7 +424,7 @@ with tab_vgp:
                     # Extraction des bytes (Directement en mémoire pour éviter les erreurs de fichier/encodage sur Windows)
                     return bytes(pdf.output())
 
-                if c2.button("📊 Préparer le Rapport PDF", use_container_width=True):
+                if c2.button("📊 Préparer le Rapport PDF", width='stretch'):
                     if "vgp_pdf_bytes" in st.session_state: del st.session_state.vgp_pdf_bytes
                     try:
                         final_bytes = generate_vgp_pdf(res_df, end_date.strftime('%d/%m/%Y'), total_vgp)
@@ -448,7 +448,7 @@ with tab_vgp:
                         data=st.session_state.vgp_pdf_bytes,
                         file_name=f"Rapport_VGP_{end_date.strftime('%Y%m%d')}.pdf",
                         mime="application/pdf",
-                        use_container_width=True
+                        width='stretch'
                     )
 
 st.sidebar.divider()

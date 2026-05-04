@@ -162,9 +162,9 @@ if uploaded_file:
         df_raw = pd.read_csv(uploaded_file, encoding="latin-1")
 
     st.subheader("👀 Aperçu du fichier source")
-    st.dataframe(df_raw.head(5), use_container_width=True)
+    st.dataframe(df_raw.head(5), width='stretch')
 
-    if st.button("🚀 Lancer la transcription intelligente", type="primary", use_container_width=True):
+    if st.button("🚀 Lancer la transcription intelligente", type="primary", width='stretch'):
         with st.spinner("Traitement en cours..."):
             df_final = process_neverless_csv(df_raw)
             st.session_state.nvl_final = df_final
@@ -184,13 +184,13 @@ if uploaded_file:
                 "Rate ($)": st.column_config.NumberColumn(format="%.4f", disabled=True),
                 "Date": st.column_config.DatetimeColumn(disabled=True),
             },
-            use_container_width=True,
+            width='stretch',
             num_rows="fixed",
             key="nvl_editor"
         )
 
         st.divider()
-        if st.button("💾 Sanctuariser (Enregistrer les Brutes)", use_container_width=True):
+        if st.button("💾 Sanctuariser (Enregistrer les Brutes)", width='stretch'):
             year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
             os.makedirs(year_dir, exist_ok=True)
 

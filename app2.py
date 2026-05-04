@@ -474,14 +474,14 @@ with st.sidebar:
         sync_data(target_year)
         st.session_state.last_year = target_year
 
-    if st.button("🏷️ Appliquer les Labels de Protocoles", use_container_width=True):
+    if st.button("🏷️ Appliquer les Labels de Protocoles", width='stretch'):
         if "journal_qualifie" in st.session_state:
             st.session_state.journal_qualifie = apply_position_labels(st.session_state.journal_qualifie)
             st.success("Labels appliqués au journal en mémoire.")
             st.rerun()
 
     st.divider()
-    if st.button("🔄 Actualiser & Fusionner les Brutes", use_container_width=True):
+    if st.button("🔄 Actualiser & Fusionner les Brutes", width='stretch'):
         sync_data(target_year)
         st.success("Fusion terminée.")
 
@@ -499,14 +499,14 @@ with st.sidebar:
         if is_stale:
             st.warning("⚠️ Données sur disque plus récentes. Veuillez 'Actualiser'.")
 
-    if st.button("🚨 Réinitialiser depuis les Brutes", use_container_width=True, help="ATTENTION : Écrase tout le travail de qualification effectué pour repartir du journal brut."):
+    if st.button("🚨 Réinitialiser depuis les Brutes", width='stretch', help="ATTENTION : Écrase tout le travail de qualification effectué pour repartir du journal brut."):
         new_df = merge_raw_data(target_year)
         if not new_df.empty:
             st.session_state.journal_qualifie = new_df.sort_values("Date", ascending=False)
             st.warning("Journal réinitialisé. N'oubliez pas de Sanctuariser pour enregistrer sur disque.")
             st.rerun()
 
-    if st.button("🛡️ Nettoyer les Spams (Auto)", use_container_width=True):
+    if st.button("🛡️ Nettoyer les Spams (Auto)", width='stretch'):
         if "journal_qualifie" in st.session_state:
             spam_list = load_spam_list()
             df = st.session_state.journal_qualifie
@@ -640,12 +640,12 @@ with st.sidebar:
                 "Label": st.column_config.TextColumn("Nom / Label"),
                 "Verified": st.column_config.CheckboxColumn("Fixer comme Propriétaire"),
             },
-            use_container_width=True,
+            width='stretch',
             key="owners_editor",
             hide_index=True
         )
 
-        if st.button("💾 Enregistrer les Comptes Propriétaires", use_container_width=True):
+        if st.button("💾 Enregistrer les Comptes Propriétaires", width='stretch'):
             new_map = {}
             for _, r in ed_owners.iterrows():
                 if r["Verified"]:
@@ -697,12 +697,12 @@ with st.sidebar:
                         "Tx Count": st.column_config.NumberColumn(disabled=True),
                         "Asset": st.column_config.TextColumn(disabled=True),
                     },
-                    use_container_width=True,
+                    width='stretch',
                     key="circuits_editor"
                 )
 
                 c_save1, c_save2 = st.columns(2)
-                if c_save1.button("💾 Enregistrer les Labels de Circuits", use_container_width=True):
+                if c_save1.button("💾 Enregistrer les Labels de Circuits", width='stretch'):
                     ext_data = load_external_circuits()
                     new_labels = ext_data.get("labels", {})
                     for _, r in ed_circuits.iterrows():
@@ -724,21 +724,21 @@ with st.sidebar:
 
                     c_act1, c_act2, c_act3 = st.columns(3)
 
-                    if c_act1.button("👤 Promouvoir en PROPRIÉTAIRE", use_container_width=True):
+                    if c_act1.button("👤 Promouvoir en PROPRIÉTAIRE", width='stretch'):
                         owners = load_owner_accounts()
                         owners[addr_target] = curr_label if curr_label else f"Owner ({addr_target[:6]})"
                         save_owner_accounts(owners)
                         st.success(f"Adresse {addr_target} ajoutée aux comptes propriétaires.")
                         st.rerun()
 
-                    if c_act2.button("🏦 Promouvoir en POSITION", use_container_width=True):
+                    if c_act2.button("🏦 Promouvoir en POSITION", width='stretch'):
                         pos = load_position_labels()
                         pos[addr_target] = curr_label if curr_label else f"Position ({addr_target[:6]})"
                         save_position_labels(pos)
                         st.success(f"Adresse {addr_target} ajoutée au mapping des protocoles.")
                         st.rerun()
 
-                    if c_act3.button("🗑️ Supprimer de la liste (Cacher)", use_container_width=True):
+                    if c_act3.button("🗑️ Supprimer de la liste (Cacher)", width='stretch'):
                         ext_data = load_external_circuits()
                         if "hidden" not in ext_data: ext_data["hidden"] = []
                         ext_data["hidden"].append(addr_target)
@@ -757,7 +757,7 @@ with st.sidebar:
                 st.subheader("Labels existants")
                 if labels:
                     df_labels = pd.DataFrame(list(labels.items()), columns=["Address", "Label"])
-                    ed_labels = st.data_editor(df_labels, use_container_width=True, key="ed_labels_mgmt")
+                    ed_labels = st.data_editor(df_labels, width='stretch', key="ed_labels_mgmt")
                     if st.button("💾 Mettre à jour les Labels"):
                         new_map = {r["Address"]: r["Label"] for _, r in ed_labels.iterrows()}
                         ext_data["labels"] = new_map
@@ -811,7 +811,7 @@ with st.sidebar:
             st.divider()
             # Table simple pour voir/supprimer
             pos_df = pd.DataFrame(list(pos_labels.items()), columns=["Adresse", "Label"])
-            st.dataframe(pos_df, use_container_width=True, hide_index=True)
+            st.dataframe(pos_df, width='stretch', hide_index=True)
 
             to_del = st.selectbox("Supprimer une position", [""] + sorted(list(pos_labels.keys())))
             if to_del and st.button("🗑️ Supprimer"):
@@ -835,7 +835,7 @@ def reconciliation_dashboard():
         win = st.number_input("Fenêtre de recherche (jours)", 1, 15, 3)
         tol = st.slider("Tolérance de valeur (%)", 0.0, 0.20, 0.05)
 
-        if st.button("🚀 Lancer la recherche automatique", use_container_width=True):
+        if st.button("🚀 Lancer la recherche automatique", width='stretch'):
             df_new, count = find_reconciliation_matches(df, time_window_days=win, val_tolerance_pct=tol)
             st.session_state.journal_qualifie = df_new
             st.success(f"Détection terminée : {count} nouveaux maillons proposés.")
@@ -843,13 +843,13 @@ def reconciliation_dashboard():
 
     with col2:
         st.write("**⚙️ Actions de Masse**")
-        if st.button("✅ Confirmer TOUS les maillons proposés", use_container_width=True):
+        if st.button("✅ Confirmer TOUS les maillons proposés", width='stretch'):
             df.loc[df["Link_Status"] == "Proposed", "Link_Status"] = "Confirmed"
             st.session_state.journal_qualifie = df
             st.success("Tous les maillons proposés ont été confirmés.")
             st.rerun()
 
-        if st.button("🗑️ Effacer les maillons NON confirmés", use_container_width=True):
+        if st.button("🗑️ Effacer les maillons NON confirmés", width='stretch'):
             df.loc[df["Link_Status"] == "Proposed", "Linked_ID"] = ""
             df.loc[df["Link_Status"] == "Proposed", "Link_Status"] = ""
             st.session_state.journal_qualifie = df
@@ -880,7 +880,7 @@ def reconciliation_dashboard():
     with t_orphans:
         st.info("Ces transactions n'ont pas de liaison identifiée. Elles représentent des flux d'entrée/sortie isolés.")
         orphans = df[(df["Linked_ID"] == "") & (df["Status"] != "Spam")]
-        st.dataframe(orphans[["Date", "Account", "Counterparty", "Asset", "Amount", "Value ($)", "Category"]], use_container_width=True)
+        st.dataframe(orphans[["Date", "Account", "Counterparty", "Asset", "Amount", "Value ($)", "Category"]], width='stretch')
 
 # --- Main App ---
 @st.fragment
@@ -933,7 +933,7 @@ def main_journal_fragment():
             st.warning(f"⚠️ {count_suspects} groupes de suspicions de doublons détectés (Hashes différents pour mêmes caractéristiques).")
             suspect_indices = real_suspects.index.tolist()
 
-            if st.button("🤝 Fusionner Automatiquement les Doublons (Hashes différents)", use_container_width=True):
+            if st.button("🤝 Fusionner Automatiquement les Doublons (Hashes différents)", width='stretch'):
                 # Logic: In each group, keep one (prioritize qualified), mark others as "Doublon (Fusionné)"
                 # This affects the main session state journal
                 full_journal = st.session_state.journal_qualifie
@@ -956,7 +956,7 @@ def main_journal_fragment():
                 st.success("Fusion terminée. Les doublons ont été marqués comme 'Spam' / 'Doublon (Fusionné)'.")
                 st.rerun()
 
-    if col_t1.button("🔍 Détecter Transferts Internes", use_container_width=True, key="btn_detect_internal"):
+    if col_t1.button("🔍 Détecter Transferts Internes", width='stretch', key="btn_detect_internal"):
         df = st.session_state.journal_qualifie
         df, counts = detect_internal_transfers(df)
         st.session_state.journal_qualifie = df
@@ -1002,7 +1002,7 @@ def main_journal_fragment():
             "Tx Hash": st.column_config.TextColumn(disabled=True),
             "Amount": st.column_config.NumberColumn(format="%.6f", disabled=True),
         },
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="qual_editor"
     )
@@ -1011,7 +1011,7 @@ def main_journal_fragment():
     with st.expander("📤 Transférer vers Registre Manuel (App 0)"):
         st.info("Sélectionnez des lignes dans le journal cochant la colonne 'Sel.', puis choisissez la destination.")
         c_dest1, c_dest2 = st.columns(2)
-        if c_dest1.button("💶 Transférer comme Flux Fiat", use_container_width=True, key="btn_transfer_fiat"):
+        if c_dest1.button("💶 Transférer comme Flux Fiat", width='stretch', key="btn_transfer_fiat"):
              selected = edited_df[edited_df["Sel."] == True]
              if not selected.empty:
                  from shared_logic import inject_to_app0
@@ -1022,7 +1022,7 @@ def main_journal_fragment():
              else:
                  st.warning("Aucune ligne sélectionnée (Cochez 'Sel.').")
 
-        if c_dest2.button("🔄 Transférer comme Échange/Swap", use_container_width=True, key="btn_transfer_swap"):
+        if c_dest2.button("🔄 Transférer comme Échange/Swap", width='stretch', key="btn_transfer_swap"):
              selected = edited_df[edited_df["Sel."] == True]
              if not selected.empty:
                  from shared_logic import inject_to_app0
@@ -1033,7 +1033,7 @@ def main_journal_fragment():
                  st.warning("Aucune ligne sélectionnée (Cochez 'Sel.').")
 
     # 4. Save Logic
-    if st.button(f"💾 Sanctuariser la Sélection {target_year}", type="primary", use_container_width=True):
+    if st.button(f"💾 Sanctuariser la Sélection {target_year}", type="primary", width='stretch'):
         # Remove selection column before saving
         if "Sel." in edited_df.columns:
             edited_df = edited_df.drop(columns=["Sel."])

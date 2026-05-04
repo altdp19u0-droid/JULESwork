@@ -73,7 +73,7 @@ with st.sidebar:
             st.success("Cache effacé.")
 
     st.divider()
-    if st.button("🔄 Forcer la recharge (Disque)", use_container_width=True, help="Relit les journaux qualifiés depuis le disque pour prendre en compte les modifs de l'App 2."):
+    if st.button("🔄 Forcer la recharge (Disque)", width='stretch', help="Relit les journaux qualifiés depuis le disque pour prendre en compte les modifs de l'App 2."):
         if "journal_active" in st.session_state: del st.session_state.journal_active
         if "active_path" in st.session_state: del st.session_state.active_path
         st.cache_data.clear()
@@ -138,14 +138,14 @@ else:
         missing_vgp_count = len(cessions_all[cessions_all["VGP (EUR)"] == 0])
         if missing_vgp_count > 0:
             st.error(f"🚨 **Attention :** {missing_vgp_count} cessions n'ont pas encore de VGP calculée ou validée. Les rapports fiscaux seront incomplets.")
-            if st.button("🔍 Résoudre les prix manquants (AppPriceFix)", use_container_width=True):
+            if st.button("🔍 Résoudre les prix manquants (AppPriceFix)", width='stretch'):
                 st.info("Basculez sur l'onglet **AppPriceFix** dans le menu principal pour collecter les prix manquants.")
 
     if cessions_all.empty:
         st.warning("⚠️ Aucune cession imposable détectée avec les critères actuels.")
         with st.expander("👀 Diagnostic : Voir tout le journal (pour vérifier les colonnes 'Imposable' / 'Category')"):
             st.write("Vérifiez dans l'**App 2** que vos ventes sont bien marquées comme 'Imposable' ou 'Vente'.")
-            st.dataframe(journal, use_container_width=True)
+            st.dataframe(journal, width='stretch')
     else:
         # 1. État des lieux
         nb_total = len(cessions_all)
@@ -171,7 +171,7 @@ else:
             with st.expander("🔍 Voir les cessions sans VGP"):
                 st.write(cessions_all[mask_manquant][["Date", "Asset", "Amount"]])
 
-            if st.button("🚀 Lancer le calcul automatique (Incrémental)", type="primary", use_container_width=True):
+            if st.button("🚀 Lancer le calcul automatique (Incrémental)", type="primary", width='stretch'):
                 pbar = st.progress(0)
                 # On ne calcule que pour les manquants
                 to_calc = cessions_all[cessions_all["VGP (EUR)"] <= 0]
@@ -210,12 +210,12 @@ else:
                 "Amount": st.column_config.NumberColumn(disabled=True),
                 "Asset": st.column_config.TextColumn(disabled=True),
             },
-            use_container_width=True,
+            width='stretch',
             key="vgp_editor"
         )
 
         # Injection des modifs manuelles dans le journal principal
-        if st.button("💾 Sanctuariser les VGP (Enregistrer sur disque)", use_container_width=True):
+        if st.button("💾 Sanctuariser les VGP (Enregistrer sur disque)", width='stretch'):
             journal.loc[mask_cessions, "VGP (EUR)"] = edited_cessions["VGP (EUR)"].values
             journal.to_csv(path, index=False, encoding="utf-8-sig")
             st.success(f"Journal mis à jour avec les VGP dans {path}")
@@ -273,7 +273,7 @@ else:
                         "Location": st.column_config.TextColumn(disabled=True),
                         "Is_Circuit": st.column_config.CheckboxColumn("Circuit?", disabled=True),
                     },
-                    use_container_width=True,
+                    width='stretch',
                     key=f"audit_ed_{selected_date}"
                 )
 
@@ -324,7 +324,7 @@ else:
 
                     st.success(f"{count} prix enregistrés (Global & Annuel). Relancez le calcul pour rafraîchir.")
 
-                if col_save_audit2.button("🛡️ Sanctuariser l'Inventaire", use_container_width=True):
+                if col_save_audit2.button("🛡️ Sanctuariser l'Inventaire", width='stretch'):
                     y_dir = os.path.join(EXPORT_BASE_DIR, str(selected_date.year))
                     os.makedirs(y_dir, exist_ok=True)
 

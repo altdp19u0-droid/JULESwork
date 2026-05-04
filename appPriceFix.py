@@ -163,7 +163,7 @@ Tout prix affiché à **0.000000** bloquera la validation de l'année concernée
 Vous devez soit obtenir le prix via le bouton **Collecte Automatique**, soit le **saisir manuellement** dans le tableau ci-dessous.
 """)
 
-if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)", use_container_width=True):
+if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)", width='stretch'):
     with st.spinner("Analyse des fichiers sanctuarisés..."):
         df_needed = scan_needed_prices(target_years=selected_years, exclude_spams=exclude_spam)
         cache = load_all_verified_prices()
@@ -228,7 +228,7 @@ if "price_explorer_df" in st.session_state:
             "Type": st.column_config.TextColumn(disabled=True),
             "Status": st.column_config.TextColumn(disabled=True),
         },
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="price_fix_editor"
     )
@@ -238,12 +238,12 @@ if "price_explorer_df" in st.session_state:
         ed_prices.to_csv(index=False, encoding="utf-8-sig"),
         "collecte_prix_audit.csv",
         "text/csv",
-        use_container_width=True
+        width='stretch'
     )
 
     col_btn1, col_btn2 = st.columns(2)
 
-    if col_btn1.button("🤖 Collecte Automatique (Manquants)", use_container_width=True, type="primary"):
+    if col_btn1.button("🤖 Collecte Automatique (Manquants)", width='stretch', type="primary"):
         to_fetch = ed_prices[ed_prices["Prix (EUR)"] == 0]
         if to_fetch.empty:
             st.success("Aucun prix manquant à collecter.")
@@ -274,7 +274,7 @@ if "price_explorer_df" in st.session_state:
                 st.success(f"Collecte terminée : {updated_count} prix récupérés.")
             st.rerun()
 
-    if col_btn2.button("🛡️ Sanctuariser (Global & Annuel)", use_container_width=True):
+    if col_btn2.button("🛡️ Sanctuariser (Global & Annuel)", width='stretch'):
         cache = load_price_cache()
         annual_updates = {} # {year: {key: val}}
 

@@ -223,7 +223,7 @@ def fragment_fiat():
     f_imposable = c_imp.checkbox("Imp.", key="fiat_imp_checkbox")
 
     btn_label = "💾 Enregistrer les modifications" if edit_idx is not None else "➕ Ajouter au journal"
-    if st.button(btn_label, use_container_width=True, type="primary" if edit_idx is not None else "secondary"):
+    if st.button(btn_label, width='stretch', type="primary" if edit_idx is not None else "secondary"):
         if f_date.year != target_year:
             st.error(f"❌ La date doit impérativement être en {target_year}.")
         else:
@@ -294,7 +294,7 @@ def fragment_fiat():
             "Tx Hash": st.column_config.TextColumn("Tx Hash"),
             "Imposable": st.column_config.CheckboxColumn("Imposable"),
         },
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="fiat_editor"
     )
@@ -366,7 +366,7 @@ def fragment_pos():
     p_hash = c_hash_p.text_input("Tx Hash (Blockchain)", placeholder="0x...", key="pos_hash_input")
 
     btn_label = "💾 Enregistrer les modifications" if edit_idx is not None else "➕ Ajouter à la liste"
-    if st.button(btn_label, use_container_width=True, type="primary" if edit_idx is not None else "secondary", key="btn_submit_pos"):
+    if st.button(btn_label, width='stretch', type="primary" if edit_idx is not None else "secondary", key="btn_submit_pos"):
         if p_date.year != target_year:
             st.error(f"❌ La date doit impérativement être en {target_year}.")
         else:
@@ -425,7 +425,7 @@ def fragment_pos():
             "Quantité": st.column_config.NumberColumn("Quantité", format="%.8f"),
             "Tx Hash": st.column_config.TextColumn("Tx Hash"),
         },
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="pos_editor"
     )
@@ -583,7 +583,7 @@ def fragment_swaps():
             "Tx Hash": st.column_config.TextColumn("Tx Hash"),
             "Imposable": st.column_config.CheckboxColumn("Imp."),
         },
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="swaps_editor"
     )
@@ -610,7 +610,7 @@ st.subheader("💾 Étape Finale : Sanctuariser les données manuelles")
 col_save1, col_save2 = st.columns([2, 1])
 
 with col_save1:
-    if st.button(f"💾 Sanctuariser & Mettre à jour le registre {target_year}", use_container_width=True, type="primary"):
+    if st.button(f"💾 Sanctuariser & Mettre à jour le registre {target_year}", width='stretch', type="primary"):
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
 

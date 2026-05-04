@@ -276,7 +276,7 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                 ed_acq = st.data_editor(
                     acq_history,
                     column_config=col_cfg,
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True,
                     key="acq_history_editor"
                 )
@@ -336,7 +336,7 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                 ed_cess = st.data_editor(
                     cess_history,
                     column_config=col_cfg_cess,
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True,
                     key="cess_history_editor"
                 )
@@ -419,7 +419,7 @@ else:
             ed_year = st.data_editor(
                 df_year,
                 column_config=col_cfg_mvt,
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
                 key="owner_mvt_editor"
             )
@@ -465,7 +465,7 @@ else:
             ed_comp = st.data_editor(
                 df_year_comp,
                 column_config=col_cfg_comp,
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
                 key="comp_mvt_editor"
             )
@@ -505,7 +505,7 @@ else:
                 "Sorties": st.column_config.NumberColumn(format="%.6f"),
                 "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
             },
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             key="owner_bal_editor"
         )
@@ -549,7 +549,7 @@ else:
                     "Sorties": st.column_config.NumberColumn(format="%.6f"),
                     "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
                 },
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
                 key="comp_bal_editor"
             )

@@ -155,9 +155,9 @@ uploaded_file = st.file_uploader("📂 Déposez votre export CSV Bleap", type="c
 if uploaded_file:
     df_raw = pd_read_csv_safe(uploaded_file)
     st.subheader("👀 Aperçu du fichier source")
-    st.dataframe(df_raw.head(5), use_container_width=True)
+    st.dataframe(df_raw.head(5), width='stretch')
 
-    if st.button("🚀 Lancer la transcription Bleap", type="primary", use_container_width=True):
+    if st.button("🚀 Lancer la transcription Bleap", type="primary", width='stretch'):
         with st.spinner("Analyse et recherche des prix..."):
             df_final = process_bleap_csv(df_raw)
             st.session_state.bleap_final = df_final
@@ -176,13 +176,13 @@ if uploaded_file:
                 "Value": st.column_config.NumberColumn(format="%.8f", disabled=True),
                 "Date": st.column_config.DatetimeColumn(disabled=True),
             },
-            use_container_width=True,
+            width='stretch',
             num_rows="fixed",
             key="bleap_editor"
         )
 
         st.divider()
-        if st.button("💾 Sanctuariser (Enregistrer les Brutes)", use_container_width=True):
+        if st.button("💾 Sanctuariser (Enregistrer les Brutes)", width='stretch'):
             year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
             os.makedirs(year_dir, exist_ok=True)
 

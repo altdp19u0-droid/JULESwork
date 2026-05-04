@@ -115,7 +115,7 @@ def compute_running_balances(df_j, df_m):
 # --- Main Logic ---
 with st.sidebar:
     st.header("⚙️ Contrôle")
-    if st.button("🔄 Actualiser le Diagnostic", use_container_width=True, type="primary"):
+    if st.button("🔄 Actualiser le Diagnostic", width='stretch', type="primary"):
         st.cache_data.clear()
         st.rerun()
 
@@ -151,7 +151,7 @@ else:
                     "Running_Bal": st.column_config.NumberColumn("Solde Négatif", format="%.6f"),
                     "Amount": st.column_config.NumberColumn("Quantité Cédée", format="%.6f"),
                 },
-                use_container_width=True,
+                width='stretch',
                 hide_index=True
             )
             st.divider()
@@ -174,7 +174,7 @@ else:
                     "Running_Bal": st.column_config.NumberColumn("Solde au moment T", format="%.6f"),
                     "Amount": st.column_config.NumberColumn("Mouvement", format="%.6f"),
                 },
-                use_container_width=True,
+                width='stretch',
                 hide_index=True
             )
 
@@ -230,7 +230,7 @@ else:
                     "Amount": st.column_config.NumberColumn("Quantité", format="%.8f"),
                     "Date": st.column_config.DatetimeColumn("Date"),
                 },
-                use_container_width=True
+                width='stretch'
             )
 
             # Mini chart

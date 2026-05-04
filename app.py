@@ -160,7 +160,7 @@ def fetch_portfolio_v2(api_v2, addr):
     return data if data else []
 
 # --- Main App Logic ---
-harvest_btn = st.button("🚀 Lancer la Récolte Totale (Step 1 : Brutes)", use_container_width=True)
+harvest_btn = st.button("🚀 Lancer la Récolte Totale (Step 1 : Brutes)", width='stretch')
 
 # Détection de présence de données pour l'affichage permanent
 has_data = not st.session_state.transactions.empty or not st.session_state.tokens.empty
@@ -168,13 +168,13 @@ has_data = not st.session_state.transactions.empty or not st.session_state.token
 # Affichage des données mémorisées (en dehors du bloc bouton pour persistance)
 if has_data:
     st.subheader("📦 Portfolio (Dernière Récolte)")
-    st.dataframe(st.session_state.portfolio, use_container_width=True)
+    st.dataframe(st.session_state.portfolio, width='stretch')
 
     st.subheader(f"📝 Transactions (Dernière Récolte)")
-    st.dataframe(st.session_state.transactions, use_container_width=True)
+    st.dataframe(st.session_state.transactions, width='stretch')
 
     st.subheader(f"🪙 Token Transfers (Dernière Récolte)")
-    st.dataframe(st.session_state.tokens, use_container_width=True)
+    st.dataframe(st.session_state.tokens, width='stretch')
 
 if harvest_btn:
     if not address or not Web3.is_address(address):
@@ -203,7 +203,7 @@ if harvest_btn:
                     "Contract": token.get("address")
                 })
         df_portfolio = pd.DataFrame(portfolio_all)
-        st.dataframe(df_portfolio, use_container_width=True)
+        st.dataframe(df_portfolio, width='stretch')
         st.session_state.portfolio = df_portfolio
 
         # 2. Harvest Transactions (Natives/Internes)
@@ -265,7 +265,7 @@ if harvest_btn:
         df_tx = pd.DataFrame(tx_all)
         if not df_tx.empty:
             df_tx = df_tx.sort_values("Date", ascending=False)
-        st.dataframe(df_tx, use_container_width=True)
+        st.dataframe(df_tx, width='stretch')
         st.session_state.transactions = df_tx
 
         # 3. Harvest Token Transfers
@@ -323,7 +323,7 @@ if harvest_btn:
         df_tok = pd.DataFrame(tok_all)
         if not df_tok.empty:
             df_tok = df_tok.sort_values("Date", ascending=False)
-        st.dataframe(df_tok, use_container_width=True)
+        st.dataframe(df_tok, width='stretch')
         st.session_state.tokens = df_tok
 
         st.success(f"✅ Récolte terminée pour l'année {target_year} !")
@@ -335,7 +335,7 @@ if has_data:
     st.divider()
     st.subheader("💾 Étape Finale : Sanctuariser")
     addr_short = address[:10] if address else "Unknown"
-    if st.button(f"Enregistrer les fichiers bruts pour {addr_short}... ({target_year})", use_container_width=True):
+    if st.button(f"Enregistrer les fichiers bruts pour {addr_short}... ({target_year})", width='stretch'):
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

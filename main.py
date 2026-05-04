@@ -354,7 +354,7 @@ elif menu == "Consultation":
         if f_asset: df_display = df_display[df_display['Asset'].isin(f_asset)]
 
         st.subheader("📝 Historique des Mouvements")
-        edited = st.data_editor(df_display.sort_values('Date', ascending=False), use_container_width=True, key="tx_ed")
+        edited = st.data_editor(df_display.sort_values('Date', ascending=False), width='stretch', key="tx_ed")
         if st.button("💾 Sauvegarder modifications"):
             for _, row in edited.iterrows():
                 # Mise à jour de la ligne spécifique
@@ -376,7 +376,7 @@ elif menu == "Consultation":
 
 elif menu == "Frais & Fiscalité":
     st.header("⚖️ Fiscalité (Art. 150 VH bis)")
-    st.session_state.fiat_accounts = st.data_editor(st.session_state.fiat_accounts, num_rows="dynamic", use_container_width=True)
+    st.session_state.fiat_accounts = st.data_editor(st.session_state.fiat_accounts, num_rows="dynamic", width='stretch')
     clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
     if not clean_df.empty:
         # Valeur Globale Portefeuille

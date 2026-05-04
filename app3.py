@@ -436,7 +436,7 @@ with tab_accounts:
                 "Asset": st.column_config.TextColumn(disabled=True),
                 "Is_Circuit": st.column_config.CheckboxColumn("Circuit?", disabled=True),
             },
-            use_container_width=True,
+            width='stretch',
             key="local_pos_ed"
         )
 
@@ -466,7 +466,7 @@ with tab_accounts:
                     "Asset": st.column_config.TextColumn(disabled=True),
                     "Is_Circuit": st.column_config.CheckboxColumn("Circuit?", disabled=True),
                 },
-                use_container_width=True,
+                width='stretch',
                 key="proto_pos_ed"
             )
             ed_proto["Valeur (EUR)"] = ed_proto["Amount"] * ed_proto["Prix (EUR)"].fillna(0.0)
@@ -493,7 +493,7 @@ with tab_accounts:
                     "Asset": st.column_config.TextColumn(disabled=True),
                     "Account": st.column_config.TextColumn(disabled=True),
                 },
-                use_container_width=True,
+                width='stretch',
                 key="manual_pos_ed"
             )
             ed_manual["Valeur (EUR)"] = ed_manual["Amount"] * ed_manual["Prix (EUR)"].fillna(0.0)
@@ -506,7 +506,7 @@ with tab_accounts:
         col_ex1, col_ex2 = st.columns(2)
 
         with col_ex1:
-            if st.button("📥 Préparer l'export consolidé (CSV)", use_container_width=True, key="btn_prepare_export"):
+            if st.button("📥 Préparer l'export consolidé (CSV)", width='stretch', key="btn_prepare_export"):
                 frames = []
                 if "local_valued" in st.session_state:
                     tmp = st.session_state.local_valued.copy()
@@ -550,7 +550,7 @@ with tab_accounts:
                     data=st.session_state.full_inventory_csv,
                     file_name=f"inventaire_fiscal_complet_{target_year}.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width='stretch',
                     key="btn_download_export"
                 )
 
@@ -624,7 +624,7 @@ with tab_cessions:
                     "Date": st.column_config.DatetimeColumn(disabled=True),
                     "Amount": st.column_config.NumberColumn(disabled=True),
                 },
-                use_container_width=True,
+                width='stretch',
                 key="cessions_ed"
             )
 
@@ -745,7 +745,7 @@ with tab_bilan:
         st.subheader("📥 Export de l'Historique Fiscal")
         st.write("Ce bouton génère un fichier CSV contenant l'intégralité des transactions (hors spams) utilisées pour la constitution de l'inventaire et le calcul des plus-values.")
 
-        if st.button("📊 Préparer l'export Historique (Sans Spam)", use_container_width=True, key="btn_export_hist_fiscal"):
+        if st.button("📊 Préparer l'export Historique (Sans Spam)", width='stretch', key="btn_export_hist_fiscal"):
             # Aggregation logic (same as VGP/Portfolio but row-based)
             all_txs = []
             for y in range(2020, target_year + 1):
@@ -779,7 +779,7 @@ with tab_bilan:
                 data=st.session_state.hist_fiscal_csv,
                 file_name=f"historique_fiscal_complet_{target_year}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width='stretch',
                 key="btn_download_hist_fiscal"
             )
 
@@ -1016,7 +1016,7 @@ with tab_bilan:
             return bytes(pdf.output())
 
         # Explicit trigger for PDF generation to ensure data is present
-        if st.button("📊 Préparer le Rapport PDF Complet", use_container_width=True, key="btn_gen_pdf"):
+        if st.button("📊 Préparer le Rapport PDF Complet", width='stretch', key="btn_gen_pdf"):
             if df_bilan.empty:
                 st.error("Le bilan est vide, impossible de générer le PDF.")
             else:
@@ -1048,7 +1048,7 @@ with tab_bilan:
                 data=st.session_state.fiscal_pdf_bytes,
                 file_name=f"Rapport_Fiscal_{target_year}.pdf",
                 mime="application/pdf",
-                use_container_width=True
+                width='stretch'
             )
     else:
         st.info("Réalisez le calcul dans l'onglet 'Cessions' pour voir le bilan.")

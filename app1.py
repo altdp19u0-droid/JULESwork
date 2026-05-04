@@ -54,7 +54,7 @@ uploaded_file = st.file_uploader("Choisir un fichier CSV", type="csv")
 if uploaded_file:
     df_raw = pd_read_csv_safe(uploaded_file)
     st.subheader("👀 Aperçu du fichier importé")
-    st.dataframe(df_raw.head(10), use_container_width=True)
+    st.dataframe(df_raw.head(10), width='stretch')
 
     st.divider()
     st.subheader("🗺️ Mapping des colonnes")
@@ -77,7 +77,7 @@ if uploaded_file:
             mapping[t_col] = st.selectbox(f"Colonne pour **{t_col}**", source_cols, index=default_idx, key=f"map_{t_col}")
 
     st.divider()
-    if st.button("🚀 Transformer & Préparer l'Export", type="primary", use_container_width=True):
+    if st.button("🚀 Transformer & Préparer l'Export", type="primary", width='stretch'):
         # 1. Selection des colonnes
         final_rows = []
         for _, row in df_raw.iterrows():
@@ -107,12 +107,12 @@ if uploaded_file:
 
     if "df_mapped" in st.session_state:
         st.subheader("✅ Résultat de la transformation")
-        st.dataframe(st.session_state.df_mapped, use_container_width=True)
+        st.dataframe(st.session_state.df_mapped, width='stretch')
 
         st.divider()
         addr_label = st.text_input("Identifiant du compte (ex: Binance_Pp, Ledger_1)", "Import_Manuel")
 
-        if st.button("💾 Sanctuariser (Enregistrer sur disque)", use_container_width=True):
+        if st.button("💾 Sanctuariser (Enregistrer sur disque)", width='stretch'):
             year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
             os.makedirs(year_dir, exist_ok=True)
 
