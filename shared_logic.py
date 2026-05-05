@@ -302,6 +302,8 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
     # 2. Load journals from start_scan_year to target_year_val
     for y in range(start_scan_year, target_year_val + 1):
         if y == target_year_val and isinstance(journal_or_year, pd.DataFrame):
+            if journal_or_year.empty or "Date" not in journal_or_year.columns:
+                continue
             df_y = journal_or_year.copy()
             # UNIFICATION CASE (Lowering 0x addresses)
             df_y = standardize_df_addresses(df_y)
@@ -312,24 +314,26 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
             if os.path.exists(path_j):
                 try:
                     df_y = pd_read_csv_safe(path_j)
-                    # UNIFICATION CASE
-                    df_y = standardize_df_addresses(df_y)
-                    df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
+                    if not df_y.empty and "Date" in df_y.columns:
+                        # UNIFICATION CASE
+                        df_y = standardize_df_addresses(df_y)
+                        df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
 
-                    # --- ABSOLUTE SPAM EXCLUSION (Recursive) ---
-                    leaked = validate_spam_exclusion(df_y)
-                    if leaked:
-                        df_y.loc[leaked, "Status"] = "Spam"
+                        # --- ABSOLUTE SPAM EXCLUSION (Recursive) ---
+                        leaked = validate_spam_exclusion(df_y)
+                        if leaked:
+                            df_y.loc[leaked, "Status"] = "Spam"
 
-                    journals_to_process.append(df_y[df_y["Date"] <= target_date])
+                        journals_to_process.append(df_y[df_y["Date"] <= target_date])
                 except: pass
 
         path_m = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
         if os.path.exists(path_m):
             try:
                 tmp_m = pd_read_csv_safe(path_m)
-                tmp_m["Date"] = pd.to_datetime(tmp_m["Date"], utc=True, errors="coerce")
-                manual_to_process.append(tmp_m[tmp_m["Date"] <= target_date])
+                if not tmp_m.empty and "Date" in tmp_m.columns:
+                    tmp_m["Date"] = pd.to_datetime(tmp_m["Date"], utc=True, errors="coerce")
+                    manual_to_process.append(tmp_m[tmp_m["Date"] <= target_date])
             except: pass
 
     if not journals_to_process and not manual_to_process and not starting_balances:
@@ -375,17 +379,21 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
 
     if not df_j.empty or len(start_wallets) > 0:
         # Pre-YTD (from start_scan_year up to end of previous year)
-        df_pre = df_j[df_j["Date"] < start_of_year]
-        pre_bals = df_pre.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
+        pre_bals = pd.DataFrame(columns=["Account", "Asset", "Amount"])
+        if not df_j.empty:
+            df_pre = df_j[df_j["Date"] < start_of_year]
+            pre_bals = df_pre.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
         # Combine with starting balances from inventory
         if len(start_wallets) > 0:
             pre_bals = pd.concat([pre_bals, start_wallets]).groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
-        df_ytd = df_j[df_j["Date"] >= start_of_year]
-        ytd_stats = df_ytd.groupby(["Account", "Asset"])["Amount"].agg([
-            ('In', lambda s: s[s > 0].sum()), ('Out', lambda s: s[s < 0].sum())
-        ]).reset_index()
+        ytd_stats = pd.DataFrame(columns=["Account", "Asset", "In", "Out"])
+        if not df_j.empty:
+            df_ytd = df_j[df_j["Date"] >= start_of_year]
+            ytd_stats = df_ytd.groupby(["Account", "Asset"])["Amount"].agg([
+                ('In', lambda s: s[s > 0].sum()), ('Out', lambda s: s[s < 0].sum())
+            ]).reset_index()
 
         merged = pd.merge(pre_bals, ytd_stats, on=["Account", "Asset"], how="outer").fillna(0.0)
         merged = merged.rename(columns={"Amount": "Reported"})
@@ -414,23 +422,28 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
     if not df_j.empty or len(start_ext) > 0:
         ext_data = load_external_circuits()
         circuit_labels = ext_data.get("labels", {})
-
-        mask_int = (df_j["Category"] == "Transfert Interne")
-        df_ext = df_j[mask_int].copy()
-        df_ext["cp_low"] = df_ext["Counterparty"].apply(resolve_raw_addr)
-
-        # We also filter out any address identified as a "Transient External Circuit"
         circuit_addrs = set(circuit_labels.keys())
-        # Filter: Counterparty must not be an owned account name AND not an owned account address
-        df_ext = df_ext[ (~df_ext["Counterparty"].isin(owned_names)) & (~df_ext["cp_low"].isin(owned_addrs)) ]
 
-        ext_pre = df_ext[df_ext["Date"] < start_of_year].groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
+        df_ext = pd.DataFrame()
+        if not df_j.empty:
+            mask_int = (df_j["Category"] == "Transfert Interne")
+            df_ext = df_j[mask_int].copy()
+            df_ext["cp_low"] = df_ext["Counterparty"].apply(resolve_raw_addr)
+            # Filter: Counterparty must not be an owned account name AND not an owned account address
+            df_ext = df_ext[ (~df_ext["Counterparty"].isin(owned_names)) & (~df_ext["cp_low"].isin(owned_addrs)) ]
+
+        ext_pre = pd.DataFrame(columns=["Counterparty", "Asset", "Amount"])
+        if not df_ext.empty:
+            ext_pre = df_ext[df_ext["Date"] < start_of_year].groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
+
         if len(start_ext) > 0:
             ext_pre = pd.concat([ext_pre, start_ext]).groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
 
-        ext_ytd = df_ext[df_ext["Date"] >= start_of_year].groupby(["Counterparty", "Asset"])["Amount"].agg([
-            ('In', lambda s: s[s < 0].sum()), ('Out', lambda s: s[s > 0].sum())
-        ]).reset_index()
+        ext_ytd = pd.DataFrame(columns=["Counterparty", "Asset", "In", "Out"])
+        if not df_ext.empty:
+            ext_ytd = df_ext[df_ext["Date"] >= start_of_year].groupby(["Counterparty", "Asset"])["Amount"].agg([
+                ('In', lambda s: s[s < 0].sum()), ('Out', lambda s: s[s > 0].sum())
+            ]).reset_index()
 
         merged_ext = pd.merge(ext_pre, ext_ytd, on=["Counterparty", "Asset"], how="outer").fillna(0.0)
         merged_ext = merged_ext.rename(columns={"Amount": "Reported"})
@@ -469,14 +482,19 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
         start_manual = start_manual_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
     if not df_m.empty or len(start_manual) > 0:
-        m_pre = df_m[df_m["Date"] < start_of_year].groupby(["Account", "Asset"])["Quantité"].sum().reset_index()
+        m_pre = pd.DataFrame(columns=["Account", "Asset", "Quantité"])
+        if not df_m.empty:
+            m_pre = df_m[df_m["Date"] < start_of_year].groupby(["Account", "Asset"])["Quantité"].sum().reset_index()
+
         if len(start_manual) > 0:
             m_pre = pd.concat([m_pre, start_manual]).groupby(["Account", "Asset"])["Amount"].sum().reset_index()
             m_pre = m_pre.rename(columns={"Amount": "Quantité"})
 
-        m_ytd = df_m[df_m["Date"] >= start_of_year].groupby(["Account", "Asset"])["Quantité"].agg([
-            ('In', lambda s: s[s > 0].sum()), ('Out', lambda s: s[s < 0].sum())
-        ]).reset_index()
+        m_ytd = pd.DataFrame(columns=["Account", "Asset", "In", "Out"])
+        if not df_m.empty:
+            m_ytd = df_m[df_m["Date"] >= start_of_year].groupby(["Account", "Asset"])["Quantité"].agg([
+                ('In', lambda s: s[s > 0].sum()), ('Out', lambda s: s[s < 0].sum())
+            ]).reset_index()
 
         merged_m = pd.merge(m_pre, m_ytd, on=["Account", "Asset"], how="outer").fillna(0.0)
         merged_m = merged_m.rename(columns={"Quantité": "Reported"})

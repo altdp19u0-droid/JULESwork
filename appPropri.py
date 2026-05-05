@@ -47,12 +47,15 @@ def get_owner_history(year):
         if os.path.exists(path):
             try:
                 df_q = pd_read_csv_safe(path)
-                df_q = standardize_df_addresses(df_q)
-                leaked = validate_spam_exclusion(df_q)
-                if leaked: df_q.loc[leaked, "Status"] = "Spam"
-                df_q = df_q[df_q["Status"] != "Spam"].copy()
-                df_q["acc_raw"] = df_q["Account"].apply(resolve_raw_addr)
-                df_q = df_q[df_q["acc_raw"].isin(owner_addrs)].copy()
+                if not df_q.empty and "Date" in df_q.columns:
+                    df_q = standardize_df_addresses(df_q)
+                    leaked = validate_spam_exclusion(df_q)
+                    if leaked: df_q.loc[leaked, "Status"] = "Spam"
+                    df_q = df_q[df_q["Status"] != "Spam"].copy()
+                    df_q["acc_raw"] = df_q["Account"].apply(resolve_raw_addr)
+                    df_q = df_q[df_q["acc_raw"].isin(owner_addrs)].copy()
+                else:
+                    df_q = pd.DataFrame()
             except: pass
 
         # 2. From Manual registries (Fiat/Swaps) to catch real-time edits in app0
@@ -64,18 +67,19 @@ def get_owner_history(year):
         if os.path.exists(path_f):
             try:
                 raw_f = pd_read_csv_safe(path_f)
-                raw_f = standardize_df_addresses(raw_f)
-                # Map to standard schema
-                f_rows = []
-                for _, r in raw_f.iterrows():
-                    qty = float(r.get("Quantité", 0.0))
-                    f_rows.append({
-                        "Date": r["Date"], "Account": r.get("Account", r.get("Compte/Label")),
-                        "Counterparty": r.get("Counterparty", r.get("Plateforme")),
-                        "Asset": r["Asset"], "Amount": qty if "Achat" in str(r["Type"]) else -qty,
-                        "Source Type": "Manual Fiat", "Category": str(r["Type"]), "Status": "Valide"
-                    })
-                df_manual = pd.concat([df_manual, pd.DataFrame(f_rows)])
+                if not raw_f.empty and "Date" in raw_f.columns:
+                    raw_f = standardize_df_addresses(raw_f)
+                    # Map to standard schema
+                    f_rows = []
+                    for _, r in raw_f.iterrows():
+                        qty = float(r.get("Quantité", 0.0))
+                        f_rows.append({
+                            "Date": r["Date"], "Account": r.get("Account", r.get("Compte/Label")),
+                            "Counterparty": r.get("Counterparty", r.get("Plateforme")),
+                            "Asset": r["Asset"], "Amount": qty if "Achat" in str(r["Type"]) else -qty,
+                            "Source Type": "Manual Fiat", "Category": str(r["Type"]), "Status": "Valide"
+                        })
+                    df_manual = pd.concat([df_manual, pd.DataFrame(f_rows)])
             except: pass
 
         # 2b. Swaps
@@ -83,9 +87,10 @@ def get_owner_history(year):
         if os.path.exists(path_s):
             try:
                 raw_s = pd_read_csv_safe(path_s)
-                raw_s = standardize_df_addresses(raw_s)
-                raw_s["Source Type"] = "Manual Swap"
-                df_manual = pd.concat([df_manual, raw_s])
+                if not raw_s.empty and "Date" in raw_s.columns:
+                    raw_s = standardize_df_addresses(raw_s)
+                    raw_s["Source Type"] = "Manual Swap"
+                    df_manual = pd.concat([df_manual, raw_s])
             except: pass
 
         if not df_manual.empty:
@@ -162,10 +167,13 @@ def get_cessions_history(year):
         if os.path.exists(path_q):
             try:
                 df_q = pd_read_csv_safe(path_q)
-                df_q = standardize_df_addresses(df_q)
-                mask_cess = (df_q['Imposable'].apply(is_imposable_robust) |
-                             df_q['Category'].fillna("").str.contains("Vente", case=False)) & (df_q['Asset'] != 'EUR')
-                df_q = df_q[mask_cess].copy()
+                if not df_q.empty and all(c in df_q.columns for c in ["Date", "Imposable", "Category", "Asset"]):
+                    df_q = standardize_df_addresses(df_q)
+                    mask_cess = (df_q['Imposable'].apply(is_imposable_robust) |
+                                 df_q['Category'].fillna("").str.contains("Vente", case=False)) & (df_q['Asset'] != 'EUR')
+                    df_q = df_q[mask_cess].copy()
+                else:
+                    df_q = pd.DataFrame()
             except: df_q = pd.DataFrame()
 
         # 2. From Manual Fiat (detecting non-synced sales)
@@ -174,21 +182,22 @@ def get_cessions_history(year):
         if os.path.exists(path_f):
             try:
                 raw_f = pd_read_csv_safe(path_f)
-                raw_f = standardize_df_addresses(raw_f)
-                # Sales (Vente) marked as imposable
-                mask_f_cess = raw_f['Type'].fillna("").str.contains("Vente", case=False) & raw_f['Imposable'].apply(is_imposable_robust)
-                df_f_raw = raw_f[mask_f_cess].copy()
-                if not df_f_raw.empty:
-                    rows = []
-                    for _, r in df_f_raw.iterrows():
-                        rows.append({
-                            "Date": r["Date"], "Account": r.get("Account", r.get("Compte/Label")),
-                            "Asset": r["Asset"], "Amount": -float(r["Quantité"]),
-                            "Prix de Cession (EUR)": float(r["Montant EUR"]),
-                            "VGP (EUR)": 0.0, "Network": "Fiat", "Source Type": "Manual Fiat",
-                            "Category": "Vente", "Status": "Valide", "Imposable": True
-                        })
-                    df_f_cess = pd.DataFrame(rows)
+                if not raw_f.empty and all(c in raw_f.columns for c in ["Date", "Type", "Imposable", "Asset", "Quantité", "Montant EUR"]):
+                    raw_f = standardize_df_addresses(raw_f)
+                    # Sales (Vente) marked as imposable
+                    mask_f_cess = raw_f['Type'].fillna("").str.contains("Vente", case=False) & raw_f['Imposable'].apply(is_imposable_robust)
+                    df_f_raw = raw_f[mask_f_cess].copy()
+                    if not df_f_raw.empty:
+                        rows = []
+                        for _, r in df_f_raw.iterrows():
+                            rows.append({
+                                "Date": r["Date"], "Account": r.get("Account", r.get("Compte/Label")),
+                                "Asset": r["Asset"], "Amount": -float(r["Quantité"]),
+                                "Prix de Cession (EUR)": float(r["Montant EUR"]),
+                                "VGP (EUR)": 0.0, "Network": "Fiat", "Source Type": "Manual Fiat",
+                                "Category": "Vente", "Status": "Valide", "Imposable": True
+                            })
+                        df_f_cess = pd.DataFrame(rows)
             except: pass
 
         # 3. From Manual Swaps (detecting non-synced imposable swaps)
@@ -197,21 +206,22 @@ def get_cessions_history(year):
         if os.path.exists(path_s):
             try:
                 raw_s = pd_read_csv_safe(path_s)
-                raw_s = standardize_df_addresses(raw_s)
-                mask_s_cess = raw_s['Imposable'].apply(is_imposable_robust)
-                df_s_raw = raw_s[mask_s_cess].copy()
-                if not df_s_raw.empty:
-                    rows = []
-                    for _, r in df_s_raw.iterrows():
-                        # A swap usually has two legs in appPropri, here we focus on the disposal (neg amount)
-                        amt = float(r["Amount"])
-                        if amt < 0:
-                            rows.append({
-                                "Date": r["Date"], "Account": r["Account"], "Asset": r["Asset"], "Amount": amt,
-                                "Prix de Cession (EUR)": 0.0, "VGP (EUR)": 0.0, "Network": "Manual",
-                                "Source Type": "Manual Swap", "Category": "Swap", "Status": "Valide", "Imposable": True
-                            })
-                    df_s_cess = pd.DataFrame(rows)
+                if not raw_s.empty and all(c in raw_s.columns for c in ["Date", "Imposable", "Amount", "Asset", "Account"]):
+                    raw_s = standardize_df_addresses(raw_s)
+                    mask_s_cess = raw_s['Imposable'].apply(is_imposable_robust)
+                    df_s_raw = raw_s[mask_s_cess].copy()
+                    if not df_s_raw.empty:
+                        rows = []
+                        for _, r in df_s_raw.iterrows():
+                            # A swap usually has two legs in appPropri, here we focus on the disposal (neg amount)
+                            amt = float(r["Amount"])
+                            if amt < 0:
+                                rows.append({
+                                    "Date": r["Date"], "Account": r["Account"], "Asset": r["Asset"], "Amount": amt,
+                                    "Prix de Cession (EUR)": 0.0, "VGP (EUR)": 0.0, "Network": "Manual",
+                                    "Source Type": "Manual Swap", "Category": "Swap", "Status": "Valide", "Imposable": True
+                                })
+                        df_s_cess = pd.DataFrame(rows)
             except: pass
 
         # Merge and Deduplicate (by Date, Account, Asset, Amount)
