@@ -582,6 +582,9 @@ with tab_acq:
 
 with tab_cessions:
     st.subheader("📝 Calcul des Cessions Imposables (Formulaire 2086)")
+
+    st.info(f"💡 **Rappel Fiscal (Art. 150 VH bis) :** L'imposition des plus-values crypto ne s'applique que si le total de vos prix de cession (somme des montants de vente) sur l'année dépasse **{abattement} €**. En dessous de ce seuil, vos gains sont exonérés d'impôt.")
+
     journal = data['journal']
 
     if journal.empty:
@@ -649,6 +652,41 @@ with tab_cessions:
 with tab_bilan:
     st.subheader("📊 Bilan Annuel & Impôt Estimé")
 
+    # --- PERMANENT PEDAGOGICAL INFO ---
+    st.info(f"""
+    💡 **Note Pédagogique (Art. 150 VH bis du CGI) :**
+    Les plus-values de cession d'actifs numériques réalisées par les particuliers sont exonérées d'impôt si la **somme des prix de cession** (le montant total de vos ventes vers fiat/biens/services) n'excède pas **{abattement} €** au cours de l'année civile.
+    Si ce seuil est dépassé, l'ensemble des plus-values est imposable dès le premier euro, après déduction des éventuelles moins-values de la même année.
+    """)
+
+    # Preliminary Analysis based on identified cessions in the journal (before user validation)
+    journal_for_check = data.get('journal', pd.DataFrame())
+    if not journal_for_check.empty:
+        try:
+            potential_cessions = journal_for_check[
+                (journal_for_check['Imposable'].apply(is_imposable_robust) |
+                 journal_for_check['Category'].fillna("").str.contains("Vente", case=False)) &
+                (journal_for_check['Asset'] != 'EUR')
+            ].copy()
+
+            if not potential_cessions.empty:
+                def get_est_eur(row):
+                    v_usd = float(row.get('Value ($)', 0))
+                    if v_usd > 0:
+                        rate = get_fiat_rate("USD", row['Date'])
+                        return v_usd * rate
+                    return 0.0
+
+                est_total_cessions = potential_cessions.apply(get_est_eur, axis=1).sum()
+
+                with st.expander("🔍 Estimation automatique du seuil", expanded=False):
+                    if est_total_cessions <= abattement:
+                        st.success(f"✅ **Exonération probable :** Total estimé des cessions : {est_total_cessions:,.2f} € (Seuil {abattement} €).")
+                    else:
+                        st.warning(f"⚠️ **Seuil franchi :** Total estimé des cessions : {est_total_cessions:,.2f} € (Dépasse {abattement} €).")
+                    st.caption("Cette estimation utilise les cours historiques BCE/CoinGecko. Le calcul légal définitif est affiché ci-dessous.")
+        except: pass
+
     if "bilan_fiscale" in st.session_state and not st.session_state.bilan_fiscale.empty:
         df_bilan = st.session_state.bilan_fiscale
         st.table(df_bilan)
@@ -661,14 +699,20 @@ with tab_bilan:
         col_b1.metric(label_pv, f"{total_pv:,.2f} €", help="Somme des plus-values unitaires calculées par cession selon la formule du formulaire 2086.")
 
         # Logique fiscale : exonération si total des prix de cession <= abattement (305€)
-        if total_pv > 0 and total_cessions <= abattement:
+        st.divider()
+        st.subheader("💡 Analyse du Seuil d'Exonération")
+
+        if total_cessions <= abattement:
             pv_nette = 0.0
-            st.warning(f"💡 Exonération appliquée : Le total des cessions ({total_cessions:.2f}€) est inférieur au seuil de {abattement}€.")
-            st.info(f"**Note pédagogique :** Selon l'Art. 150 VH bis du CGI, les plus-values sont exonérées si la somme des prix de cession (ventes vers fiat) de l'année n'excède pas {abattement}€.")
+            st.success(f"✅ **Exonération applicable :** Le montant total de vos cessions ({total_cessions:,.2f} €) est inférieur ou égal au seuil annuel de **{abattement} €**.")
+            st.info(f"**Note pédagogique :** Conformément à l'Art. 150 VH bis du CGI, aucune plus-value n'est imposable pour cette année fiscale car le volume total de vos ventes vers fiat n'a pas franchi le seuil de {abattement} €.")
         else:
             pv_nette = total_pv
+            st.warning(f"⚠️ **Seuil franchi :** Le montant total de vos cessions ({total_cessions:,.2f} €) dépasse le seuil d'exonération de **{abattement} €**.")
             if total_pv > 0:
-                 st.info(f"**Rappel fiscal :** Vos cessions totales s'élèvent à {total_cessions:.2f}€, ce qui dépasse le seuil d'exonération de {abattement}€. La plus-value est donc imposable.")
+                 st.info(f"**Rappel fiscal :** Vos cessions totales s'élèvent à {total_cessions:,.2f} €, ce qui rend la plus-value brute de {total_pv:,.2f} € imposable au taux du PFU.")
+            else:
+                 st.info(f"**Note :** Bien que le seuil de cession soit franchi, vous dégagez une moins-value globale de {abs(total_pv):,.2f} € pour cette année.")
 
         label_nette = "Plus-Value Nette Imposable" if pv_nette >= 0 else "Moins-Value Nette Déclarant"
         col_b2.metric(label_nette, f"{pv_nette:,.2f} €", help="Plus-value brute après application de l'abattement annuel de 305€ si applicable (uniquement sur gains).")
