@@ -1,2 +1,0 @@
-Date,Account,Counterparty,Asset,Amount,Value ($),Network,Tx Hash,Source Type,Category,Status,Imposable,VGP (EUR)
-2024-01-01 10:00:00,0xMyWallet,0xBridgeAddr,ETH,1.0,2000.0,Ethereum,0xHash1,Native,A vérifier,Valide,False,0.0

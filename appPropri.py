@@ -126,7 +126,7 @@ def get_acquisition_history(year):
         if os.path.exists(path):
             try:
                 df = pd_read_csv_safe(path)
-                if df.empty: continue
+                if df.empty or "Date" not in df.columns or "Type" not in df.columns: continue
 
                 # Filter for 'Achat' types (Euros moving into Crypto)
                 mask = df['Type'].str.contains("Achat", case=False, na=False)
@@ -264,6 +264,7 @@ def get_complementary_history(year):
         if os.path.exists(path_m):
             try:
                 df_m = pd_read_csv_safe(path_m)
+                if df_m.empty: continue
                 # UNIFICATION
                 df_m = standardize_df_addresses(df_m)
                 if not df_m.empty and "Date" in df_m.columns:
@@ -281,7 +282,7 @@ def get_complementary_history(year):
         if os.path.exists(path_q):
             try:
                 df_q = pd_read_csv_safe(path_q)
-                if df_q.empty: continue
+                if df_q.empty or "Date" not in df_q.columns: continue
                 # UNIFICATION
                 df_q = standardize_df_addresses(df_q)
 
@@ -295,7 +296,7 @@ def get_complementary_history(year):
                     df_q["cp_raw"] = df_q["Counterparty"].apply(resolve_raw_addr)
                     df_receivable = df_q[mask_int & (~df_q["cp_raw"].isin(owner_addrs))].copy()
 
-                    if not df_receivable.empty and "Date" in df_receivable.columns:
+                    if not df_receivable.empty:
                         df_receivable["Date"] = pd.to_datetime(df_receivable["Date"], utc=True, errors="coerce")
                         # In VGP calculation, the receivable is the negative of the leg
                         df_receivable["Amount"] = -df_receivable["Amount"]

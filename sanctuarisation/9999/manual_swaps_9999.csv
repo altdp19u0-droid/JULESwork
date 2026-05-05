@@ -1,2 +1,0 @@
-﻿Date,Account,Counterparty,Asset,Amount,Type,Tx Hash,Source Type,Imposable
-2025-05-01,MyWallet,Binance,BTC,0.5,Swap In,0x123,Transfer from App2,False

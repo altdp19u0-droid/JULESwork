@@ -284,7 +284,7 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
         if os.path.exists(inv_path):
             try:
                 df_inv = pd_read_csv_safe(inv_path)
-                if not df_inv.empty:
+                if not df_inv.empty and all(c in df_inv.columns for c in ["Location", "Asset", "Solde"]):
                     df_start = df_inv[["Location", "Asset", "Solde"]].copy()
                     df_start = df_start.rename(columns={"Solde": "Amount"})
                     starting_balances.append(df_start)
@@ -369,31 +369,34 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
     # --- A. OWNED ACCOUNTS ---
     # Merge starting balances for Owned Accounts
     # Account format in inventory: "Account: Name"
-    start_wallets = []
+    start_wallets = pd.DataFrame(columns=["Account", "Asset", "Amount"])
     if starting_balances:
         df_s = pd.concat(starting_balances)
-        mask_w = df_s["Location"].str.startswith("Account:", na=False)
-        start_wallets_df = df_s[mask_w].copy()
-        start_wallets_df["Account"] = start_wallets_df["Location"].str.replace("Account: ", "")
-        start_wallets = start_wallets_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
+        if not df_s.empty and all(c in df_s.columns for c in ["Location", "Amount"]):
+            mask_w = df_s["Location"].str.startswith("Account:", na=False)
+            start_wallets_df = df_s[mask_w].copy()
+            start_wallets_df["Account"] = start_wallets_df["Location"].str.replace("Account: ", "")
+            start_wallets = start_wallets_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
-    if not df_j.empty or len(start_wallets) > 0:
+    if not df_j.empty or not start_wallets.empty:
         # Pre-YTD (from start_scan_year up to end of previous year)
         pre_bals = pd.DataFrame(columns=["Account", "Asset", "Amount"])
-        if not df_j.empty:
+        if not df_j.empty and "Date" in df_j.columns:
             df_pre = df_j[df_j["Date"] < start_of_year]
-            pre_bals = df_pre.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
+            if not df_pre.empty:
+                pre_bals = df_pre.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
         # Combine with starting balances from inventory
         if len(start_wallets) > 0:
             pre_bals = pd.concat([pre_bals, start_wallets]).groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
         ytd_stats = pd.DataFrame(columns=["Account", "Asset", "In", "Out"])
-        if not df_j.empty:
+        if not df_j.empty and "Date" in df_j.columns:
             df_ytd = df_j[df_j["Date"] >= start_of_year]
-            ytd_stats = df_ytd.groupby(["Account", "Asset"])["Amount"].agg([
-                ('In', lambda s: s[s > 0].sum()), ('Out', lambda s: s[s < 0].sum())
-            ]).reset_index()
+            if not df_ytd.empty:
+                ytd_stats = df_ytd.groupby(["Account", "Asset"])["Amount"].agg([
+                    ('In', lambda s: s[s > 0].sum()), ('Out', lambda s: s[s < 0].sum())
+                ]).reset_index()
 
         merged = pd.merge(pre_bals, ytd_stats, on=["Account", "Asset"], how="outer").fillna(0.0)
         merged = merged.rename(columns={"Amount": "Reported"})
@@ -409,17 +412,19 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
                 })
 
     # --- B. INTERNAL TRANSFER OFFSET LEGS (Receivables) ---
-    start_ext = []
+    start_ext = pd.DataFrame(columns=["Counterparty", "Asset", "Amount"])
     if starting_balances:
         df_s = pd.concat(starting_balances)
-        mask_ext = (~df_s["Location"].str.startswith("Account:", na=False)) & (~df_s["Location"].str.startswith("Manual Position:", na=False))
-        start_ext = df_s[mask_ext].groupby(["Location", "Asset"])["Amount"].sum().reset_index()
-        start_ext = start_ext.rename(columns={"Location": "Counterparty"})
-        # Note: inventory stores Receivables with positive 'Solde'.
-        # We need to flip it back to match the leg logic (leg sum is negative of receivable)
-        start_ext["Amount"] = -start_ext["Amount"]
+        if not df_s.empty and all(c in df_s.columns for c in ["Location", "Amount"]):
+            mask_ext = (~df_s["Location"].str.startswith("Account:", na=False)) & (~df_s["Location"].str.startswith("Manual Position:", na=False))
+            tmp_ext = df_s[mask_ext].groupby(["Location", "Asset"])["Amount"].sum().reset_index()
+            tmp_ext = tmp_ext.rename(columns={"Location": "Counterparty"})
+            # Note: inventory stores Receivables with positive 'Solde'.
+            # We need to flip it back to match the leg logic (leg sum is negative of receivable)
+            tmp_ext["Amount"] = -tmp_ext["Amount"]
+            start_ext = tmp_ext
 
-    if not df_j.empty or len(start_ext) > 0:
+    if not df_j.empty or not start_ext.empty:
         ext_data = load_external_circuits()
         circuit_labels = ext_data.get("labels", {})
         circuit_addrs = set(circuit_labels.keys())
@@ -433,14 +438,14 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
             df_ext = df_ext[ (~df_ext["Counterparty"].isin(owned_names)) & (~df_ext["cp_low"].isin(owned_addrs)) ]
 
         ext_pre = pd.DataFrame(columns=["Counterparty", "Asset", "Amount"])
-        if not df_ext.empty:
+        if not df_ext.empty and "Date" in df_ext.columns:
             ext_pre = df_ext[df_ext["Date"] < start_of_year].groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
 
         if len(start_ext) > 0:
             ext_pre = pd.concat([ext_pre, start_ext]).groupby(["Counterparty", "Asset"])["Amount"].sum().reset_index()
 
         ext_ytd = pd.DataFrame(columns=["Counterparty", "Asset", "In", "Out"])
-        if not df_ext.empty:
+        if not df_ext.empty and "Date" in df_ext.columns:
             ext_ytd = df_ext[df_ext["Date"] >= start_of_year].groupby(["Counterparty", "Asset"])["Amount"].agg([
                 ('In', lambda s: s[s < 0].sum()), ('Out', lambda s: s[s > 0].sum())
             ]).reset_index()
@@ -473,26 +478,38 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
                 })
 
     # --- C. MANUAL POSITIONS ---
-    start_manual = []
+    start_manual = pd.DataFrame(columns=["Account", "Asset", "Amount"])
     if starting_balances:
         df_s = pd.concat(starting_balances)
-        mask_m = df_s["Location"].str.startswith("Manual Position:", na=False)
-        start_manual_df = df_s[mask_m].copy()
-        start_manual_df["Account"] = start_manual_df["Location"].str.replace("Manual Position: ", "")
-        start_manual = start_manual_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
+        if not df_s.empty and all(c in df_s.columns for c in ["Location", "Amount"]):
+            mask_m = df_s["Location"].str.startswith("Manual Position:", na=False)
+            start_manual_df = df_s[mask_m].copy()
+            start_manual_df["Account"] = start_manual_df["Location"].str.replace("Manual Position: ", "")
+            start_manual = start_manual_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
-    if not df_m.empty or len(start_manual) > 0:
-        m_pre = pd.DataFrame(columns=["Account", "Asset", "Quantité"])
-        if not df_m.empty:
-            m_pre = df_m[df_m["Date"] < start_of_year].groupby(["Account", "Asset"])["Quantité"].sum().reset_index()
+    if not df_m.empty or not start_manual.empty:
+        m_pre = pd.DataFrame(columns=["Account", "Asset", "Amount"])
+        if not df_m.empty and "Date" in df_m.columns:
+            # Map Quantité to Amount for unified balance logic
+            m_pre_df = df_m[df_m["Date"] < start_of_year].copy()
+            if "Quantité" in m_pre_df.columns:
+                m_pre_df["Amount"] = m_pre_df["Quantité"]
+            elif "Amount" not in m_pre_df.columns:
+                m_pre_df["Amount"] = 0.0
+            m_pre = m_pre_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
         if len(start_manual) > 0:
             m_pre = pd.concat([m_pre, start_manual]).groupby(["Account", "Asset"])["Amount"].sum().reset_index()
-            m_pre = m_pre.rename(columns={"Amount": "Quantité"})
 
         m_ytd = pd.DataFrame(columns=["Account", "Asset", "In", "Out"])
-        if not df_m.empty:
-            m_ytd = df_m[df_m["Date"] >= start_of_year].groupby(["Account", "Asset"])["Quantité"].agg([
+        if not df_m.empty and "Date" in df_m.columns:
+            m_ytd_df = df_m[df_m["Date"] >= start_of_year].copy()
+            if "Quantité" in m_ytd_df.columns:
+                m_ytd_df["Amount"] = m_ytd_df["Quantité"]
+            elif "Amount" not in m_ytd_df.columns:
+                m_ytd_df["Amount"] = 0.0
+
+            m_ytd = m_ytd_df.groupby(["Account", "Asset"])["Amount"].agg([
                 ('In', lambda s: s[s > 0].sum()), ('Out', lambda s: s[s < 0].sum())
             ]).reset_index()
 
@@ -874,6 +891,7 @@ def find_reconciliation_matches(df, time_window_days=3, val_tolerance_pct=0.05):
     import uuid
 
     # Sort by date to facilitate matching
+    if "Date" not in candidates.columns: return df, 0
     candidates = candidates.sort_values("Date")
 
     # 1. Separate Potential Legs
@@ -960,7 +978,7 @@ def get_total_acquisition_value(target_year):
         if os.path.exists(path):
             try:
                 df = pd_read_csv_safe(path)
-                if not df.empty:
+                if not df.empty and "Type" in df.columns and "Montant EUR" in df.columns:
                     # Filter for 'Achat' types (Euros moving into Crypto)
                     mask = df['Type'].str.contains("Achat", case=False, na=False)
                     total += df[mask]['Montant EUR'].sum()
@@ -981,6 +999,7 @@ def calculate_fiscal_gains(cessions_df, initial_acq_price):
     temp_acq = initial_acq_price
 
     # Sort chronologically as required by French law
+    if "Date" not in cessions_df.columns: return pd.DataFrame(), initial_acq_price
     cessions_sorted = cessions_df.sort_values("Date", ascending=True)
 
     for idx, row in cessions_sorted.iterrows():
