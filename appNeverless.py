@@ -3,16 +3,11 @@ import pandas as pd
 import streamlit as st
 import requests
 from datetime import datetime
-from shared_logic import get_fiat_rate, get_price_eur
+from shared_logic import get_fiat_rate, get_price_eur, show_status
 import time
 import json
 import io
 import unicodedata
-
-# --- Status Indicator ---
-def show_status():
-    st.sidebar.success("✅ Système Opérationnel")
-    st.sidebar.caption(f"Logique Partagée : OK")
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Import Neverless (appNeverless)", layout="wide")
@@ -25,9 +20,10 @@ EXPORT_BASE_DIR = "sanctuarisation"
 def process_neverless_csv(df):
     new_rows = []
 
-    # Detect IDs that are "Auto-conversion when withdrawing fiat"
-    # To mark the corresponding EUR Withdrawal as taxable by default.
+    # Detect IDs that are "Auto-conversion"
+    # To mark corresponding legs as Achat/Vente by default.
     auto_withdrawal_ids = set(df[df["Description"].fillna("").str.contains("Auto-conversion when withdrawing fiat", case=False)]["ID"].unique())
+    auto_deposit_ids = set(df[df["Description"].fillna("").str.contains("Auto-conversion when depositing fiat", case=False)]["ID"].unique())
 
     progress_bar = st.progress(0)
     total_rows = len(df)
@@ -50,7 +46,8 @@ def process_neverless_csv(df):
         else:
             base_hash = tx_hash
 
-        desc = str(row.get("Description", "")).lower()
+        desc_raw = str(row.get("Description", ""))
+        desc = desc_raw.lower()
         account = "Neverless_App"
 
         # --- LOGIQUE D'EXPANSION ---
@@ -68,7 +65,20 @@ def process_neverless_csv(df):
             if is_eur_withdrawal and raw_id in auto_withdrawal_ids:
                 is_imp = True
 
-            cat = "Vente" if tx_type == "Withdrawal" else ("Swap" if tx_type == "Trade" else "A vérifier")
+            # Case: Auto-conversion Withdraw (EURC -> EUR)
+            if tx_type == "Trade" and "auto-conversion when withdrawing fiat" in desc:
+                cat = "Vente"
+                is_imp = True
+            else:
+                cat = "Vente" if tx_type == "Withdrawal" else ("Swap" if tx_type == "Trade" else "A vérifier")
+
+            cp = "External" if tx_type == "Withdrawal" else "Swap"
+
+            # Specific Neverless sub-labels
+            if "strategies" in desc: cp = "Neverless Strategies"
+            elif "prime" in desc: cp = "Neverless Prime"
+
+            if "banq_" in desc: cp = desc_raw
 
             new_rows.append({
                 "Date": dt,
@@ -82,7 +92,7 @@ def process_neverless_csv(df):
                 "Value ($)": val_usd,
                 "Rate ($)": price_sent,
                 "Account": account,
-                "Counterparty": "External" if tx_type == "Withdrawal" else "Swap",
+                "Counterparty": cp,
                 "Category": cat,
                 "Imposable": is_imp
             })
@@ -94,7 +104,26 @@ def process_neverless_csv(df):
             price_rec = pd.to_numeric(row.get("USD price of asset received"), errors='coerce') or 0.0
             val_usd = amt_rec * price_rec
 
-            cat = "Achat" if tx_type == "Deposit" else ("Swap" if tx_type == "Trade" else "A vérifier")
+            if "interest" in desc:
+                cat = "Récompense"
+            elif tx_type == "Trade" and "auto-conversion when depositing fiat" in desc:
+                cat = "Achat"
+            else:
+                cat = "Achat" if tx_type == "Deposit" else ("Swap" if tx_type == "Trade" else "A vérifier")
+
+            cp = "Swap" if tx_type == "Trade" else ("Bank" if tx_type == "Deposit" and "auto-conversion" not in desc else "System")
+
+            # Specific Neverless labels
+            if "interest" in desc:
+                cp = "Yield"
+                if "strategies" in desc: cp = "Neverless Strategies (Yield)"
+                elif "prime" in desc: cp = "Neverless Prime (Yield)"
+            elif "strategies" in desc:
+                cp = "Neverless Strategies"
+            elif "prime" in desc:
+                cp = "Neverless Prime"
+
+            if "banq_" in desc: cp = desc_raw
 
             new_rows.append({
                 "Date": dt,
@@ -108,7 +137,7 @@ def process_neverless_csv(df):
                 "Value ($)": val_usd,
                 "Rate ($)": price_rec,
                 "Account": account,
-                "Counterparty": "Swap" if tx_type == "Trade" else ("Bank" if tx_type == "Deposit" and "auto-conversion" not in desc else "System"),
+                "Counterparty": cp,
                 "Category": cat,
                 "Imposable": False
             })
