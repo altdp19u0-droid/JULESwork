@@ -664,8 +664,11 @@ with tab_bilan:
         if total_pv > 0 and total_cessions <= abattement:
             pv_nette = 0.0
             st.warning(f"💡 Exonération appliquée : Le total des cessions ({total_cessions:.2f}€) est inférieur au seuil de {abattement}€.")
+            st.info(f"**Note pédagogique :** Selon l'Art. 150 VH bis du CGI, les plus-values sont exonérées si la somme des prix de cession (ventes vers fiat) de l'année n'excède pas {abattement}€.")
         else:
             pv_nette = total_pv
+            if total_pv > 0:
+                 st.info(f"**Rappel fiscal :** Vos cessions totales s'élèvent à {total_cessions:.2f}€, ce qui dépasse le seuil d'exonération de {abattement}€. La plus-value est donc imposable.")
 
         label_nette = "Plus-Value Nette Imposable" if pv_nette >= 0 else "Moins-Value Nette Déclarant"
         col_b2.metric(label_nette, f"{pv_nette:,.2f} €", help="Plus-value brute après application de l'abattement annuel de 305€ si applicable (uniquement sur gains).")
