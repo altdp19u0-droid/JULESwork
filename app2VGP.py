@@ -11,7 +11,7 @@ from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
     validate_spam_exclusion, load_spam_list, get_file_path,
     check_file_freshness, pd_read_csv_safe, standardize_df_addresses,
-    is_imposable_robust, show_status
+    is_imposable_robust, show_status, clean_session_state
 )
 
 # --- Configuration ---
@@ -45,9 +45,7 @@ with st.sidebar:
         st.session_state.last_vgp_year = target_year
 
     if target_year != st.session_state.last_vgp_year:
-        # Full Reset on Year Switch
-        for k in list(st.session_state.keys()):
-            if k not in ["last_vgp_year"]: del st.session_state[k]
+        clean_session_state(preserve_keys=["last_vgp_year"])
         st.session_state.last_vgp_year = target_year
         st.cache_data.clear()
         st.rerun()

@@ -923,6 +923,17 @@ def show_status():
     st.sidebar.success("✅ Système Opérationnel")
     st.sidebar.caption(f"Logique Partagée : OK")
 
+def clean_session_state(preserve_keys=[]):
+    """
+    Clears session state while preserving Hub navigation and specific keys.
+    """
+    hub_keys = [k for k in st.session_state.keys() if k.startswith("_hub_")]
+    to_keep = set(preserve_keys + hub_keys)
+
+    for k in list(st.session_state.keys()):
+        if k not in to_keep:
+            del st.session_state[k]
+
 def get_total_acquisition_value(target_year):
     """Sums all fiat purchases from all years up to target_year."""
     total = 0.0

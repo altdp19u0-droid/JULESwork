@@ -14,7 +14,7 @@ from shared_logic import (
     find_reconciliation_matches, get_file_path,
     extract_source_from_filename, validate_spam_exclusion,
     load_spam_list, standardize_df_addresses, is_imposable_robust,
-    show_status
+    show_status, clean_session_state
 )
 
 # --- Configuration ---
@@ -464,9 +464,7 @@ with st.sidebar:
 
     # Initialisation data si nécessaire
     if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
-        # Full Reset on Year Switch
-        for k in list(st.session_state.keys()):
-            if k not in ["last_year"]: del st.session_state[k]
+        clean_session_state(preserve_keys=["last_year"])
         st.cache_data.clear()
         sync_data(target_year)
         st.session_state.last_year = target_year

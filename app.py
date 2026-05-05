@@ -70,7 +70,8 @@ with st.sidebar:
 
     st.divider()
     if st.button("🗑️ Réinitialiser l'Interface"):
-        st.session_state.clear()
+        from shared_logic import clean_session_state
+        clean_session_state()
         st.rerun()
 
     st.divider()

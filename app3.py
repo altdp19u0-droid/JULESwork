@@ -7,7 +7,7 @@ from shared_logic import (
     get_fiat_rate, pd_read_csv_safe, load_price_cache, save_price_cache,
     calculate_fiscal_gains, get_file_path, check_file_freshness,
     validate_spam_exclusion, standardize_df_addresses, is_imposable_robust,
-    show_status
+    show_status, clean_session_state
 )
 from fpdf import FPDF
 from io import BytesIO, StringIO
@@ -184,9 +184,7 @@ with st.sidebar:
         st.session_state.last_target_year = target_year
 
     if target_year != st.session_state.last_target_year:
-        # Full Reset on Year Switch
-        for k in list(st.session_state.keys()):
-            if k not in ["last_target_year"]: del st.session_state[k]
+        clean_session_state(preserve_keys=["last_target_year"])
         st.session_state.last_target_year = target_year
         st.cache_data.clear()
         st.rerun()

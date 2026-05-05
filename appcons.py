@@ -10,12 +10,7 @@ import tempfile
 import unicodedata
 import traceback
 from datetime import datetime, time as dt_time
-from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur
-
-# --- Status Indicator ---
-def show_status():
-    st.sidebar.success("✅ Système Opérationnel")
-    st.sidebar.caption(f"Logique Partagée : OK")
+from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur, show_status
 
 # --- Helpers ---
 def pd_read_csv_safe(path):

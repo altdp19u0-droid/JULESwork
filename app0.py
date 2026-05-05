@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import unicodedata
-from shared_logic import get_known_accounts, resolve_raw_addr, is_imposable_robust, show_status
+from shared_logic import get_known_accounts, resolve_raw_addr, is_imposable_robust, show_status, clean_session_state
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Registre Fiat & Positions (app0)", layout="wide")
@@ -95,9 +95,7 @@ with st.sidebar:
     target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=st.session_state.current_year)
 
     if target_year != st.session_state.current_year:
-        # Full Reset on Year Switch
-        for k in list(st.session_state.keys()):
-            if k not in ["current_year"]: del st.session_state[k]
+        clean_session_state(preserve_keys=["current_year"])
         st.session_state.current_year = target_year
         st.cache_data.clear()
         load_manual_data(target_year)
