@@ -436,10 +436,6 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                 if vgp_missing.any():
                     st.warning(f"⚠️ {vgp_missing.sum()} cession(s) n'ont pas de VGP calculée (App 2 VGP), le gain restera à 0.00.")
 
-                # Ensure result columns exist even if no calculation performed
-                cess_history["Abattement"] = 0.0
-                cess_history["Gain/Perte"] = 0.0
-
                 # Merge results back for display
                 if not df_results.empty:
                     # We merge on Date and Asset for matching
@@ -449,9 +445,13 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                     cess_history["Date"] = pd.to_datetime(cess_history["Date"], utc=True)
                     # Merge logic: include Asset to handle multi-trades at same timestamp
                     cess_history = pd.merge(cess_history, df_results[["Date", "Asset", "Abattement", "Gain/Perte"]], on=["Date", "Asset"], how="left")
-                    # Fill missing after merge (for non-calculated cessions)
-                    cess_history["Abattement"] = cess_history["Abattement"].fillna(0.0)
-                    cess_history["Gain/Perte"] = cess_history["Gain/Perte"].fillna(0.0)
+
+                # Ensure result columns exist and are filled (even if no calculation performed)
+                if "Abattement" not in cess_history.columns: cess_history["Abattement"] = 0.0
+                else: cess_history["Abattement"] = cess_history["Abattement"].fillna(0.0)
+
+                if "Gain/Perte" not in cess_history.columns: cess_history["Gain/Perte"] = 0.0
+                else: cess_history["Gain/Perte"] = cess_history["Gain/Perte"].fillna(0.0)
 
                 cess_history = cess_history.rename(columns={
                     "Prix de Cession (EUR)": "Montant EUR retrouvés",

@@ -45,7 +45,8 @@ with st.sidebar:
         st.session_state.last_vgp_year = target_year
 
     if target_year != st.session_state.last_vgp_year:
-        clean_session_state(preserve_keys=["last_vgp_year"])
+        # We must preserve the widget key itself so Streamlit doesn't reset it to default (2026)
+        clean_session_state(preserve_keys=["last_vgp_year", "app2vgp_target_year"])
         st.session_state.last_vgp_year = target_year
         st.cache_data.clear()
         st.rerun()

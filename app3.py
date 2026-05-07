@@ -256,8 +256,12 @@ with tab_accounts:
     st.subheader("🏦 Liste des Comptes Propriétaires Détectés")
     journal = data['journal']
 
+    # Proactive discovery: load from owners file if journal is empty for this year
+    from shared_logic import load_owner_accounts
+    owners_map = load_owner_accounts()
+
     # Initialize variables to avoid NameError in downstream tabs/PDF generation
-    accounts = []
+    accounts = list(set(owners_map.values())) # Use all known owner labels
     derived_local = pd.DataFrame()
     df_protocols = pd.DataFrame()
 
