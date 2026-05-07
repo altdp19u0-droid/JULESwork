@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 import requests
 from datetime import datetime
-from shared_logic import get_fiat_rate, get_price_eur, show_status
+from shared_logic import get_fiat_rate, get_price_eur, show_status, load_owner_accounts, resolve_raw_addr
 import time
 import json
 import io
@@ -19,6 +19,8 @@ EXPORT_BASE_DIR = "sanctuarisation"
 # --- Logic: Neverless Expansion ---
 def process_neverless_csv(df):
     new_rows = []
+
+    owners_map = load_owner_accounts() # {addr_low: label}
 
     # Detect IDs that are "Auto-conversion"
     # To mark corresponding legs as Achat/Vente by default.
@@ -74,11 +76,34 @@ def process_neverless_csv(df):
 
             cp = "External" if tx_type == "Withdrawal" else "Swap"
 
-            # Specific Neverless sub-labels
-            if "strategies" in desc: cp = "Neverless Strategies"
-            elif "prime" in desc: cp = "Neverless Prime"
+            # --- SPECIAL WITHDRAWAL LOGIC ---
+            bc_addr_raw = row.get("Blockchain address")
+            if pd.isna(bc_addr_raw) or str(bc_addr_raw).lower() == "nan":
+                bc_addr_raw = ""
+            else:
+                bc_addr_raw = str(bc_addr_raw).strip()
 
-            if "banq_" in desc: cp = desc_raw
+            bc_addr = resolve_raw_addr(bc_addr_raw).lower() if bc_addr_raw else ""
+
+            if tx_type == "Withdrawal":
+                # A. Bank Withdrawal (Crypto -> Fiat)
+                if ("banq" in desc) and not bc_addr:
+                    cat = "Vente"
+                    is_imp = True
+                    cp = desc_raw
+                # B. Internal Transfer (Owner -> Owner)
+                elif bc_addr in owners_map:
+                    cat = "Transfert Interne"
+                    is_imp = False
+                    cp = owners_map[bc_addr]
+
+            # Specific Neverless sub-labels (only if not already set by bank/owner logic)
+            if cp in ["External", "Swap"]:
+                if "strategies" in desc: cp = "Neverless Strategies"
+                elif "prime" in desc: cp = "Neverless Prime"
+
+            if ("banq_" in desc) and (tx_type != "Withdrawal" or not cp):
+                cp = desc_raw
 
             new_rows.append({
                 "Date": dt,

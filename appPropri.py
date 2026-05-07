@@ -427,28 +427,29 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                     # Ensure same date precision for merge
                     df_results["Date"] = pd.to_datetime(df_results["Date"], utc=True)
                     cess_history["Date"] = pd.to_datetime(cess_history["Date"], utc=True)
-                    # Merge logic: cess_history and df_results have unique dates
-                    cess_history = pd.merge(cess_history, df_results[["Date", "Abattement", "Gain/Perte"]], on="Date", how="left")
+                    # Merge logic: include Asset to handle multi-trades at same timestamp
+                    cess_history = pd.merge(cess_history, df_results[["Date", "Asset", "Abattement", "Gain/Perte"]], on=["Date", "Asset"], how="left")
                     # Fill missing after merge (for non-calculated cessions)
                     cess_history["Abattement"] = cess_history["Abattement"].fillna(0.0)
                     cess_history["Gain/Perte"] = cess_history["Gain/Perte"].fillna(0.0)
 
                 cess_history = cess_history.rename(columns={
-                    "Prix de Cession (EUR)": "Montant EUR Retrouvé",
+                    "Prix de Cession (EUR)": "Montant EUR retrouvés",
                     "Asset": "Asset Vendu",
                     "Amount": "Quantité",
                     "Account": "Compte",
-                    "Network": "Blockchain"
+                    "Network": "Blockchain",
+                    "Gain/Perte": "Valeur gain/perte"
                 })
                 # Re-sign quantity for display
                 cess_history["Quantité"] = cess_history["Quantité"].apply(lambda x: abs(x))
 
-                display_cess_cols = ["Date", "Montant EUR Retrouvé", "Asset Vendu", "Quantité", "Gain/Perte", "VGP (EUR)", "Compte", "Blockchain", "Notes"]
+                display_cess_cols = ["Date", "Montant EUR retrouvés", "Asset Vendu", "Quantité", "Valeur gain/perte", "VGP (EUR)", "Compte", "Blockchain", "Notes"]
                 hide_cols_cess = [c for c in cess_history.columns if c not in display_cess_cols]
 
                 col_cfg_cess = {
-                    "Montant EUR Retrouvé": st.column_config.NumberColumn(format="%.2f €"),
-                    "Gain/Perte": st.column_config.NumberColumn("Valeur Gain/Perte", format="%.2f €"),
+                    "Montant EUR retrouvés": st.column_config.NumberColumn(format="%.2f €"),
+                    "Valeur gain/perte": st.column_config.NumberColumn(format="%.2f €"),
                     "VGP (EUR)": st.column_config.NumberColumn("VGP de Cession", format="%.2f €"),
                     "Quantité": st.column_config.NumberColumn(format="%.6f"),
                     "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="large"),
