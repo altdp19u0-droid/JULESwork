@@ -198,7 +198,7 @@ def process_neverless_csv(df):
 # --- Main App ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=datetime.now().year)
+    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=datetime.now().year, key="nvl_target_year_v1")
     st.divider()
     st.info("💡 Ce module transforme les lignes mixtes de Neverless en écritures comptables simples (In/Out/Fees) tout en préservant les prix USD natifs.")
 

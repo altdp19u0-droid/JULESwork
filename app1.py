@@ -25,7 +25,7 @@ SCHEMAS = {
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres d'Import")
-    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=datetime.now().year)
+    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=datetime.now().year, key="app1_target_year")
     import_type = st.selectbox("Type de données", list(SCHEMAS.keys()))
 
     st.divider()

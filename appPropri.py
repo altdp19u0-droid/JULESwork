@@ -19,7 +19,7 @@ EXPORT_BASE_DIR = "sanctuarisation"
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année de consultation", min_value=2015, max_value=2030, value=datetime.now().year)
+    target_year = st.number_input("Année de consultation", min_value=2015, max_value=2030, value=datetime.now().year, key="propri_target_year_v2")
 
     st.divider()
     nav_mode = st.radio("Navigation", ["📊 Dashboard", "⚖️ Détails Fiscaux (A & Cessions)"], key="propri_nav_v3")
@@ -400,8 +400,11 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
 
                 if st.button("💾 Enregistrer les Notes (Acquisitions)", key="btn_save_notes_acq"):
                     new_notes = notes_db.copy()
-                    for _, r in ed_acq.iterrows():
-                        key = get_note_key(r)
+                    for idx, r in ed_acq.iterrows():
+                        r_proxy = r.to_dict()
+                        if "Tx Hash" not in r_proxy or not r_proxy["Tx Hash"]:
+                            r_proxy["Tx Hash"] = acq_history.at[idx, "Tx Hash"] if "Tx Hash" in acq_history.columns else ""
+                        key = get_note_key(r_proxy)
                         if r["Notes"]: new_notes[key] = str(r["Notes"])
                         elif key in new_notes: del new_notes[key]
                     save_manual_notes(new_notes)
@@ -414,11 +417,28 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
             st.info("Aucune cession imposable détectée.")
         else:
             with st.spinner("Calcul des plus-values unitaires..."):
+                # VALORIZATION: ensure 'Prix de Cession (EUR)' is filled if missing (0.0)
+                # This fixes the issue of zero results in calculation
+                mask_no_price = (cess_history["Prix de Cession (EUR)"].fillna(0.0) == 0.0)
+                if mask_no_price.any():
+                    for idx, row in cess_history[mask_no_price].iterrows():
+                        p_eur = get_price_eur(row["Asset"], row["Date"], cache=global_cache)
+                        cess_history.at[idx, "Prix de Cession (EUR)"] = abs(float(row["Amount"])) * p_eur
+
                 cess_history = apply_notes(cess_history)
                 total_acq_price = get_total_acquisition_value(target_year)
 
                 # Perform unit gain calculation
                 df_results, _ = calculate_fiscal_gains(cess_history, total_acq_price)
+
+                # Warning if VGP is missing (prevents calculation)
+                vgp_missing = (cess_history["VGP (EUR)"].fillna(0.0) == 0.0)
+                if vgp_missing.any():
+                    st.warning(f"⚠️ {vgp_missing.sum()} cession(s) n'ont pas de VGP calculée (App 2 VGP), le gain restera à 0.00.")
+
+                # Ensure result columns exist even if no calculation performed
+                cess_history["Abattement"] = 0.0
+                cess_history["Gain/Perte"] = 0.0
 
                 # Merge results back for display
                 if not df_results.empty:
@@ -467,11 +487,16 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
 
                 if st.button("💾 Enregistrer les Notes (Cessions)", key="btn_save_notes_cess"):
                     new_notes = notes_db.copy()
-                    # We must use original column names for key generator
-                    for _, r in ed_cess.iterrows():
-                        # Create proxy row for key generator
-                        proxy = {"Date": r["Date"], "Account": r["Compte"], "Asset": r["Asset Vendu"], "Amount": -r["Quantité"], "Tx Hash": ""}
-                        # Note: Cessions are negative in journal
+                    # We must use original technical columns for key generator
+                    # Cessions are negative in journal
+                    for idx, r in ed_cess.iterrows():
+                        # Recover original Tx Hash if present in technical df
+                        orig_h = cess_history.at[idx, "Tx Hash"] if "Tx Hash" in cess_history.columns else ""
+
+                        proxy = {
+                            "Date": r["Date"], "Account": r["Compte"], "Asset": r["Asset Vendu"],
+                            "Amount": -abs(float(r["Quantité"])), "Tx Hash": orig_h
+                        }
                         key = get_note_key(proxy)
                         if r["Notes"]: new_notes[key] = str(r["Notes"])
                         elif key in new_notes: del new_notes[key]
@@ -550,8 +575,13 @@ else:
 
             if st.button("💾 Enregistrer les Notes (Mouvements Propriétaires)", key="btn_save_notes_owners"):
                 new_notes = notes_db.copy()
-                for _, r in ed_year.iterrows():
-                    key = get_note_key(r)
+                for idx, r in ed_year.iterrows():
+                    # Preserve original row technical data
+                    r_proxy = r.to_dict()
+                    if "Tx Hash" not in r_proxy or not r_proxy["Tx Hash"]:
+                        r_proxy["Tx Hash"] = df_year.at[idx, "Tx Hash"] if "Tx Hash" in df_year.columns else ""
+
+                    key = get_note_key(r_proxy)
                     if r["Notes"]: new_notes[key] = str(r["Notes"])
                     elif key in new_notes: del new_notes[key]
                 save_manual_notes(new_notes)
@@ -596,8 +626,12 @@ else:
 
             if st.button("💾 Enregistrer les Notes (Mouvements Complémentaires)", key="btn_save_notes_comp"):
                 new_notes = notes_db.copy()
-                for _, r in ed_comp.iterrows():
-                    key = get_note_key(r)
+                for idx, r in ed_comp.iterrows():
+                    r_proxy = r.to_dict()
+                    if "Tx Hash" not in r_proxy or not r_proxy["Tx Hash"]:
+                        r_proxy["Tx Hash"] = df_year_comp.at[idx, "Tx Hash"] if "Tx Hash" in df_year_comp.columns else ""
+
+                    key = get_note_key(r_proxy)
                     if r["Notes"]: new_notes[key] = str(r["Notes"])
                     elif key in new_notes: del new_notes[key]
                 save_manual_notes(new_notes)
@@ -619,16 +653,27 @@ else:
         display_bal_cols = ["Compte", "Asset", "Entrées", "Sorties", "Solde", "Prix (EUR)", "Valeur (EUR)", "Notes"]
         df_balances = apply_notes(df_balances)
 
+        # We need technical columns for note persistence (Location -> Account, Solde -> Amount)
+        # We use a technical copy with hidden columns
+        bal_with_tech = df_balances.copy()
+        bal_with_tech["Tx Hash"] = "SNAPSHOT"
+
+        col_cfg_bal = {
+            "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f"),
+            "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
+            "Solde": st.column_config.NumberColumn("Quantité Finale", format="%.6f"),
+            "Entrées": st.column_config.NumberColumn(format="%.6f"),
+            "Sorties": st.column_config.NumberColumn(format="%.6f"),
+            "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
+        }
+        # Hide technical columns that are not in display_bal_cols
+        for c in bal_with_tech.columns:
+            if c not in display_bal_cols:
+                col_cfg_bal[c] = None
+
         ed_bal = st.data_editor(
-            df_balances[display_bal_cols],
-            column_config={
-                "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f"),
-                "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
-                "Solde": st.column_config.NumberColumn("Quantité Finale", format="%.6f"),
-                "Entrées": st.column_config.NumberColumn(format="%.6f"),
-                "Sorties": st.column_config.NumberColumn(format="%.6f"),
-                "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
-            },
+            bal_with_tech,
+            column_config=col_cfg_bal,
             width='stretch',
             hide_index=True,
             key="owner_bal_editor"
@@ -637,9 +682,10 @@ else:
         if st.button("💾 Enregistrer les Notes (Balances Propriétaires)", key="btn_save_notes_bal_owners"):
             new_notes = notes_db.copy()
             for _, r in ed_bal.iterrows():
-                # For balance snapshots, Amount is in 'Solde' and Tx Hash is dummy or missing
-                proxy = {"Date": datetime(target_year, 12, 31), "Account": r["Compte"], "Asset": r["Asset"], "Amount": r["Solde"], "Tx Hash": "SNAPSHOT"}
-                key = get_note_key(proxy)
+                # We use fixed date for snapshots
+                r_proxy = r.to_dict()
+                r_proxy["Date"] = datetime(target_year, 12, 31)
+                key = get_note_key(r_proxy)
                 if r["Notes"]: new_notes[key] = str(r["Notes"])
                 elif key in new_notes: del new_notes[key]
             save_manual_notes(new_notes)
@@ -663,16 +709,25 @@ else:
             st.info("Aucune position complémentaire détectée.")
         else:
             df_comp_bal = apply_notes(df_comp_bal)
+
+            comp_bal_tech = df_comp_bal.copy()
+            comp_bal_tech["Tx Hash"] = "SNAPSHOT"
+
+            col_cfg_comp_bal = {
+                "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f"),
+                "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
+                "Solde": st.column_config.NumberColumn("Quantité Finale", format="%.6f"),
+                "Entrées": st.column_config.NumberColumn(format="%.6f"),
+                "Sorties": st.column_config.NumberColumn(format="%.6f"),
+                "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
+            }
+            for c in comp_bal_tech.columns:
+                if c not in display_bal_cols:
+                    col_cfg_comp_bal[c] = None
+
             ed_comp_bal = st.data_editor(
-                df_comp_bal[display_bal_cols],
-                column_config={
-                    "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f"),
-                    "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
-                    "Solde": st.column_config.NumberColumn("Quantité Finale", format="%.6f"),
-                    "Entrées": st.column_config.NumberColumn(format="%.6f"),
-                    "Sorties": st.column_config.NumberColumn(format="%.6f"),
-                    "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
-                },
+                comp_bal_tech,
+                column_config=col_cfg_comp_bal,
                 width='stretch',
                 hide_index=True,
                 key="comp_bal_editor"
@@ -681,8 +736,9 @@ else:
             if st.button("💾 Enregistrer les Notes (Balances Complémentaires)", key="btn_save_notes_bal_comp"):
                 new_notes = notes_db.copy()
                 for _, r in ed_comp_bal.iterrows():
-                    proxy = {"Date": datetime(target_year, 12, 31), "Account": r["Compte"], "Asset": r["Asset"], "Amount": r["Solde"], "Tx Hash": "SNAPSHOT"}
-                    key = get_note_key(proxy)
+                    r_proxy = r.to_dict()
+                    r_proxy["Date"] = datetime(target_year, 12, 31)
+                    key = get_note_key(r_proxy)
                     if r["Notes"]: new_notes[key] = str(r["Notes"])
                     elif key in new_notes: del new_notes[key]
                 save_manual_notes(new_notes)

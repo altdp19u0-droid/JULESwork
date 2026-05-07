@@ -62,8 +62,8 @@ with st.sidebar:
     chains = st.multiselect("Chaînes à sonder", list(CHAIN_APIS.keys()), default=list(CHAIN_APIS.keys()))
 
     st.divider()
-    target_year = st.number_input("Année à sanctuariser", min_value=2015, max_value=2030, value=2024)
-    max_txs = st.number_input("Max transactions par chaîne", min_value=10, max_value=50000, value=2000, step=100)
+    target_year = st.number_input("Année à sanctuariser", min_value=2015, max_value=2030, value=2024, key="app_target_year")
+    max_txs = st.number_input("Max transactions par chaîne", min_value=10, max_value=50000, value=2000, step=100, key="app_max_txs")
 
     st.divider()
     st.info("💡 **Conseil Multicomptes** : Récoltez et sanctuarisez vos adresses les unes après les autres. Le dossier final contiendra un fichier par compte.")

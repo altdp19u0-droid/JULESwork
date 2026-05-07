@@ -589,20 +589,37 @@ def save_manual_notes(notes_dict):
 
 def get_note_key(row):
     """Generates a stable key for a transaction row to associate a note."""
-    # Ensure date handling
+    # Ensure date handling (Force UTC for key consistency)
     raw_date = row.get("Date")
-    if pd.isna(raw_date): date_str = "NoDate"
-    else: date_str = pd.to_datetime(raw_date).strftime("%Y%m%d_%H%M%S")
+    if pd.isna(raw_date) or str(raw_date).lower() == "nat": date_str = "NoDate"
+    else:
+        try: date_str = pd.to_datetime(raw_date, utc=True).strftime("%Y%m%d_%H%M%S")
+        except: date_str = str(raw_date)
 
-    h = str(row.get("Tx Hash", "")).strip()
-    acc = str(row.get("Account", "")).lower().strip()
-    asset = str(row.get("Asset", "")).upper().strip()
+    # Technical fields with aliases
+    h = row.get("Tx Hash")
+    if pd.isna(h) or str(h).lower() in ["nan", "none", ""]: h = ""
+    else: h = str(h).strip()
 
-    # Robust amount detection (handles 'Amount' or 'Solde' for snapshots)
+    acc = row.get("Account")
+    if acc is None: acc = row.get("Compte", "")
+    acc = str(acc).lower().strip()
+    if acc == "nan": acc = ""
+
+    asset = row.get("Asset")
+    if asset is None: asset = row.get("Asset Vendu", "")
+    asset = str(asset).upper().strip()
+    if asset == "NAN": asset = ""
+
+    # Robust amount detection (handles 'Amount' or 'Solde' for snapshots or 'Quantité')
     amt_val = row.get("Amount")
-    if amt_val is None: amt_val = row.get("Solde", 0.0)
+    if amt_val is None or pd.isna(amt_val): amt_val = row.get("Solde")
+    if amt_val is None or pd.isna(amt_val): amt_val = row.get("Quantité")
+    if amt_val is None or pd.isna(amt_val): amt_val = 0.0
 
-    amt_str = f"{float(amt_val):.8f}"
+    # Force absolute amount for key to handle sign diffs between view/journal
+    # We round to 6 decimals for the key to handle minor floating point diffs in UI
+    amt_str = f"{abs(float(amt_val)):.6f}"
     return f"{date_str}_{acc}_{asset}_{amt_str}_{h}"
 
 def auto_register_owner(addr_str):

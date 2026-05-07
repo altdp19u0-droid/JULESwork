@@ -460,7 +460,7 @@ def sync_data(year):
 # --- UI Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=datetime.now().year)
+    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=datetime.now().year, key="app2_target_year")
 
     # Initialisation data si nécessaire
     if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
@@ -827,7 +827,7 @@ def reconciliation_dashboard():
 
     with col1:
         st.write("**🔍 Détection de Maillons**")
-        win = st.number_input("Fenêtre de recherche (jours)", 1, 15, 3)
+        win = st.number_input("Fenêtre de recherche (jours)", 1, 15, 3, key="app2_win_input")
         tol = st.slider("Tolérance de valeur (%)", 0.0, 0.20, 0.05)
 
         if st.button("🚀 Lancer la recherche automatique", width='stretch'):

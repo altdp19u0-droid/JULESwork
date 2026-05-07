@@ -92,7 +92,7 @@ if "fiat_journal" not in st.session_state:
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=st.session_state.current_year)
+    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=st.session_state.current_year, key="app0_target_year")
 
     if target_year != st.session_state.current_year:
         clean_session_state(preserve_keys=["current_year"])

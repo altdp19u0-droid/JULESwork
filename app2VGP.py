@@ -38,7 +38,7 @@ def load_position_labels():
 # --- UI sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, value=datetime.now().year)
+    target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, value=datetime.now().year, key="app2vgp_target_year")
 
     # Year switch detection
     if "last_vgp_year" not in st.session_state:
@@ -82,7 +82,7 @@ with st.sidebar:
     st.subheader("🛠️ Récupération d'Historique")
     force_full = st.checkbox("Recalculer tout l'historique", value=False, help="Ignore l'inventaire N-1 et recalcule depuis le début.")
     if force_full:
-        start_year = st.number_input("Année de départ", 2015, 2030, 2020)
+        start_year = st.number_input("Année de départ", 2015, 2030, 2020, key="app2vgp_start_year")
     else:
         start_year = 2020
 

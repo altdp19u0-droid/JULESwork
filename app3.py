@@ -177,7 +177,7 @@ with st.sidebar:
                 except: pass
             st.info(f"{len(pkl_files)} fichiers de cache supprimés.")
 
-    target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, value=datetime.now().year)
+    target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, value=datetime.now().year, key="app3_target_year")
 
     # Year switch detection
     if "last_target_year" not in st.session_state:
@@ -191,7 +191,7 @@ with st.sidebar:
 
     st.divider()
     flat_tax_rate = st.slider("Taux d'imposition (PFU)", 0.0, 1.0, 0.30, 0.01)
-    abattement = st.number_input("Abattement annuel (EUR)", value=305.0)
+    abattement = st.number_input("Abattement annuel (EUR)", value=305.0, key="app3_abattement")
 
     st.divider()
     if st.button("🔄 Forcer la recharge (Disque)", key="btn_reload_disk", help="Relit les journaux qualifiés depuis le disque pour prendre en compte les modifs de l'App 2."):
