@@ -96,7 +96,8 @@ with st.sidebar:
 
     if target_year != st.session_state.current_year:
         # _hub_ keys are auto-preserved by clean_session_state
-        clean_session_state(preserve_keys=["current_year"])
+        import shared_logic
+        shared_logic.clean_session_state(preserve_keys=["current_year"])
         st.session_state.current_year = target_year
         st.cache_data.clear()
         load_manual_data(target_year)

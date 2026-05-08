@@ -2,13 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-from shared_logic import (
-    resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
-    pd_read_csv_safe, get_file_path, validate_spam_exclusion,
-    load_owner_accounts, get_total_acquisition_value, standardize_df_addresses,
-    load_manual_notes, save_manual_notes, get_note_key,
-    show_status, clean_session_state
-)
+import shared_logic
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Propriété & Patrimoine (appPropri)", layout="wide")
@@ -26,7 +20,7 @@ with st.sidebar:
         st.session_state.last_propri_year = target_year
 
     if target_year != st.session_state.last_propri_year:
-        clean_session_state(preserve_keys=["last_propri_year", "_hub_propri_year"])
+        shared_logic.clean_session_state(preserve_keys=["last_propri_year", "_hub_propri_year"])
         st.session_state.last_propri_year = target_year
         st.cache_data.clear()
         st.rerun()
@@ -40,30 +34,29 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    show_status()
+    shared_logic.show_status()
 
 # --- Logic: Loading and Filtering ---
 @st.cache_data
 def get_owner_history(year):
     """Loads all qualified journals and manual records up to 'year' and filters for owner accounts."""
-    owners_map = load_owner_accounts()
+    owners_map = shared_logic.load_owner_accounts()
     owner_addrs = set(owners_map.keys())
 
     all_txs = []
     for y in range(2020, year + 1):
         # 1. From Qualified Journal
         df_q = pd.DataFrame()
-        path = get_file_path(y, 'qualified')
+        path = shared_logic.get_file_path(y, 'qualified')
         if os.path.exists(path):
             try:
-                df_q = pd_read_csv_safe(path)
+                df_q = shared_logic.pd_read_csv_safe(path)
                 if not df_q.empty and "Date" in df_q.columns:
-                    df_q = standardize_df_addresses(df_q)
-                    leaked = validate_spam_exclusion(df_q)
+                    df_q = shared_logic.standardize_df_addresses(df_q)
+                    leaked = shared_logic.validate_spam_exclusion(df_q)
                     if leaked: df_q.loc[leaked, "Status"] = "Spam"
                     df_q = df_q[df_q["Status"] != "Spam"].copy()
-                    df_q["acc_raw"] = df_q["Account"].apply(resolve_raw_addr)
-                    df_q = df_q[df_q["acc_raw"].isin(owner_addrs)].copy()
+                    df_q["acc_raw"] = df_q["Account"].apply(shared_logic.resolve_raw_addr)
                 else:
                     df_q = pd.DataFrame()
             except: pass
@@ -73,12 +66,12 @@ def get_owner_history(year):
         df_manual = pd.DataFrame()
 
         # 2a. Fiat
-        path_f = get_file_path(y, 'fiat')
+        path_f = shared_logic.get_file_path(y, 'fiat')
         if os.path.exists(path_f):
             try:
-                raw_f = pd_read_csv_safe(path_f)
+                raw_f = shared_logic.pd_read_csv_safe(path_f)
                 if not raw_f.empty and "Date" in raw_f.columns:
-                    raw_f = standardize_df_addresses(raw_f)
+                    raw_f = shared_logic.standardize_df_addresses(raw_f)
                     # Map to standard schema
                     f_rows = []
                     for _, r in raw_f.iterrows():
@@ -93,18 +86,18 @@ def get_owner_history(year):
             except: pass
 
         # 2b. Swaps
-        path_s = get_file_path(y, 'swaps')
+        path_s = shared_logic.get_file_path(y, 'swaps')
         if os.path.exists(path_s):
             try:
-                raw_s = pd_read_csv_safe(path_s)
+                raw_s = shared_logic.pd_read_csv_safe(path_s)
                 if not raw_s.empty and "Date" in raw_s.columns:
-                    raw_s = standardize_df_addresses(raw_s)
+                    raw_s = shared_logic.standardize_df_addresses(raw_s)
                     raw_s["Source Type"] = "Manual Swap"
                     df_manual = pd.concat([df_manual, raw_s])
             except: pass
 
         if not df_manual.empty:
-            df_manual["acc_raw"] = df_manual["Account"].apply(resolve_raw_addr)
+            df_manual["acc_raw"] = df_manual["Account"].apply(shared_logic.resolve_raw_addr)
             df_manual = df_manual[df_manual["acc_raw"].isin(owner_addrs)].copy()
 
         # Merge and Deduplicate
@@ -132,10 +125,10 @@ def get_acquisition_history(year):
     """Loads all fiat acquisitions from 2020 to 'year'."""
     all_acq = []
     for y in range(2020, year + 1):
-        path = get_file_path(y, 'fiat')
+        path = shared_logic.get_file_path(y, 'fiat')
         if os.path.exists(path):
             try:
-                df = pd_read_csv_safe(path)
+                df = shared_logic.pd_read_csv_safe(path)
                 if df.empty or "Date" not in df.columns or "Type" not in df.columns: continue
 
                 # Filter for 'Achat' types (Euros moving into Crypto)
@@ -167,19 +160,18 @@ def get_acquisition_history(year):
 @st.cache_data
 def get_cessions_history(year):
     """Loads all qualified and manual imposable cessions from 2020 to 'year'."""
-    from shared_logic import is_imposable_robust, get_fiat_rate
     all_cessions = []
 
     for y in range(2020, year + 1):
         # 1. From Qualified Journal (consolidated truth)
-        path_q = get_file_path(y, 'qualified')
+        path_q = shared_logic.get_file_path(y, 'qualified')
         df_q = pd.DataFrame()
         if os.path.exists(path_q):
             try:
-                df_q = pd_read_csv_safe(path_q)
+                df_q = shared_logic.pd_read_csv_safe(path_q)
                 if not df_q.empty and all(c in df_q.columns for c in ["Date", "Imposable", "Category", "Asset"]):
-                    df_q = standardize_df_addresses(df_q)
-                    mask_cess = (df_q['Imposable'].apply(is_imposable_robust) |
+                    df_q = shared_logic.standardize_df_addresses(df_q)
+                    mask_cess = (df_q['Imposable'].apply(shared_logic.is_imposable_robust) |
                                  df_q['Category'].fillna("").str.contains("Vente", case=False)) & (df_q['Asset'] != 'EUR')
                     df_q = df_q[mask_cess].copy()
                 else:
@@ -187,15 +179,15 @@ def get_cessions_history(year):
             except: df_q = pd.DataFrame()
 
         # 2. From Manual Fiat (detecting non-synced sales)
-        path_f = get_file_path(y, 'fiat')
+        path_f = shared_logic.get_file_path(y, 'fiat')
         df_f_cess = pd.DataFrame()
         if os.path.exists(path_f):
             try:
-                raw_f = pd_read_csv_safe(path_f)
+                raw_f = shared_logic.pd_read_csv_safe(path_f)
                 if not raw_f.empty and all(c in raw_f.columns for c in ["Date", "Type", "Imposable", "Asset", "Quantité", "Montant EUR"]):
-                    raw_f = standardize_df_addresses(raw_f)
+                    raw_f = shared_logic.standardize_df_addresses(raw_f)
                     # Sales (Vente) marked as imposable
-                    mask_f_cess = raw_f['Type'].fillna("").str.contains("Vente", case=False) & raw_f['Imposable'].apply(is_imposable_robust)
+                    mask_f_cess = raw_f['Type'].fillna("").str.contains("Vente", case=False) & raw_f['Imposable'].apply(shared_logic.is_imposable_robust)
                     df_f_raw = raw_f[mask_f_cess].copy()
                     if not df_f_raw.empty:
                         rows = []
@@ -211,14 +203,14 @@ def get_cessions_history(year):
             except: pass
 
         # 3. From Manual Swaps (detecting non-synced imposable swaps)
-        path_s = get_file_path(y, 'swaps')
+        path_s = shared_logic.get_file_path(y, 'swaps')
         df_s_cess = pd.DataFrame()
         if os.path.exists(path_s):
             try:
-                raw_s = pd_read_csv_safe(path_s)
+                raw_s = shared_logic.pd_read_csv_safe(path_s)
                 if not raw_s.empty and all(c in raw_s.columns for c in ["Date", "Imposable", "Amount", "Asset", "Account"]):
-                    raw_s = standardize_df_addresses(raw_s)
-                    mask_s_cess = raw_s['Imposable'].apply(is_imposable_robust)
+                    raw_s = shared_logic.standardize_df_addresses(raw_s)
+                    mask_s_cess = raw_s['Imposable'].apply(shared_logic.is_imposable_robust)
                     df_s_raw = raw_s[mask_s_cess].copy()
                     if not df_s_raw.empty:
                         rows = []
@@ -264,19 +256,19 @@ def get_cessions_history(year):
 @st.cache_data
 def get_complementary_history(year):
     """Loads movements from manual positions and internal transfer receivables."""
-    owners_map = load_owner_accounts()
+    owners_map = shared_logic.load_owner_accounts()
     owner_addrs = set(owners_map.keys())
 
     all_txs = []
     for y in range(2020, year + 1):
         # 1. Manual Positions
-        path_m = get_file_path(y, 'positions')
+        path_m = shared_logic.get_file_path(y, 'positions')
         if os.path.exists(path_m):
             try:
-                df_m = pd_read_csv_safe(path_m)
+                df_m = shared_logic.pd_read_csv_safe(path_m)
                 if df_m.empty: continue
                 # UNIFICATION
-                df_m = standardize_df_addresses(df_m)
+                df_m = shared_logic.standardize_df_addresses(df_m)
                 if not df_m.empty and "Date" in df_m.columns:
                     df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True, errors="coerce")
                     # Standardize columns to match history schema
@@ -288,22 +280,22 @@ def get_complementary_history(year):
             except: pass
 
         # 2. Receivables from Internal Transfers to unknown accounts
-        path_q = get_file_path(y, 'qualified')
+        path_q = shared_logic.get_file_path(y, 'qualified')
         if os.path.exists(path_q):
             try:
-                df_q = pd_read_csv_safe(path_q)
+                df_q = shared_logic.pd_read_csv_safe(path_q)
                 if df_q.empty or "Date" not in df_q.columns: continue
                 # UNIFICATION
-                df_q = standardize_df_addresses(df_q)
+                df_q = shared_logic.standardize_df_addresses(df_q)
 
-                leaked = validate_spam_exclusion(df_q)
+                leaked = shared_logic.validate_spam_exclusion(df_q)
                 if leaked: df_q.loc[leaked, "Status"] = "Spam"
                 df_q = df_q[df_q["Status"] != "Spam"].copy()
 
                 # Filter for Internal Transfers where Counterparty is NOT an owner
                 if "Category" in df_q.columns and "Counterparty" in df_q.columns:
                     mask_int = (df_q["Category"] == "Transfert Interne")
-                    df_q["cp_raw"] = df_q["Counterparty"].apply(resolve_raw_addr)
+                    df_q["cp_raw"] = df_q["Counterparty"].apply(shared_logic.resolve_raw_addr)
                     df_receivable = df_q[mask_int & (~df_q["cp_raw"].isin(owner_addrs))].copy()
 
                     if not df_receivable.empty:
@@ -332,7 +324,7 @@ def valuate_dataframe(df, cache):
 
     prices_map = {}
     for _, r in unique_pairs.iterrows():
-        p_eur = get_price_eur(r["Asset"], r["Date_Only"], cache=cache)
+        p_eur = shared_logic.get_price_eur(r["Asset"], r["Date_Only"], cache=cache)
         prices_map[(r["Asset"], r["Date_Only"])] = p_eur
 
     def valuate_row(row):
@@ -351,11 +343,11 @@ history = get_owner_history(target_year)
 comp_history = get_complementary_history(target_year)
 acq_history = get_acquisition_history(target_year)
 
-notes_db = load_manual_notes()
+notes_db = shared_logic.load_manual_notes()
 
 def apply_notes(df):
     if df.empty: return df
-    df["Notes"] = df.apply(lambda r: notes_db.get(get_note_key(r), ""), axis=1)
+    df["Notes"] = df.apply(lambda r: notes_db.get(shared_logic.get_note_key(r), ""), axis=1)
     return df
 
 if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
@@ -363,8 +355,7 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
 
     t_acq, t_cess = st.tabs(["💰 Détail Acquisition (A)", "📈 Détail Cessions Imposables"])
 
-    from shared_logic import load_price_cache, calculate_fiscal_gains
-    global_cache = load_price_cache()
+    global_cache = shared_logic.load_price_cache()
 
     with t_acq:
         if acq_history.empty:
@@ -377,7 +368,7 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
 
                 prices_map = {}
                 for _, r in unique_pairs.iterrows():
-                    prices_map[(r["Asset"], r["Date_Only"])] = get_price_eur(r["Asset"], r["Date_Only"], cache=global_cache)
+                    prices_map[(r["Asset"], r["Date_Only"])] = shared_logic.get_price_eur(r["Asset"], r["Date_Only"], cache=global_cache)
 
                 acq_history["Valeur EUR (Date)"] = acq_history.apply(
                     lambda r: float(r["Quantité"]) * prices_map.get((r["Asset"], r["Date_Only"]), 0.0), axis=1
@@ -414,10 +405,10 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                         r_proxy = r.to_dict()
                         if "Tx Hash" not in r_proxy or not r_proxy["Tx Hash"]:
                             r_proxy["Tx Hash"] = acq_history.at[idx, "Tx Hash"] if "Tx Hash" in acq_history.columns else ""
-                        key = get_note_key(r_proxy)
+                        key = shared_logic.get_note_key(r_proxy)
                         if r["Notes"]: new_notes[key] = str(r["Notes"])
                         elif key in new_notes: del new_notes[key]
-                    save_manual_notes(new_notes)
+                    shared_logic.save_manual_notes(new_notes)
                     st.success("Notes enregistrées.")
                     st.rerun()
 
@@ -432,14 +423,14 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                 mask_no_price = (cess_history["Prix de Cession (EUR)"].fillna(0.0) == 0.0)
                 if mask_no_price.any():
                     for idx, row in cess_history[mask_no_price].iterrows():
-                        p_eur = get_price_eur(row["Asset"], row["Date"], cache=global_cache)
+                        p_eur = shared_logic.get_price_eur(row["Asset"], row["Date"], cache=global_cache)
                         cess_history.at[idx, "Prix de Cession (EUR)"] = abs(float(row["Amount"])) * p_eur
 
                 cess_history = apply_notes(cess_history)
-                total_acq_price = get_total_acquisition_value(target_year)
+                total_acq_price = shared_logic.get_total_acquisition_value(target_year)
 
                 # Perform unit gain calculation
-                df_results, _ = calculate_fiscal_gains(cess_history, total_acq_price)
+                df_results, _ = shared_logic.calculate_fiscal_gains(cess_history, total_acq_price)
 
                 # Warning if VGP is missing (prevents calculation)
                 vgp_missing = (cess_history["VGP (EUR)"].fillna(0.0) == 0.0)
@@ -516,10 +507,10 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                             "Date": r["Date"], "Account": r["Compte"], "Asset": r["Asset Vendu"],
                             "Amount": -abs(float(r["Quantité"])), "Tx Hash": orig_h
                         }
-                        key = get_note_key(proxy)
+                        key = shared_logic.get_note_key(proxy)
                         if r["Notes"]: new_notes[key] = str(r["Notes"])
                         elif key in new_notes: del new_notes[key]
-                    save_manual_notes(new_notes)
+                    shared_logic.save_manual_notes(new_notes)
                     st.success("Notes enregistrées.")
                     st.rerun()
 
@@ -531,12 +522,12 @@ else:
     st.subheader("📊 Indicateurs Patrimoniaux")
 
     # Cumulative Acquisition Price (A)
-    total_acq = get_total_acquisition_value(target_year)
+    total_acq = shared_logic.get_total_acquisition_value(target_year)
 
     # Portfolio Value (VGP) at EOY
     eoy_date = datetime(target_year, 12, 31)
     # get_portfolio_snapshot handles historical carryover
-    snapshot_df, vgp_eoy = get_portfolio_snapshot(target_year, eoy_date)
+    snapshot_df, vgp_eoy = shared_logic.get_portfolio_snapshot(target_year, eoy_date)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Prix d'Acquisition Total (A)", f"{total_acq:,.2f} €", help="Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
@@ -554,8 +545,7 @@ else:
     st.divider()
     st.subheader(f"📑 Mouvements des Comptes Propriétaires ({target_year})")
 
-    from shared_logic import load_price_cache
-    global_cache = load_price_cache()
+    global_cache = shared_logic.load_price_cache()
 
     # Filter for current year only
     if not history.empty:
@@ -600,10 +590,10 @@ else:
                     if "Tx Hash" not in r_proxy or not r_proxy["Tx Hash"]:
                         r_proxy["Tx Hash"] = df_year.at[idx, "Tx Hash"] if "Tx Hash" in df_year.columns else ""
 
-                    key = get_note_key(r_proxy)
+                    key = shared_logic.get_note_key(r_proxy)
                     if r["Notes"]: new_notes[key] = str(r["Notes"])
                     elif key in new_notes: del new_notes[key]
-                save_manual_notes(new_notes)
+                shared_logic.save_manual_notes(new_notes)
                 st.success("Notes enregistrées.")
                 st.rerun()
 
@@ -650,10 +640,10 @@ else:
                     if "Tx Hash" not in r_proxy or not r_proxy["Tx Hash"]:
                         r_proxy["Tx Hash"] = df_year_comp.at[idx, "Tx Hash"] if "Tx Hash" in df_year_comp.columns else ""
 
-                    key = get_note_key(r_proxy)
+                    key = shared_logic.get_note_key(r_proxy)
                     if r["Notes"]: new_notes[key] = str(r["Notes"])
                     elif key in new_notes: del new_notes[key]
-                save_manual_notes(new_notes)
+                shared_logic.save_manual_notes(new_notes)
                 st.success("Notes enregistrées.")
                 st.rerun()
 
@@ -704,10 +694,10 @@ else:
                 # We use fixed date for snapshots
                 r_proxy = r.to_dict()
                 r_proxy["Date"] = datetime(target_year, 12, 31)
-                key = get_note_key(r_proxy)
+                key = shared_logic.get_note_key(r_proxy)
                 if r["Notes"]: new_notes[key] = str(r["Notes"])
                 elif key in new_notes: del new_notes[key]
-            save_manual_notes(new_notes)
+            shared_logic.save_manual_notes(new_notes)
             st.success("Notes enregistrées.")
             st.rerun()
 
@@ -757,10 +747,10 @@ else:
                 for _, r in ed_comp_bal.iterrows():
                     r_proxy = r.to_dict()
                     r_proxy["Date"] = datetime(target_year, 12, 31)
-                    key = get_note_key(r_proxy)
+                    key = shared_logic.get_note_key(r_proxy)
                     if r["Notes"]: new_notes[key] = str(r["Notes"])
                     elif key in new_notes: del new_notes[key]
-                save_manual_notes(new_notes)
+                shared_logic.save_manual_notes(new_notes)
                 st.success("Notes enregistrées.")
                 st.rerun()
 

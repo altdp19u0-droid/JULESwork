@@ -128,7 +128,8 @@ with st.sidebar:
         st.session_state.last_diag_year = target_year
 
     if target_year != st.session_state.last_diag_year:
-        clean_session_state(preserve_keys=["last_diag_year", "_hub_diag_year"])
+        import shared_logic
+        shared_logic.clean_session_state(preserve_keys=["last_diag_year", "_hub_diag_year"])
         st.session_state.last_diag_year = target_year
         st.cache_data.clear()
         st.rerun()

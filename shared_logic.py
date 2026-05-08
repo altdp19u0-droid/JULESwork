@@ -15,6 +15,17 @@ OWNERS_FILE = "owner_accounts.json"
 SPAM_FILE = "spam_blacklist.json"
 NOTES_FILE = "manual_notes.json"
 
+def clean_session_state(preserve_keys=[]):
+    """
+    Clears session state while preserving Hub navigation and specific keys.
+    """
+    hub_keys = [k for k in st.session_state.keys() if k.startswith("_hub_")]
+    to_keep = set(preserve_keys + hub_keys)
+
+    for k in list(st.session_state.keys()):
+        if k not in to_keep:
+            del st.session_state[k]
+
 def resolve_raw_addr(addr_str):
     s = str(addr_str).strip().lower()
     if "(" in s and ")" in s:
@@ -976,17 +987,6 @@ def show_status():
     st.sidebar.success("✅ Système Opérationnel")
     st.sidebar.caption(f"Logique Partagée : OK")
 
-def clean_session_state(preserve_keys=[]):
-    """
-    Clears session state while preserving Hub navigation and specific keys.
-    """
-    hub_keys = [k for k in st.session_state.keys() if k.startswith("_hub_")]
-    to_keep = set(preserve_keys + hub_keys)
-
-    for k in list(st.session_state.keys()):
-        if k not in to_keep:
-            del st.session_state[k]
-
 def get_total_acquisition_value(target_year):
     """Sums all fiat purchases from all years up to target_year."""
     total = 0.0
@@ -1063,12 +1063,17 @@ def inject_to_app0(rows_list, target_type, year):
         new_data = []
         for r in rows_list:
             dt_raw = pd.to_datetime(r.get("Date")).date() if r.get("Date") else ""
+            # Default Counterparty to "banq fiat" as requested
+            cp_val = r.get("Counterparty", "")
+            if not cp_val or str(cp_val).lower() == "nan":
+                cp_val = "banq fiat"
+
             new_data.append({
                 "Date": dt_raw,
                 "Account": r.get("Account", ""),
-                "Counterparty": r.get("Counterparty", ""),
+                "Counterparty": cp_val,
                 "Compte/Label": r.get("Account", ""),
-                "Plateforme": r.get("Counterparty", ""),
+                "Plateforme": cp_val,
                 "Montant EUR": 0.0, # TO BE FILLED BY USER IN APP0
                 "Type": "Achat (Virement vers Crypto)" if r.get("Amount", 0) > 0 else "Vente (Retour vers Banque)",
                 "Asset": r.get("Asset", ""),

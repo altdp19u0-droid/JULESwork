@@ -46,7 +46,8 @@ with st.sidebar:
 
     if target_year != st.session_state.last_vgp_year:
         # Hub keys are auto-preserved by clean_session_state
-        clean_session_state(preserve_keys=["last_vgp_year"])
+        import shared_logic
+        shared_logic.clean_session_state(preserve_keys=["last_vgp_year"])
         st.session_state.last_vgp_year = target_year
         st.cache_data.clear()
         st.rerun()

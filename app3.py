@@ -2,13 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-from shared_logic import (
-    resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
-    get_fiat_rate, pd_read_csv_safe, load_price_cache, save_price_cache,
-    calculate_fiscal_gains, get_file_path, check_file_freshness,
-    validate_spam_exclusion, standardize_df_addresses, is_imposable_robust,
-    show_status, clean_session_state
-)
+import shared_logic
 from fpdf import FPDF
 from io import BytesIO, StringIO
 import json
@@ -27,7 +21,7 @@ POSITIONS_FILE = "position_labels.json"
 
 # --- Helpers ---
 def load_eoy_prices(year):
-    path = get_file_path(year, 'prices')
+    path = shared_logic.get_file_path(year, 'prices')
     if path and os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -36,7 +30,7 @@ def load_eoy_prices(year):
     return {}
 
 def save_eoy_prices(year, prices_dict):
-    path = get_file_path(year, 'prices')
+    path = shared_logic.get_file_path(year, 'prices')
     if path:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
@@ -60,16 +54,15 @@ def load_position_labels():
 def apply_position_labels(df):
     """Remplace l'adresse Counterparty par 'Label (0x...)' si un mapping existe."""
     if df.empty: return df
-    from shared_logic import load_external_circuits
 
     labels = load_position_labels()
-    circ_labels = load_external_circuits().get("labels", {})
+    circ_labels = shared_logic.load_external_circuits().get("labels", {})
     combined = {**circ_labels, **labels}
 
     if not combined: return df
 
     def format_cp(cp_str):
-        raw = resolve_raw_addr(cp_str)
+        raw = shared_logic.resolve_raw_addr(cp_str)
         if raw in combined:
             return f"{combined[raw]} ({raw})"
         return cp_str
@@ -109,9 +102,9 @@ def pdf_safe_str(val, use_unicode=True):
 
 def load_data(year):
     paths = {
-        'journal': get_file_path(year, 'qualified'),
-        'fiat': get_file_path(year, 'fiat'),
-        'positions': get_file_path(year, 'positions')
+        'journal': shared_logic.get_file_path(year, 'qualified'),
+        'fiat': shared_logic.get_file_path(year, 'fiat'),
+        'positions': shared_logic.get_file_path(year, 'positions')
     }
 
     # Track load time for freshness
@@ -120,9 +113,9 @@ def load_data(year):
     data = {}
     for key, path in paths.items():
         if os.path.exists(path) and os.path.getsize(path) > 0:
-            df = pd_read_csv_safe(path)
+            df = shared_logic.pd_read_csv_safe(path)
             # UNIFICATION
-            df = standardize_df_addresses(df)
+            df = shared_logic.standardize_df_addresses(df)
             # Standardisation Date
             if 'Date' in df.columns:
                 df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
@@ -135,7 +128,7 @@ def load_data(year):
 
             if key == 'journal':
                 # --- DOUBLE VÉRIFICATION SPAM À L'OUVERTURE ---
-                leaked_indices = validate_spam_exclusion(df)
+                leaked_indices = shared_logic.validate_spam_exclusion(df)
                 if leaked_indices:
                     df.loc[leaked_indices, "Status"] = "Spam"
                     # Only show toast/message once for the whole dataset
@@ -184,7 +177,7 @@ with st.sidebar:
         st.session_state.last_target_year = target_year
 
     if target_year != st.session_state.last_target_year:
-        clean_session_state(preserve_keys=["last_target_year", "_hub_app3_year"])
+        shared_logic.clean_session_state(preserve_keys=["last_target_year", "_hub_app3_year"])
         st.session_state.last_target_year = target_year
         st.cache_data.clear()
         st.rerun()
@@ -207,10 +200,10 @@ with st.sidebar:
         st.rerun()
 
     # Data Freshness Warning
-    qual_path = get_file_path(target_year, 'qualified')
+    qual_path = shared_logic.get_file_path(target_year, 'qualified')
     if os.path.exists(qual_path):
         last_load = st.session_state.get("last_app3_sync_time", 0)
-        if check_file_freshness(qual_path, last_load):
+        if shared_logic.check_file_freshness(qual_path, last_load):
             st.warning("⚠️ Données qualifiées mises à jour. Veuillez 'Recharger'.")
 
     if st.button("🧮 Recalculer tout (Session)", key="btn_recalc_all"):
@@ -218,7 +211,7 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    show_status()
+    shared_logic.show_status()
 
 data = load_data(target_year)
 
@@ -257,8 +250,7 @@ with tab_accounts:
     journal = data['journal']
 
     # Proactive discovery: load from owners file
-    from shared_logic import load_owner_accounts
-    owners_map = load_owner_accounts()
+    owners_map = shared_logic.load_owner_accounts()
 
     # Initialize variables to avoid NameError in downstream tabs/PDF generation
     accounts = list(set(owners_map.values())) # Use all known owner labels
@@ -271,7 +263,7 @@ with tab_accounts:
         p_path = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
         if os.path.exists(p_path):
             try:
-                tmp_m = pd_read_csv_safe(p_path)
+                tmp_m = shared_logic.pd_read_csv_safe(p_path)
                 manual_all.append(tmp_m)
             except: pass
     pos_df = pd.concat(manual_all) if manual_all else pd.DataFrame()
@@ -296,9 +288,9 @@ with tab_accounts:
         # Use the same logic as VGP calculation but for the previous year-end
         journals_prev = []
         for y_p in range(2020, target_year):
-            path_p = get_file_path(y_p, 'qualified')
+            path_p = shared_logic.get_file_path(y_p, 'qualified')
             if os.path.exists(path_p):
-                try: journals_prev.append(pd_read_csv_safe(path_p))
+                try: journals_prev.append(shared_logic.pd_read_csv_safe(path_p))
                 except: pass
 
         if journals_prev:
@@ -341,13 +333,13 @@ with tab_accounts:
 
     # Check for missing inventory N-1
     prev_year = target_year - 1
-    inv_path = get_file_path(prev_year, 'inventory_eoy')
+    inv_path = shared_logic.get_file_path(prev_year, 'inventory_eoy')
     if not os.path.exists(inv_path) and not force_full and target_year > 2020:
         st.error(f"🚨 **Inventaire manquant :** Le fichier `inventory_EOY_{prev_year}.csv` est introuvable.")
         st.warning("Veuillez soit générer l'inventaire N-1 dans l'app2VGP, soit cocher 'Recalculer tout l'historique'.")
 
     eoy_date = datetime(target_year, 12, 31)
-    full_snapshot, _ = get_portfolio_snapshot(target_year, eoy_date, force_full_history=force_full, start_recalc_year=start_year)
+    full_snapshot, _ = shared_logic.get_portfolio_snapshot(target_year, eoy_date, force_full_history=force_full, start_recalc_year=start_year)
 
     df_manual_snap = pd.DataFrame()
     if full_snapshot.empty:
@@ -380,7 +372,7 @@ with tab_accounts:
             # Wallets
             if not derived_local.empty:
                 unique_assets = set(derived_local["Asset"].unique())
-                prices = {a: get_price_eur(a, eoy_date) for a in unique_assets}
+                prices = {a: shared_logic.get_price_eur(a, eoy_date) for a in unique_assets}
                 derived_local["Prix (EUR)"] = derived_local["Asset"].map(prices)
                 derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
                 st.session_state.local_valued = derived_local
@@ -388,7 +380,7 @@ with tab_accounts:
             # Protocoles
             if not df_protocols.empty:
                 unique_assets_proto = set(df_protocols["Asset"].unique())
-                prices_proto = {a: get_price_eur(a, eoy_date) for a in unique_assets_proto}
+                prices_proto = {a: shared_logic.get_price_eur(a, eoy_date) for a in unique_assets_proto}
                 df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(prices_proto)
                 df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
                 st.session_state.proto_valued = df_protocols
@@ -396,7 +388,7 @@ with tab_accounts:
             # Positions Manuelles
             if not df_manual_snap.empty:
                 unique_assets_man = set(df_manual_snap["Asset"].unique())
-                prices_man = {a: get_price_eur(a, eoy_date) for a in unique_assets_man}
+                prices_man = {a: shared_logic.get_price_eur(a, eoy_date) for a in unique_assets_man}
                 df_manual_snap["Prix (EUR)"] = df_manual_snap["Asset"].map(prices_man)
                 df_manual_snap["Valeur (EUR)"] = df_manual_snap["Amount"] * df_manual_snap["Prix (EUR)"]
                 st.session_state.manual_pos_valued = df_manual_snap
@@ -603,7 +595,7 @@ with tab_cessions:
         # Mais on exclut formellement les lignes EUR (Fiat pur)
 
         cessions = journal[
-            (journal['Imposable'].apply(is_imposable_robust) |
+            (journal['Imposable'].apply(shared_logic.is_imposable_robust) |
              journal['Category'].fillna("").str.contains("Vente", case=False)) &
             (journal['Asset'] != 'EUR')
         ].copy()
@@ -619,7 +611,7 @@ with tab_cessions:
                 def init_pc(row):
                     val_usd = float(row.get('Value ($)', 0))
                     if val_usd > 0:
-                        rate = get_fiat_rate("USD", row['Date'])
+                        rate = shared_logic.get_fiat_rate("USD", row['Date'])
                         return val_usd * rate
                     return 0.0
                 cessions['Prix de Cession (EUR)'] = cessions.apply(init_pc, axis=1)
@@ -649,7 +641,7 @@ with tab_cessions:
 
             if st.button("🧮 Calculer les Plus-Values", key="btn_calc_pv"):
                 # Use centralized fiscal logic
-                df_results, final_acq = calculate_fiscal_gains(edited_cessions, total_acq_price)
+                df_results, final_acq = shared_logic.calculate_fiscal_gains(edited_cessions, total_acq_price)
 
                 if not df_results.empty:
                     st.session_state.bilan_fiscale = df_results
@@ -673,7 +665,7 @@ with tab_bilan:
     if not journal_for_check.empty:
         try:
             potential_cessions = journal_for_check[
-                (journal_for_check['Imposable'].apply(is_imposable_robust) |
+                (journal_for_check['Imposable'].apply(shared_logic.is_imposable_robust) |
                  journal_for_check['Category'].fillna("").str.contains("Vente", case=False)) &
                 (journal_for_check['Asset'] != 'EUR')
             ].copy()
@@ -682,7 +674,7 @@ with tab_bilan:
                 def get_est_eur(row):
                     v_usd = float(row.get('Value ($)', 0))
                     if v_usd > 0:
-                        rate = get_fiat_rate("USD", row['Date'])
+                        rate = shared_logic.get_fiat_rate("USD", row['Date'])
                         return v_usd * rate
                     return 0.0
 
@@ -744,7 +736,7 @@ with tab_bilan:
 
         if os.path.exists(eoy_path):
             try:
-                df_inv = pd_read_csv_safe(eoy_path)
+                df_inv = shared_logic.pd_read_csv_safe(eoy_path)
                 df_inv["Valeur (EUR)"] = pd.to_numeric(df_inv["Valeur (EUR)"], errors="coerce").fillna(0.0)
                 vgp_end = df_inv["Valeur (EUR)"].sum()
                 st.info(f"✅ VGP basée sur l'inventaire sanctuarisé au 31/12/{target_year}.")
@@ -761,7 +753,7 @@ with tab_bilan:
                     # Use the settings from tab_accounts if available or defaults
                     ff = st.session_state.get("force_full_app3", False)
                     sy = st.session_state.get("start_year_app3", 2020)
-                    _, vgp_val = get_portfolio_snapshot(target_year, eoy_date, force_full_history=ff, start_recalc_year=sy)
+                    _, vgp_val = shared_logic.get_portfolio_snapshot(target_year, eoy_date, force_full_history=ff, start_recalc_year=sy)
                     st.session_state[f"vgp_eoy_{target_year}"] = vgp_val
                     st.success(f"VGP calculée : {vgp_val:,.2f} €")
                     st.rerun()
@@ -815,10 +807,10 @@ with tab_bilan:
             # Aggregation logic (same as VGP/Portfolio but row-based)
             all_txs = []
             for y in range(2020, target_year + 1):
-                path_j = get_file_path(y, 'qualified')
+                path_j = shared_logic.get_file_path(y, 'qualified')
                 if os.path.exists(path_j):
                     try:
-                        df_y = pd_read_csv_safe(path_j)
+                        df_y = shared_logic.pd_read_csv_safe(path_j)
                         # Standard exclusion filter
                         if 'Status' in df_y.columns:
                             df_y = df_y[df_y['Status'] != 'Spam']
