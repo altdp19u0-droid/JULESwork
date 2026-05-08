@@ -821,6 +821,11 @@ def load_spam_list():
         except: return set()
     return set()
 
+def save_spam_list(spam_set):
+    """Saves the global spam blacklist."""
+    with open(SPAM_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(list(spam_set)), f, indent=4)
+
 def validate_spam_exclusion(df):
     """
     Checks if any row in the dataframe matches the global spam blacklist
