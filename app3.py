@@ -177,14 +177,14 @@ with st.sidebar:
                 except: pass
             st.info(f"{len(pkl_files)} fichiers de cache supprimés.")
 
-    target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, value=datetime.now().year, key="app3_target_year")
+    target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, value=datetime.now().year, key="_hub_app3_year")
 
     # Year switch detection
     if "last_target_year" not in st.session_state:
         st.session_state.last_target_year = target_year
 
     if target_year != st.session_state.last_target_year:
-        clean_session_state(preserve_keys=["last_target_year"])
+        clean_session_state(preserve_keys=["last_target_year", "_hub_app3_year"])
         st.session_state.last_target_year = target_year
         st.cache_data.clear()
         st.rerun()
@@ -256,7 +256,7 @@ with tab_accounts:
     st.subheader("🏦 Liste des Comptes Propriétaires Détectés")
     journal = data['journal']
 
-    # Proactive discovery: load from owners file if journal is empty for this year
+    # Proactive discovery: load from owners file
     from shared_logic import load_owner_accounts
     owners_map = load_owner_accounts()
 
@@ -279,84 +279,85 @@ with tab_accounts:
     if not journal.empty:
         accounts = list(journal['Account'].dropna().unique())
         st.write(f"Comptes identifiés dans le journal : `{', '.join(accounts)}`")
+    else:
+        st.info("Aucune transaction dans le journal de cette année. Utilisation des comptes propriétaires connus.")
 
-        # --- NEW: Report from Previous Year ---
-        st.divider()
-        with st.expander(f"📦 Report de l'année précédente ({target_year - 1})", expanded=False):
-            st.info(f"Calcul des soldes au 31/12/{target_year - 1} pour initialiser l'année {target_year}.")
-            prev_date = datetime(target_year - 1, 12, 31)
+    # Consolidate accounts list with snapshot results for PDF and UI consistency
+    if not derived_local.empty:
+        snap_accs = derived_local["Account"].unique().tolist()
+        accounts = sorted(list(set(accounts + snap_accs)))
 
-            # Use the same logic as VGP calculation but for the previous year-end
-            journals_prev = []
-            for y_p in range(2020, target_year):
-                path_p = get_file_path(y_p, 'qualified')
-                if os.path.exists(path_p):
-                    try: journals_prev.append(pd_read_csv_safe(path_p))
-                    except: pass
+    # --- NEW: Report from Previous Year ---
+    st.divider()
+    with st.expander(f"📦 Report de l'année précédente ({target_year - 1})", expanded=False):
+        st.info(f"Calcul des soldes au 31/12/{target_year - 1} pour initialiser l'année {target_year}.")
+        prev_date = datetime(target_year - 1, 12, 31)
 
-            if journals_prev:
-                full_prev = pd.concat(journals_prev)
-                full_prev = full_prev[full_prev["Asset"] != "EUR"]
-                # Filter Spam/Dup
-                if 'Status' in full_prev.columns: full_prev = full_prev[full_prev['Status'] != 'Spam']
+        # Use the same logic as VGP calculation but for the previous year-end
+        journals_prev = []
+        for y_p in range(2020, target_year):
+            path_p = get_file_path(y_p, 'qualified')
+            if os.path.exists(path_p):
+                try: journals_prev.append(pd_read_csv_safe(path_p))
+                except: pass
 
-                # Internal neutralization (simplified for report view)
-                my_accs_prev = set(full_prev['Account'].dropna().unique())
-                def is_neut_p(r):
-                    if str(r.get('Category')) == "Transfert Interne": return True
-                    if resolve_raw_addr(r.get('Counterparty', "")) in my_accs_prev: return True
-                    return False
+        if journals_prev:
+            full_prev = pd.concat(journals_prev)
+            full_prev = full_prev[full_prev["Asset"] != "EUR"]
+            # Filter Spam/Dup
+            if 'Status' in full_prev.columns: full_prev = full_prev[full_prev['Status'] != 'Spam']
 
-                # Sum of everything up to end of previous year
-                eoy_prev_bals = full_prev.groupby(['Asset'])['Amount'].sum().reset_index()
-                eoy_prev_bals = eoy_prev_bals[eoy_prev_bals['Amount'].abs() > 1e-8]
+            # Sum of everything up to end of previous year
+            eoy_prev_bals = full_prev.groupby(['Asset'])['Amount'].sum().reset_index()
+            eoy_prev_bals = eoy_prev_bals[eoy_prev_bals['Amount'].abs() > 1e-8]
 
-                if not eoy_prev_bals.empty:
-                    st.write(f"**Soldes reportables au 01/01/{target_year} :**")
-                    st.table(eoy_prev_bals)
-                else:
-                    st.write("Aucun solde à reporter.")
+            if not eoy_prev_bals.empty:
+                st.write(f"**Soldes reportables au 01/01/{target_year} :**")
+                st.table(eoy_prev_bals)
             else:
-                st.write("Aucun historique trouvé avant cette année.")
-
-        st.divider()
-        st.subheader("📍 Positions de Fin d'Année")
-
-        # 1. Chargement du référentiel Protocoles
-        pos_labels = load_position_labels()
-        protocol_addrs = set(pos_labels.keys())
-        my_accounts = set(accounts)
-
-        st.info("Ces positions servent à calculer la Valeur Globale du Portefeuille (VGP).")
-
-        # 2. Factual Balance Calculation (Unified Snapshot)
-        # In app3, we strictly use the sanctuarized inventory N-1 or prompt for full history
-        st.divider()
-        st.subheader("🛠️ Récupération d'Historique")
-        c_hist1, c_hist2 = st.columns(2)
-        with c_hist1:
-            force_full = st.checkbox("Recalculer tout l'historique", value=False, key="force_full_app3")
-        with c_hist2:
-            start_year = st.number_input("Année de départ", 2015, 2030, 2020, key="start_year_app3") if force_full else 2020
-
-        # Check for missing inventory N-1
-        prev_year = target_year - 1
-        inv_path = get_file_path(prev_year, 'inventory_eoy')
-        if not os.path.exists(inv_path) and not force_full and target_year > 2020:
-            st.error(f"🚨 **Inventaire manquant :** Le fichier `inventory_EOY_{prev_year}.csv` est introuvable.")
-            st.warning("Veuillez soit générer l'inventaire N-1 dans l'app2VGP, soit cocher 'Recalculer tout l'historique'.")
-
-        eoy_date = datetime(target_year, 12, 31)
-        full_snapshot, _ = get_portfolio_snapshot(target_year, eoy_date, force_full_history=force_full, start_recalc_year=start_year)
-
-        if full_snapshot.empty:
-            st.warning("Aucun solde détecté pour cette année.")
-            derived_local = pd.DataFrame()
-            df_protocols = pd.DataFrame()
+                st.write("Aucun solde à reporter.")
         else:
-            # Map columns to match app3 legacy expectation
-            # Snapshot returns: Location, Asset, Report, Entrées, Sorties, Solde, Prix (EUR), Valeur (EUR), Is_Circuit
-            full_snapshot = full_snapshot.rename(columns={"Location": "Account", "Solde": "Amount", "Entrées": "In", "Sorties": "Out"})
+            st.write("Aucun historique trouvé avant cette année.")
+
+    st.divider()
+    st.subheader("📍 Positions de Fin d'Année")
+
+    # 1. Chargement du référentiel Protocoles
+    pos_labels = load_position_labels()
+    protocol_addrs = set(pos_labels.keys())
+    my_accounts = set(accounts)
+
+    st.info("Ces positions servent à calculer la Valeur Globale du Portefeuille (VGP).")
+
+    # 2. Factual Balance Calculation (Unified Snapshot)
+    # In app3, we strictly use the sanctuarized inventory N-1 or prompt for full history
+    st.divider()
+    st.subheader("🛠️ Récupération d'Historique")
+    c_hist1, c_hist2 = st.columns(2)
+    with c_hist1:
+        force_full = st.checkbox("Recalculer tout l'historique", value=False, key="force_full_app3")
+    with c_hist2:
+        start_year = st.number_input("Année de départ", 2015, 2030, 2020, key="start_year_app3") if force_full else 2020
+
+    # Check for missing inventory N-1
+    prev_year = target_year - 1
+    inv_path = get_file_path(prev_year, 'inventory_eoy')
+    if not os.path.exists(inv_path) and not force_full and target_year > 2020:
+        st.error(f"🚨 **Inventaire manquant :** Le fichier `inventory_EOY_{prev_year}.csv` est introuvable.")
+        st.warning("Veuillez soit générer l'inventaire N-1 dans l'app2VGP, soit cocher 'Recalculer tout l'historique'.")
+
+    eoy_date = datetime(target_year, 12, 31)
+    full_snapshot, _ = get_portfolio_snapshot(target_year, eoy_date, force_full_history=force_full, start_recalc_year=start_year)
+
+    df_manual_snap = pd.DataFrame()
+    if full_snapshot.empty:
+        st.warning("Aucun solde détecté pour cette année.")
+        derived_local = pd.DataFrame()
+        df_protocols = pd.DataFrame()
+    else:
+        # Map columns to match app3 legacy expectation
+        # Snapshot returns: Location, Asset, Report, Entrées, Sorties, Solde, Prix (EUR), Valeur (EUR), Is_Circuit
+        full_snapshot = full_snapshot.rename(columns={"Location": "Account", "Solde": "Amount", "Entrées": "In", "Sorties": "Out"})
 
         # Split Local vs Protocols vs Manual for UI legacy
         mask_wallet = full_snapshot["Account"].str.startswith("Account:", na=False)
@@ -370,67 +371,69 @@ with tab_accounts:
 
         df_protocols = full_snapshot[~mask_wallet & ~mask_manual].copy()
 
-        # 4. Valorisation & Sanctuarisation
-        col_v1, col_v2 = st.columns(2)
-        if col_v1.button("🚀 Valoriser les Positions (Auto)", key="btn_valoriser"):
-            with st.spinner("Recherche des prix..."):
-                eoy_date = datetime(target_year, 12, 31)
+    # 4. Valorisation & Sanctuarisation
+    col_v1, col_v2 = st.columns(2)
+    if col_v1.button("🚀 Valoriser les Positions (Auto)", key="btn_valoriser"):
+        with st.spinner("Recherche des prix..."):
+            eoy_date = datetime(target_year, 12, 31)
 
-                # Wallets
+            # Wallets
+            if not derived_local.empty:
                 unique_assets = set(derived_local["Asset"].unique())
                 prices = {a: get_price_eur(a, eoy_date) for a in unique_assets}
                 derived_local["Prix (EUR)"] = derived_local["Asset"].map(prices)
                 derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
                 st.session_state.local_valued = derived_local
 
-                # Protocoles
-                if not df_protocols.empty:
-                    unique_assets_proto = set(df_protocols["Asset"].unique())
-                    prices_proto = {a: get_price_eur(a, eoy_date) for a in unique_assets_proto}
-                    df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(prices_proto)
-                    df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
-                    st.session_state.proto_valued = df_protocols
+            # Protocoles
+            if not df_protocols.empty:
+                unique_assets_proto = set(df_protocols["Asset"].unique())
+                prices_proto = {a: get_price_eur(a, eoy_date) for a in unique_assets_proto}
+                df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(prices_proto)
+                df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
+                st.session_state.proto_valued = df_protocols
 
-                # Positions Manuelles
-                if not df_manual_snap.empty:
-                    unique_assets_man = set(df_manual_snap["Asset"].unique())
-                    prices_man = {a: get_price_eur(a, eoy_date) for a in unique_assets_man}
-                    df_manual_snap["Prix (EUR)"] = df_manual_snap["Asset"].map(prices_man)
-                    df_manual_snap["Valeur (EUR)"] = df_manual_snap["Amount"] * df_manual_snap["Prix (EUR)"]
-                    st.session_state.manual_pos_valued = df_manual_snap
+            # Positions Manuelles
+            if not df_manual_snap.empty:
+                unique_assets_man = set(df_manual_snap["Asset"].unique())
+                prices_man = {a: get_price_eur(a, eoy_date) for a in unique_assets_man}
+                df_manual_snap["Prix (EUR)"] = df_manual_snap["Asset"].map(prices_man)
+                df_manual_snap["Valeur (EUR)"] = df_manual_snap["Amount"] * df_manual_snap["Prix (EUR)"]
+                st.session_state.manual_pos_valued = df_manual_snap
 
-                st.success("Valorisation terminée.")
+            st.success("Valorisation terminée.")
 
-        if col_v2.button("💾 Sanctuariser les Prix", key="btn_sanctuariser_prix"):
-            all_prices = {}
-            if "local_valued" in st.session_state:
-                df = st.session_state.local_valued
-                for _, r in df.iterrows():
-                    if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
-            if "proto_valued" in st.session_state:
-                df = st.session_state.proto_valued
-                for _, r in df.iterrows():
-                    if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
-            if "manual_pos_valued" in st.session_state:
-                df = st.session_state.manual_pos_valued
-                for _, r in df.iterrows():
-                    if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
-
-            if all_prices:
-                if save_eoy_prices(target_year, all_prices):
-                    st.success(f"✅ {len(all_prices)} prix sanctuarisés pour {target_year}.")
-                else:
-                    st.error("Erreur lors de la sauvegarde.")
-            else:
-                st.warning("Aucun prix à sauvegarder.")
-
+    if col_v2.button("💾 Sanctuariser les Prix", key="btn_sanctuariser_prix"):
+        all_prices = {}
         if "local_valued" in st.session_state:
-            derived_local = st.session_state.local_valued
+            df = st.session_state.local_valued
+            for _, r in df.iterrows():
+                if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
+        if "proto_valued" in st.session_state:
+            df = st.session_state.proto_valued
+            for _, r in df.iterrows():
+                if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
+        if "manual_pos_valued" in st.session_state:
+            df = st.session_state.manual_pos_valued
+            for _, r in df.iterrows():
+                if r["Prix (EUR)"] > 0: all_prices[r["Asset"]] = float(r["Prix (EUR)"])
 
-        if "proto_valued" in st.session_state and not df_protocols.empty:
-            df_protocols = st.session_state.proto_valued
+        if all_prices:
+            if save_eoy_prices(target_year, all_prices):
+                st.success(f"✅ {len(all_prices)} prix sanctuarisés pour {target_year}.")
+            else:
+                st.error("Erreur lors de la sauvegarde.")
+        else:
+            st.warning("Aucun prix à sauvegarder.")
 
-        # UI Affichage
+    if "local_valued" in st.session_state:
+        derived_local = st.session_state.local_valued
+
+    if "proto_valued" in st.session_state:
+        df_protocols = st.session_state.proto_valued
+
+    # UI Affichage
+    if not derived_local.empty:
         st.write("**📱 Portefeuilles (Local) :**")
         for col in derived_local.columns:
             if derived_local[col].dtype == object:
@@ -461,101 +464,103 @@ with tab_accounts:
         if (ed_local["Prix (EUR)"] == 0).any():
             st.warning("⚠️ Certains prix de portefeuilles locaux sont à 0.00.")
 
-        if not df_protocols.empty:
-            st.write("**🏦 Protocoles & Staking (Déporté) :**")
-            for col in df_protocols.columns:
-                if df_protocols[col].dtype == object:
-                    df_protocols[col] = df_protocols[col].fillna("").astype(str)
+    if not df_protocols.empty:
+        st.write("**🏦 Protocoles & Staking (Déporté) :**")
+        for col in df_protocols.columns:
+            if df_protocols[col].dtype == object:
+                df_protocols[col] = df_protocols[col].fillna("").astype(str)
 
-            ed_proto = st.data_editor(
-                df_protocols,
-                column_config={
-                    "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
-                    "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
-                    "Amount": st.column_config.NumberColumn("Solde Final", format="%.6f", disabled=True),
-                    "Report": st.column_config.NumberColumn("Report (Initial)", format="%.6f", disabled=True),
-                    "In": st.column_config.NumberColumn("Entrées (YTD)", format="%.6f", disabled=True),
-                    "Out": st.column_config.NumberColumn("Sorties (YTD)", format="%.6f", disabled=True),
-                    "Account": st.column_config.TextColumn(disabled=True),
-                    "Asset": st.column_config.TextColumn(disabled=True),
-                    "Is_Circuit": st.column_config.CheckboxColumn("Circuit?", disabled=True),
-                },
-                width='stretch',
-                key="proto_pos_ed"
-            )
-            ed_proto["Valeur (EUR)"] = ed_proto["Amount"] * ed_proto["Prix (EUR)"].fillna(0.0)
-            st.session_state.proto_valued = ed_proto
-            if (ed_proto["Prix (EUR)"] == 0).any():
-                st.warning("⚠️ Certains prix de protocoles sont à 0.00.")
+        ed_proto = st.data_editor(
+            df_protocols,
+            column_config={
+                "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
+                "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
+                "Amount": st.column_config.NumberColumn("Solde Final", format="%.6f", disabled=True),
+                "Report": st.column_config.NumberColumn("Report (Initial)", format="%.6f", disabled=True),
+                "In": st.column_config.NumberColumn("Entrées (YTD)", format="%.6f", disabled=True),
+                "Out": st.column_config.NumberColumn("Sorties (YTD)", format="%.6f", disabled=True),
+                "Account": st.column_config.TextColumn(disabled=True),
+                "Asset": st.column_config.TextColumn(disabled=True),
+                "Is_Circuit": st.column_config.CheckboxColumn("Circuit?", disabled=True),
+            },
+            width='stretch',
+            key="proto_pos_ed"
+        )
+        ed_proto["Valeur (EUR)"] = ed_proto["Amount"] * ed_proto["Prix (EUR)"].fillna(0.0)
+        st.session_state.proto_valued = ed_proto
+        if (ed_proto["Prix (EUR)"] == 0).any():
+            st.warning("⚠️ Certains prix de protocoles sont à 0.00.")
 
-        st.divider()
-        st.write("**Positions déclarées manuellement (Off-chain, CEX, etc.) :**")
-        if "manual_pos_valued" in st.session_state:
-            df_manual_valued = st.session_state.manual_pos_valued
-            for col in df_manual_valued.columns:
-                if df_manual_valued[col].dtype == object: df_manual_valued[col] = df_manual_valued[col].fillna("").astype(str)
+    st.divider()
+    st.write("**Positions déclarées manuellement (Off-chain, CEX, etc.) :**")
+    if "manual_pos_valued" in st.session_state:
+        df_manual_valued = st.session_state.manual_pos_valued
+        for col in df_manual_valued.columns:
+            if df_manual_valued[col].dtype == object: df_manual_valued[col] = df_manual_valued[col].fillna("").astype(str)
 
-            ed_manual = st.data_editor(
-                df_manual_valued,
-                column_config={
-                    "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
-                    "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
-                    "Amount": st.column_config.NumberColumn("Solde Final", format="%.6f", disabled=True),
-                    "Report": st.column_config.NumberColumn("Report (Initial)", format="%.6f", disabled=True),
-                    "In": st.column_config.NumberColumn("Entrées (YTD)", format="%.6f", disabled=True),
-                    "Out": st.column_config.NumberColumn("Sorties (YTD)", format="%.6f", disabled=True),
-                    "Asset": st.column_config.TextColumn(disabled=True),
-                    "Account": st.column_config.TextColumn(disabled=True),
-                },
-                width='stretch',
-                key="manual_pos_ed"
-            )
-            ed_manual["Valeur (EUR)"] = ed_manual["Amount"] * ed_manual["Prix (EUR)"].fillna(0.0)
-            st.session_state.manual_pos_valued = ed_manual
-        else:
-            st.info("Aucune position manuelle valorisée.")
+        ed_manual = st.data_editor(
+            df_manual_valued,
+            column_config={
+                "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
+                "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €", disabled=True),
+                "Amount": st.column_config.NumberColumn("Solde Final", format="%.6f", disabled=True),
+                "Report": st.column_config.NumberColumn("Report (Initial)", format="%.6f", disabled=True),
+                "In": st.column_config.NumberColumn("Entrées (YTD)", format="%.6f", disabled=True),
+                "Out": st.column_config.NumberColumn("Sorties (YTD)", format="%.6f", disabled=True),
+                "Asset": st.column_config.TextColumn(disabled=True),
+                "Account": st.column_config.TextColumn(disabled=True),
+            },
+            width='stretch',
+            key="manual_pos_ed"
+        )
+        ed_manual["Valeur (EUR)"] = ed_manual["Amount"] * ed_manual["Prix (EUR)"].fillna(0.0)
+        st.session_state.manual_pos_valued = ed_manual
+    elif not df_manual_snap.empty:
+        st.write(df_manual_snap[["Account", "Asset", "Amount"]])
+    else:
+        st.info("Aucune position manuelle valorisée.")
 
-        # EXPORT CONSOLIDÉ CSV
-        st.divider()
-        col_ex1, col_ex2 = st.columns(2)
+    # EXPORT CONSOLIDÉ CSV
+    st.divider()
+    col_ex1, col_ex2 = st.columns(2)
 
-        with col_ex1:
-            if st.button("📥 Préparer l'export consolidé (CSV)", width='stretch', key="btn_prepare_export"):
-                frames = []
-                if "local_valued" in st.session_state:
-                    tmp = st.session_state.local_valued.copy()
-                    tmp["Type"] = "Wallet"
-                    frames.append(tmp)
-                if "proto_valued" in st.session_state:
-                    tmp = st.session_state.proto_valued.copy()
-                    tmp["Type"] = "Protocol"
-                    frames.append(tmp)
-                if "manual_pos_valued" in st.session_state:
-                    tmp = st.session_state.manual_pos_valued.copy()
-                    tmp["Type"] = "Manual"
-                    if "Quantité" in tmp.columns:
-                        tmp = tmp.rename(columns={"Quantité": "Amount"})
-                    frames.append(tmp)
+    with col_ex1:
+        if st.button("📥 Préparer l'export consolidé (CSV)", width='stretch', key="btn_prepare_export"):
+            frames = []
+            if "local_valued" in st.session_state:
+                tmp = st.session_state.local_valued.copy()
+                tmp["Type"] = "Wallet"
+                frames.append(tmp)
+            if "proto_valued" in st.session_state:
+                tmp = st.session_state.proto_valued.copy()
+                tmp["Type"] = "Protocol"
+                frames.append(tmp)
+            if "manual_pos_valued" in st.session_state:
+                tmp = st.session_state.manual_pos_valued.copy()
+                tmp["Type"] = "Manual"
+                if "Quantité" in tmp.columns:
+                    tmp = tmp.rename(columns={"Quantité": "Amount"})
+                frames.append(tmp)
 
-                if frames:
-                    full_snap = pd.concat(frames, ignore_index=True)
-                    # Add unique accounts as a separate section
-                    acc_df = pd.DataFrame({"Account": accounts, "Type": "Owner_Account_List", "Asset": "", "Amount": 0, "Prix (EUR)": 0, "Valeur (EUR)": 0})
+            if frames:
+                full_snap = pd.concat(frames, ignore_index=True)
+                # Add unique accounts as a separate section
+                acc_df = pd.DataFrame({"Account": accounts, "Type": "Owner_Account_List", "Asset": "", "Amount": 0, "Prix (EUR)": 0, "Valeur (EUR)": 0})
 
-                    # No reconciliation needed in factual mode
-                    wealth_df = pd.DataFrame()
+                # No reconciliation needed in factual mode
+                wealth_df = pd.DataFrame()
 
-                    final_export_df = pd.concat([
-                        acc_df,
-                        pd.DataFrame([{"Account": "---", "Type": "SEPARATOR"}]),
-                        full_snap,
-                        pd.DataFrame([{"Account": "---", "Type": "SEPARATOR"}]),
-                        pd.DataFrame([{"Account": "WEALTH_RECONCILIATION_REPORT", "Type": "HEADER"}]),
-                        wealth_df
-                    ], ignore_index=True)
+                final_export_df = pd.concat([
+                    acc_df,
+                    pd.DataFrame([{"Account": "---", "Type": "SEPARATOR"}]),
+                    full_snap,
+                    pd.DataFrame([{"Account": "---", "Type": "SEPARATOR"}]),
+                    pd.DataFrame([{"Account": "WEALTH_RECONCILIATION_REPORT", "Type": "HEADER"}]),
+                    wealth_df
+                ], ignore_index=True)
 
-                    st.session_state.full_inventory_csv = final_export_df.to_csv(index=False, encoding="utf-8-sig")
-                    st.success("Export prêt.")
+                st.session_state.full_inventory_csv = final_export_df.to_csv(index=False, encoding="utf-8-sig")
+                st.success("Export prêt.")
 
         with col_ex2:
             if "full_inventory_csv" in st.session_state:

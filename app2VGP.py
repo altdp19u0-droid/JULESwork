@@ -38,15 +38,15 @@ def load_position_labels():
 # --- UI sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, value=datetime.now().year, key="app2vgp_target_year")
+    target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, value=datetime.now().year, key="_hub_app2vgp_year")
 
     # Year switch detection
     if "last_vgp_year" not in st.session_state:
         st.session_state.last_vgp_year = target_year
 
     if target_year != st.session_state.last_vgp_year:
-        # We must preserve the widget key itself so Streamlit doesn't reset it to default (2026)
-        clean_session_state(preserve_keys=["last_vgp_year", "app2vgp_target_year"])
+        # Hub keys are auto-preserved by clean_session_state
+        clean_session_state(preserve_keys=["last_vgp_year"])
         st.session_state.last_vgp_year = target_year
         st.cache_data.clear()
         st.rerun()

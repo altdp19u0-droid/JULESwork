@@ -7,7 +7,7 @@ from shared_logic import (
     pd_read_csv_safe, get_file_path, validate_spam_exclusion,
     load_owner_accounts, get_total_acquisition_value, standardize_df_addresses,
     load_manual_notes, save_manual_notes, get_note_key,
-    show_status
+    show_status, clean_session_state
 )
 
 # --- Configuration ---
@@ -19,7 +19,17 @@ EXPORT_BASE_DIR = "sanctuarisation"
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année de consultation", min_value=2015, max_value=2030, value=datetime.now().year, key="propri_target_year_v2")
+    target_year = st.number_input("Année de consultation", min_value=2015, max_value=2030, value=datetime.now().year, key="_hub_propri_year")
+
+    # Year switch detection
+    if "last_propri_year" not in st.session_state:
+        st.session_state.last_propri_year = target_year
+
+    if target_year != st.session_state.last_propri_year:
+        clean_session_state(preserve_keys=["last_propri_year", "_hub_propri_year"])
+        st.session_state.last_propri_year = target_year
+        st.cache_data.clear()
+        st.rerun()
 
     st.divider()
     nav_mode = st.radio("Navigation", ["📊 Dashboard", "⚖️ Détails Fiscaux (A & Cessions)"], key="propri_nav_v3")
@@ -436,22 +446,31 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                 if vgp_missing.any():
                     st.warning(f"⚠️ {vgp_missing.sum()} cession(s) n'ont pas de VGP calculée (App 2 VGP), le gain restera à 0.00.")
 
+                # Initialize columns to avoid KeyError
+                cess_history["Abattement"] = 0.0
+                cess_history["Gain/Perte"] = 0.0
+
                 # Merge results back for display
                 if not df_results.empty:
                     # We merge on Date and Asset for matching
                     df_results = df_results.rename(columns={"Abattement Acq": "Abattement", "Plus-Value Brute": "Gain/Perte"})
-                    # Ensure same date precision for merge
-                    df_results["Date"] = pd.to_datetime(df_results["Date"], utc=True)
-                    cess_history["Date"] = pd.to_datetime(cess_history["Date"], utc=True)
+
+                    # Robust Merge: use seconds-floored dates to avoid precision mismatch
+                    df_results["_match_dt"] = pd.to_datetime(df_results["Date"], utc=True).dt.floor('s')
+                    cess_history["_match_dt"] = pd.to_datetime(cess_history["Date"], utc=True).dt.floor('s')
+
                     # Merge logic: include Asset to handle multi-trades at same timestamp
-                    cess_history = pd.merge(cess_history, df_results[["Date", "Asset", "Abattement", "Gain/Perte"]], on=["Date", "Asset"], how="left")
+                    cess_merged = pd.merge(
+                        cess_history.drop(columns=["Abattement", "Gain/Perte"]),
+                        df_results[["_match_dt", "Asset", "Abattement", "Gain/Perte"]],
+                        on=["_match_dt", "Asset"],
+                        how="left"
+                    )
+                    cess_history = cess_merged.drop(columns=["_match_dt"])
 
-                # Ensure result columns exist and are filled (even if no calculation performed)
-                if "Abattement" not in cess_history.columns: cess_history["Abattement"] = 0.0
-                else: cess_history["Abattement"] = cess_history["Abattement"].fillna(0.0)
-
-                if "Gain/Perte" not in cess_history.columns: cess_history["Gain/Perte"] = 0.0
-                else: cess_history["Gain/Perte"] = cess_history["Gain/Perte"].fillna(0.0)
+                # Final Fillna
+                cess_history["Abattement"] = cess_history["Abattement"].fillna(0.0)
+                cess_history["Gain/Perte"] = cess_history["Gain/Perte"].fillna(0.0)
 
                 cess_history = cess_history.rename(columns={
                     "Prix de Cession (EUR)": "Montant EUR retrouvés",

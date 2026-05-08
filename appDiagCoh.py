@@ -4,12 +4,11 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import unicodedata
-from shared_logic import resolve_raw_addr, pd_read_csv_safe
-
-# --- Status Indicator ---
-def show_status():
-    st.sidebar.success("✅ Système Opérationnel")
-    st.sidebar.caption(f"Logique Partagée : OK")
+from shared_logic import (
+    resolve_raw_addr, pd_read_csv_safe, standardize_df_addresses,
+    validate_spam_exclusion, is_imposable_robust, show_status,
+    clean_session_state, get_file_path
+)
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Diagnostic & Cohérence (appDiagCoh)", layout="wide")
@@ -41,31 +40,36 @@ def load_all_history():
 
     current_year = datetime.now().year
     for y in range(2020, current_year + 1):
-        # Qualified Journal
-        path_j = os.path.join(EXPORT_BASE_DIR, str(y), f"qualified_journal_{y}.csv")
+        # 1. Qualified Journal
+        path_j = get_file_path(y, 'qualified')
         if os.path.exists(path_j):
-            df = pd_read_csv_safe(path_j)
-            if not df.empty:
-                df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
-                # Filter spam/doubles
-                df = df[(df["Status"] != "Spam") & (df.get("Category", "") != "Doublon à ignorer")]
-                journals.append(df)
+            try:
+                df = pd_read_csv_safe(path_j)
+                if not df.empty:
+                    df = standardize_df_addresses(df)
+                    df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
 
-        # Manual Positions (End of year snapshots)
-        path_m = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
+                    # Anti-Spam Safety
+                    leaked = validate_spam_exclusion(df)
+                    if leaked: df.loc[leaked, "Status"] = "Spam"
+
+                    # Filter
+                    df = df[(df["Status"] != "Spam") & (df.get("Category", "") != "Doublon à ignorer")]
+                    journals.append(df)
+            except: pass
+
+        # 2. Manual Positions
+        path_m = get_file_path(y, 'positions')
         if os.path.exists(path_m):
-            df_m = pd_read_csv_safe(path_m)
-            if not df_m.empty:
-                df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True, errors="coerce")
-                manuals.append(df_m)
+            try:
+                df_m = pd_read_csv_safe(path_m)
+                if not df_m.empty:
+                    df_m = standardize_df_addresses(df_m)
+                    df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True, errors="coerce")
+                    manuals.append(df_m)
+            except: pass
 
     return pd.concat(journals) if journals else pd.DataFrame(), pd.concat(manuals) if manuals else pd.DataFrame()
-
-# --- Engine ---
-def is_imposable_robust(val):
-    if pd.isna(val): return False
-    s = str(val).upper().strip()
-    return s in ["TRUE", "1", "1.0", "VRAI", "YES", "OUI"]
 
 def compute_running_balances(df_j, df_m):
     if df_j.empty and df_m.empty: return pd.DataFrame()
@@ -115,6 +119,20 @@ def compute_running_balances(df_j, df_m):
 # --- Main Logic ---
 with st.sidebar:
     st.header("⚙️ Contrôle")
+
+    # Hub Navigation Support
+    target_year = st.number_input("Année focus (Filtre visuel)", 2015, 2030, datetime.now().year, key="_hub_diag_year")
+
+    # Year switch detection
+    if "last_diag_year" not in st.session_state:
+        st.session_state.last_diag_year = target_year
+
+    if target_year != st.session_state.last_diag_year:
+        clean_session_state(preserve_keys=["last_diag_year", "_hub_diag_year"])
+        st.session_state.last_diag_year = target_year
+        st.cache_data.clear()
+        st.rerun()
+
     if st.button("🔄 Actualiser le Diagnostic", width='stretch', type="primary"):
         st.cache_data.clear()
         st.rerun()
@@ -143,10 +161,14 @@ else:
         # Focus on Cessions first as they block App 3
         cessions_neg = history[(history["Running_Bal"] < -1e-8) & (history.get("Is_Cession", False))].copy()
 
+        # Apply focal year filter if requested
+        if st.checkbox("Filtrer uniquement sur l'année focus", value=False, key="filter_year_diag"):
+            cessions_neg = cessions_neg[cessions_neg["Date"].dt.year == target_year]
+
         if not cessions_neg.empty:
             st.error(f"🚨 {len(cessions_neg)} cessions critiques détectées (Solde Négatif).")
             st.dataframe(
-                cessions_neg[["Date", "Account", "Asset", "Amount", "Running_Bal", "Category"]],
+                cessions_neg[["Date", "Account", "Asset", "Amount", "Running_Bal", "Category"]].sort_values("Date", ascending=False),
                 column_config={
                     "Running_Bal": st.column_config.NumberColumn("Solde Négatif", format="%.6f"),
                     "Amount": st.column_config.NumberColumn("Quantité Cédée", format="%.6f"),

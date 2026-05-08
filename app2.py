@@ -460,11 +460,11 @@ def sync_data(year):
 # --- UI Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=datetime.now().year, key="app2_target_year")
+    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=datetime.now().year, key="_hub_app2_year")
 
     # Initialisation data si nécessaire
     if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
-        clean_session_state(preserve_keys=["last_year"])
+        clean_session_state(preserve_keys=["last_year", "_hub_app2_year"])
         st.cache_data.clear()
         sync_data(target_year)
         st.session_state.last_year = target_year

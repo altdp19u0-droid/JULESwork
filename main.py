@@ -242,6 +242,7 @@ menu_options = {
     "🧮 Step 3a: Calcul VGP (app2VGP)": "app2VGP",
     "👤 Step 3b: Dashboard Patrimoine (appPropri)": "appPropri",
     "🏛️ Step 3c: Fiscalité (app3)": "app3",
+    "🕵️ Step 4: Diagnostic (appDiagCoh)": "appDiagCoh",
     "🔍 Fix: Collecteur Prix (appPriceFix)": "appPriceFix",
     "🧪 Live Harvest Pro (main)": "live_harvest"
 }
@@ -436,7 +437,7 @@ elif menu == "live_harvest":
             st.session_state.accounts_metadata = {}; st.rerun()
 
 # --- Integrated Module Loading ---
-elif menu in ["app", "app0", "app2", "app2VGP", "appPropri", "app3", "appPriceFix"]:
+elif menu in ["app", "app0", "app2", "app2VGP", "appPropri", "app3", "appDiagCoh", "appPriceFix"]:
     module_name = menu
     try:
         # We dynamicallly import and run the module's main logic
