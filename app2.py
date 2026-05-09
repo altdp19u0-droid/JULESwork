@@ -266,20 +266,60 @@ with t_q:
         sd_mask = (df_full.get("Category") != "Doublon à ignorer") & (df_full.get("Category") != "Doublon (Fusionné)")
         dups = df_full[sd_mask][df_full[sd_mask].duplicated(subset=["Asset", "Amount", "Account", "_d"], keep=False)]
         real_s = dups.groupby(["Asset", "Amount", "Account", "_d"]).filter(lambda x: x["Tx Hash"].nunique() > 1) if not dups.empty else pd.DataFrame()
+
         if not real_s.empty:
-            st.warning(f"⚠️ {len(real_s.groupby(['Asset','Amount','Account','_d']))} doublons suspects."); [st.button("🤝 Fusionner Auto") and [df_full.update(pd.DataFrame({"Category":"Doublon (Fusionné)","Status":"Spam"}, index=df_full[(df_full["Asset"]==n[0])&(df_full["Amount"]==n[1])&(df_full["Account"]==n[2])&(df_full["_d"]==n[3])].sort_values(by=["Category","Source Type"], ascending=[False,True]).index[1:])) for n,g in real_s.groupby(["Asset","Amount","Account","_d"])] and st.rerun()]
+            with st.expander(f"⚠️ {len(real_s.groupby(['Asset','Amount','Account','_d']))} Groupes de doublons suspects détectés", expanded=True):
+                st.info("Ces lignes ont le même montant, asset, compte et date, mais des Hashs différents (souvent Harvesting vs Manuel).")
+                st.dataframe(real_s[["Date", "Account", "Asset", "Amount", "Source Type", "Category", "Tx Hash"]].sort_values(["Date", "Asset", "Amount"]), hide_index=True)
+
+                if st.button("🤝 Confirmer la Fusion Auto (Marquer comme Spams)", width='stretch', key="btn_merge_dups"):
+                    for n, g in real_s.groupby(["Asset", "Amount", "Account", "_d"]):
+                        # On garde la ligne la plus 'riche' (catégorisée ou venant d'une source prioritaire)
+                        sorted_indices = g.sort_values(by=["Category", "Source Type"], ascending=[False, True]).index
+                        # On marque tous les autres comme Doublon (Fusionné) et Spam
+                        df_full.loc[sorted_indices[1:], "Category"] = "Doublon (Fusionné)"
+                        df_full.loc[sorted_indices[1:], "Status"] = "Spam"
+                    st.session_state.journal_qualifie = df_full
+                    st.success("Fusion terminée.")
+                    st.rerun()
 
         dfd = st.session_state.journal_qualifie.copy()
         if fa: dfd = dfd[dfd["Asset"].isin(fa)]
         if fac: dfd = dfd[dfd["Account"].isin(fac)]
         if fst: dfd = dfd[dfd["Status"].isin(fst)]
         if fct: dfd = dfd[dfd["Category"].isin(fct)]
-        dfd = dfd.reset_index(drop=True); dfd.insert(0, "Sel.", False) if "Sel." not in dfd.columns else None
+        dfd = dfd.reset_index(drop=True)
+        if "Sel." not in dfd.columns:
+            dfd.insert(0, "Sel.", False)
         if st.button("🔍 Détecter Transferts Internes", width='stretch'):
             df, ct = shared_logic.detect_internal_transfers(st.session_state.journal_qualifie); st.session_state.journal_qualifie = df; st.rerun()
         cats = sorted(list(set(["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense", "Frais", "Doublon à ignorer"] + list(dfd["Category"].unique()))))
-        edf = st.data_editor(dfd, column_config={"Sel.":st.column_config.CheckboxColumn("Sel."),"Category":st.column_config.SelectboxColumn("Catégorie", options=cats),"Status":st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),"Imposable":st.column_config.CheckboxColumn("Imposable"),"Date":st.column_config.DatetimeColumn(disabled=True),"Account":st.column_config.TextColumn(disabled=True),"Amount":st.column_config.NumberColumn(format="%.6f", disabled=True)}, width='stretch', key="qual_editor_v16")
-        c1, c2 = st.columns(2); [shared_logic.inject_to_app0(edf[edf["Sel."]].drop(columns="Sel.").to_dict('records'), "Fiat", target_year) if c1.button("💶 Flux Fiat (App 0)") else None]; [shared_logic.inject_to_app0(edf[edf["Sel."]].drop(columns="Sel.").to_dict('records'), "Swap", target_year) if c2.button("🔄 Swap (App 0)") else None]
+
+        # Style logic for highlighting suspect duplicates
+        if not real_s.empty:
+            suspect_hashes = set(real_s["Tx Hash"].unique())
+            def highlight_dups(row):
+                return ['background-color: #ffcccc'] * len(row) if row["Tx Hash"] in suspect_hashes else [''] * len(row)
+            df_styled = dfd.style.apply(highlight_dups, axis=1)
+        else:
+            df_styled = dfd
+
+        edf = st.data_editor(df_styled, column_config={"Sel.":st.column_config.CheckboxColumn("Sel."),"Category":st.column_config.SelectboxColumn("Catégorie", options=cats),"Status":st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),"Imposable":st.column_config.CheckboxColumn("Imposable"),"Date":st.column_config.DatetimeColumn(disabled=True),"Account":st.column_config.TextColumn(disabled=True),"Amount":st.column_config.NumberColumn(format="%.6f", disabled=True)}, width='stretch', key="qual_editor_v17")
+
+        c1, c2 = st.columns(2)
+        if c1.button("💶 Injecter vers Flux Fiat (App 0)", width='stretch'):
+            selected = edf[edf["Sel."]].drop(columns="Sel.").to_dict('records')
+            if selected:
+                count = shared_logic.inject_to_app0(selected, "Fiat", target_year)
+                st.success(f"{count} lignes injectées vers le registre Fiat.")
+            else: st.warning("Veuillez d'abord sélectionner des lignes via la colonne 'Sel.'.")
+
+        if c2.button("🔄 Injecter vers Swaps (App 0)", width='stretch'):
+            selected = edf[edf["Sel."]].drop(columns="Sel.").to_dict('records')
+            if selected:
+                count = shared_logic.inject_to_app0(selected, "Swap", target_year)
+                st.success(f"{count} lignes injectées vers le registre Swaps.")
+            else: st.warning("Veuillez d'abord sélectionner des lignes via la colonne 'Sel.'.")
         if st.button("💾 Sanctuariser", type="primary", width='stretch'):
             fj, ec = st.session_state.journal_qualifie, edf.drop(columns=["Sel."])
             if not (fa or fac or fst or fct): fj = ec
@@ -289,10 +329,47 @@ with t_q:
 with t_r:
     st.subheader("🤝 Réconciliation des Maillons")
     if "journal_qualifie" in st.session_state:
-        df_r = st.session_state.journal_qualifie; [st.session_state.update({"journal_qualifie":shared_logic.find_reconciliation_matches(df_r)[0]}) if st.button("🚀 Lancer recherche auto") else None]
-        for lid, gp in df_r[df_r["Link_Status"]=="Proposed"].groupby("Linked_ID"):
-            with st.container(border=True):
-                if st.button(f"✅ Confirmer {lid}"): df_r.loc[df_r["Linked_ID"]==lid, "Link_Status"]="Confirmed"; st.rerun()
-                st.dataframe(gp[["Date", "Account", "Asset", "Amount"]], hide_index=True)
+        df_r = st.session_state.journal_qualifie
+
+        c_r1, c_r2 = st.columns([1, 2])
+        if c_r1.button("🚀 Lancer recherche auto", width='stretch'):
+            df_upd, count = shared_logic.find_reconciliation_matches(df_r)
+            st.session_state.journal_qualifie = df_upd
+            st.success(f"{count} maillons potentiels détectés.")
+            st.rerun()
+
+        # Summary
+        if not df_r.empty and "Link_Status" in df_r.columns:
+            n_prop = df_r[df_r["Link_Status"] == "Proposed"]["Linked_ID"].nunique()
+            n_conf = df_r[df_r["Link_Status"] == "Confirmed"]["Linked_ID"].nunique()
+            c_r2.info(f"📊 **Statut :** {n_prop} proposés, {n_conf} confirmés.")
+
+        # Display Proposed Links
+        prop_groups = df_r[df_r["Link_Status"] == "Proposed"].groupby("Linked_ID")
+        if not prop_groups.groups:
+            st.info("Aucune réconciliation en attente de confirmation.")
+        else:
+            for lid, gp in prop_groups:
+                with st.container(border=True):
+                    cols = st.columns([3, 1])
+                    cols[0].write(f"🔗 **Maillon Suspect :** `{lid}`")
+                    if cols[1].button(f"✅ Confirmer", key=f"conf_{lid}"):
+                        df_r.loc[df_r["Linked_ID"] == lid, "Link_Status"] = "Confirmed"
+                        st.session_state.journal_qualifie = df_r
+                        st.rerun()
+                    st.dataframe(gp[["Date", "Account", "Asset", "Amount", "Counterparty", "Source Type"]], hide_index=True)
+
+        # Display Confirmed Links (Collapsible)
+        conf_groups = df_r[df_r["Link_Status"] == "Confirmed"].groupby("Linked_ID")
+        if conf_groups.groups:
+            with st.expander("✅ Voir les maillons confirmés"):
+                for lid, gp in conf_groups:
+                    st.write(f"✔️ Maillon `{lid}`")
+                    st.dataframe(gp[["Date", "Account", "Asset", "Amount", "Counterparty"]], hide_index=True)
+                    if st.button(f"🗑️ Annuler confirmation", key=f"unconf_{lid}"):
+                        df_r.loc[df_r["Linked_ID"] == lid, "Link_Status"] = ""
+                        df_r.loc[df_r["Linked_ID"] == lid, "Linked_ID"] = ""
+                        st.session_state.journal_qualifie = df_r
+                        st.rerun()
 
 shared_logic.show_status()
