@@ -16,10 +16,10 @@ Ce document récapitule la structure, les fonctions critiques et les règles de 
 ### `main.py` (Hub)
 - Orchestre la navigation via `st.sidebar.selectbox`.
 - Protège l'état global avec des clés `_hub_`.
+- Intègre les importeurs spécialisés (`appNeverless.py`, `appBleap.py`).
 
 ### `app.py` (Récolte On-Chain - Step 1)
 - Cœur de la récupération des données brutes depuis les blockchains (via Blockscout).
-- Gère le scan exhaustif des transactions natives et des transferts de jetons pour une adresse donnée.
 - Produit les fichiers `raw_*.csv` qui alimentent le reste de la suite.
 
 ### `app0.py` (Registres Manuels)
@@ -27,19 +27,19 @@ Ce document récapitule la structure, les fonctions critiques et les règles de 
 - Utilise une colonne 'Mod.' pour recharger les données dans le formulaire.
 
 ### `app2.py` (Qualification & Nettoyage - Step 2) - **CRITIQUE**
-- **Fusion (Sync) :** Fusionne les données brutes (harvesting) avec le journal qualifié existant sans écraser les modifications manuelles.
-- **Moteur de Fidélité :** Détecte les doublons suspects (même montant/asset/compte à la même date mais Hash différent).
-- **Détection Interne :** Identifie les transferts entre comptes "Propriétaires".
-- **Réconciliation :** Apparie les "Maillons" (ex: Bridge Out -> Bridge In).
-- **Gestion des Référentiels (Sidebar) :** Doit impérativement rester accessible en Sidebar.
-    - **Outils :** Spams, Comptes Propriétaires, Circuits, Positions.
-    - **Fonctions :** Chaque liste doit disposer de fonctions de **Modification** et **Suppression** manuelles.
-    - **Saisie Unifiée :** Permettre l'assignation d'une nouvelle adresse au registre approprié (**Compte Propriétaire**, **Position**, ou **Externe/Circuit**) lors de la saisie.
-- **Filtrage :** Applique le statut 'Spam' pour l'exclusion définitive des flux non désirés.
+- **Fusion (Sync) :** Fusionne les données brutes avec le journal qualifié existant.
+- **Gestion des Doublons :**
+    - Détecte les doublons suspects (même montant/asset/compte à la même date).
+    - **UX Sanctuarisée :** Affichage d'un expander de revue dédié et **surlignage rouge** des lignes suspectes dans le tableau principal.
+- **Réconciliation des Maillons :**
+    - Identifie les transferts inter-comptes et maillons (Bridge Out/In).
+    - **UX Sanctuarisée :** Système de confirmation manuelle ("Proposed" vs "Confirmed") avec résumé statistique.
+- **Gestion des Référentiels (Sidebar) :**
+    - **Enregistrement Unifié :** Formulaire sidebar permettant d'assigner une adresse à un registre spécifique (Compte Propriétaire, Position, Circuit, ou Spam).
+    - **CRUD Manuel :** Chaque registre dispose de boutons individuels de modification et de suppression.
 
 ### `appPriceFix.py` (Collecte des Prix)
-- Identifie les manques de prix pour les cessions et les inventaires de fin d'année.
-- Permet la collecte et la sanctuarisation des prix EUR nécessaires aux dates utiles.
+- Identifie les manques de prix et permet la sanctuarisation des prix EUR aux dates utiles.
 
 ### `appPropri.py` (Visualisation Propriétaire)
 - Affiche l'état consolidé et les soldes des comptes identifiés comme "Propriétaires".
@@ -47,24 +47,17 @@ Ce document récapitule la structure, les fonctions critiques et les règles de 
 ### `app2VGP.py` (Audit & Portefeuille)
 - Valorisation au 31/12 (Exclut les Spams).
 - Calcul de la VGP cumulative (somme factuelle des comptes).
-- Correction de prix directe via `st.data_editor` avec mise à jour du cache.
 
 ### `app3.py` (Bilan Fiscal)
-- Application stricte du ratio d'abattement (Plafonné à 1.0).
-- **Zéro Spam :** Aucune transaction marquée 'Spam' ne doit apparaître dans le bilan.
-- Génération de PDF fiscaux avec mise en page robuste (Multi-cell).
-- Export CSV complet pour audit.
-
-### `appDiagCoh.py` (Diagnostic & Réparation)
-- Traçage chronologique des actifs par compte.
-- Détection des soldes négatifs et propositions de correction.
+- Application stricte du ratio d'abattement Art. 150 VH bis (Plafonné à 1.0).
+- Génération de PDF fiscaux Unicode (DejaVuSans) et exports CSV d'audit.
 
 ### `shared_logic.py` (Le Cœur)
-- `get_portfolio_snapshot` : Supporte à la fois les fichiers disque et les DataFrames en mémoire. Filtre automatiquement les Spams.
-- `get_price_eur` : Politique "Zéro-Fallback" (pas de taux approximatifs, 0.0 si erreur pour forcer l'audit).
-- `resolve_raw_addr` : Extraction robuste des adresses 0x.
+- `get_portfolio_snapshot` : Calcul de VGP factuel avec filtrage automatique.
+- `get_safe_opts` : Extraction sécurisée des options pour les widgets (évite les erreurs de type).
+- `standardize_asset` : Normalisation unifiée des noms d'actifs (homoglyphes, NFKC).
 
 ## 3. Règles d'Interface (UI Standards)
 - Afficher systématiquement `✅ Système Opérationnel` dans la sidebar.
-- Utiliser `st.rerun()` après chaque action de modification de données pour garantir la fraîcheur de l'affichage.
+- Utiliser `st.rerun()` après chaque action de modification de données.
 - Ne jamais utiliser `selection_mode` dans `st.data_editor` (compatibilité versions < 1.35.0).
