@@ -802,19 +802,28 @@ def get_known_accounts(include_mappings=True):
     """Aggregates account names from mapping file and all qualified journals."""
     known = set()
 
-    # 1. From Mappings
+    # 1. From Designated Owners File (owner_accounts.json)
+    if include_mappings and os.path.exists(OWNERS_FILE):
+        try:
+            with open(OWNERS_FILE, "r", encoding="utf-8") as f:
+                owners = json.load(f)
+                for val in owners.values():
+                    known.add(val)
+        except: pass
+
+    # 2. From Protocol Mappings (position_labels.json)
     if include_mappings and os.path.exists(POSITIONS_FILE):
         try:
             with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
                 mappings = json.load(f)
-                for addr, val in mappings.items():
+                for val in mappings.values():
                     if isinstance(val, dict):
                         known.add(val.get("label", ""))
                     else:
                         known.add(val)
         except: pass
 
-    # 2. From Journals (all years)
+    # 3. From Journals (all years)
     if os.path.exists(EXPORT_BASE_DIR):
         years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
         for y in years:

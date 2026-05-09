@@ -289,13 +289,15 @@ with st.sidebar:
     else:
         st.sidebar.info("Aucun compte détecté.")
 
-    new_acc = st.text_input("Ajouter un compte manuel", placeholder="ex: 0x... ou Label")
-    if st.button("➕ Ajouter"):
+    new_acc = st.text_input("Ajouter un compte manuel", placeholder="ex: 0x... ou Label", key="main_hub_add_acc_txt")
+    if st.button("➕ Ajouter", key="main_hub_add_acc_btn"):
         if new_acc:
-            # We don't have a dedicated accounts list in session,
-            # but adding a dummy transaction or using metadata could work.
-            # For now, we'll use metadata to store manually added labels
-            st.session_state.accounts_metadata[new_acc] = {"Count": 0, "Manual": True}
+            from shared_logic import load_owner_accounts, save_owner_accounts, resolve_raw_addr
+            om = load_owner_accounts()
+            raw = resolve_raw_addr(new_acc)
+            om[raw] = new_acc # Use the input as label if it's not a raw address
+            save_owner_accounts(om)
+            st.success(f"Compte '{new_acc}' ajouté au registre.")
             st.rerun()
 
 # --- Routing Logic ---

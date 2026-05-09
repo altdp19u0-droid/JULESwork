@@ -7,7 +7,7 @@ from datetime import datetime
 import shared_logic
 
 # --- Configuration ---
-# st.set_page_config(page_title="Jules Crypto - Qualification (app2)", layout="wide")
+st.set_page_config(page_title="Jules Crypto - Qualification (app2)", layout="wide")
 st.title("⚖️ Qualification & Nettoyage (Step 2)")
 
 EXPORT_BASE_DIR = "sanctuarisation"
@@ -21,19 +21,40 @@ COLUMNS = [
 ]
 
 def ensure_columns(df):
-    """Garantit que le DataFrame possède toutes les colonnes du schéma."""
+    """Garantit que le DataFrame possède toutes les colonnes du schéma et nettoie les types."""
     if df is None or df.empty:
         return pd.DataFrame(columns=COLUMNS)
+
+    # 1. Normalize existing column names
+    df.columns = [c.strip() for c in df.columns]
+
     df_copy = df.copy()
     for c in COLUMNS:
         if c not in df_copy.columns:
-            if c == "Imposable": df_copy[c] = False
-            elif c in ["Amount", "Value ($)", "VGP (EUR)"]: df_copy[c] = 0.0
-            else: df_copy[c] = ""
-    if "VGP (EUR)" in df_copy.columns:
-        df_copy["VGP (EUR)"] = pd.to_numeric(df_copy["VGP (EUR)"], errors='coerce').fillna(0.0)
+            # Case insensitive lookup for missing columns
+            matches = [oc for oc in df_copy.columns if oc.lower() == c.lower()]
+            if matches:
+                df_copy = df_copy.rename(columns={matches[0]: c})
+            else:
+                if c == "Imposable": df_copy[c] = False
+                elif c in ["Amount", "Value ($)", "VGP (EUR)"]: df_copy[c] = 0.0
+                else: df_copy[c] = ""
+
+    # 2. Forced Numeric Conversion
+    for c in ["Amount", "Value ($)", "VGP (EUR)"]:
+        if c in df_copy.columns:
+            df_copy[c] = pd.to_numeric(df_copy[c], errors='coerce').fillna(0.0)
+
+    # 3. Robust Imposable detection
     if "Imposable" in df_copy.columns:
         df_copy["Imposable"] = df_copy["Imposable"].apply(shared_logic.is_imposable_robust)
+
+    # 4. Strict Date Cleaning
+    if "Date" in df_copy.columns:
+        df_copy["Date"] = pd.to_datetime(df_copy["Date"], utc=True, errors="coerce")
+        # Remove rows without dates as they break fiscal logic
+        df_copy = df_copy.dropna(subset=["Date"])
+
     return df_copy[COLUMNS]
 
 # --- Helpers ---
@@ -92,25 +113,36 @@ def merge_raw_data(year):
         src = shared_logic.extract_source_from_filename(fn); shared_logic.auto_register_owner(src)
         if os.path.getsize(f_p) == 0: continue
         try:
-            df = shared_logic.pd_read_csv_safe(f_p)
-            for _, r in df.iterrows():
-                acc = str(r.get("Account", src)).lower()
+            df_raw = shared_logic.pd_read_csv_safe(f_p)
+            # Normalization of headers to ensure 'Date' is found
+            df_raw.columns = [c.strip() for c in df_raw.columns]
+            h_map = {c.lower(): c for c in df_raw.columns}
+
+            for _, r in df_raw.iterrows():
+                # Mandatory fields extraction
+                dt_val = r.get(h_map.get("date")) or r.get("Date")
+                if pd.isna(dt_val) or str(dt_val).lower() in ["nan", "none", ""]: continue
+
+                acc = str(r.get(h_map.get("account"), src)).lower()
+
                 if fn.startswith("raw_transactions_"):
-                    fa, cp = shared_logic.resolve_raw_addr(r.get("From", "")), str(r.get("Counterparty", ""))
-                    if not cp or cp == "nan": cp = r.get("To", "") if fa == acc else r.get("From", "")
-                    amt, asset = float(r.get("Value ETH", 0)), str(r.get("Chain", "ETH"))
+                    fa = shared_logic.resolve_raw_addr(r.get(h_map.get("from"), ""))
+                    cp = str(r.get(h_map.get("counterparty"), ""))
+                    if not cp or cp == "nan": cp = r.get(h_map.get("to"), "") if fa == acc else r.get(h_map.get("from"), "")
+                    amt, asset = float(r.get(h_map.get("value eth"), 0)), str(r.get(h_map.get("chain"), "ETH"))
                     if fa == acc: amt = -amt
                     st_ = "Spam" if (shared_logic.resolve_raw_addr(cp) in sl or asset.lower() in sl) else "A vérifier"
-                    rows.append({"Date": r.get("Date"), "Account": acc, "Counterparty": cp, "Asset": asset, "Amount": amt, "Value ($)": float(r.get("Value ($)") or 0), "Network": asset, "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Native", "Category": "A vérifier", "Status": st_, "Imposable": shared_logic.is_imposable_robust(r.get("Imposable", False))})
+                    rows.append({"Date": dt_val, "Account": acc, "Counterparty": cp, "Asset": asset, "Amount": amt, "Value ($)": float(r.get(h_map.get("value ($)")) or 0), "Network": asset, "Tx Hash": str(r.get(h_map.get("tx hash"), "")), "Source Type": "Native", "Category": "A vérifier", "Status": st_, "Imposable": shared_logic.is_imposable_robust(r.get("Imposable", False))})
                 elif fn.startswith("raw_token_transfers_"):
-                    fa, cp = shared_logic.resolve_raw_addr(r.get("From", "")), str(r.get("Counterparty", ""))
-                    if not cp or cp == "nan": cp = str(r.get("To", "")) if fa == acc else str(r.get("From", ""))
-                    amt, asset = float(r.get("Value", 0)), str(r.get("Token", ""))
+                    fa = shared_logic.resolve_raw_addr(r.get(h_map.get("from"), ""))
+                    cp = str(r.get(h_map.get("counterparty"), ""))
+                    if not cp or cp == "nan": cp = str(r.get(h_map.get("to"), "")) if fa == acc else str(r.get(h_map.get("from"), ""))
+                    amt, asset = float(r.get(h_map.get("value"), 0)), str(r.get(h_map.get("token"), ""))
                     if fa == acc: amt = -amt
                     st_ = "Spam" if (shared_logic.resolve_raw_addr(cp) in sl or asset.lower() in sl) else "A vérifier"
-                    rows.append({"Date": r.get("Date"), "Account": acc, "Counterparty": cp, "Asset": asset, "Amount": amt, "Value ($)": float(r.get("Value ($)") or 0), "Network": str(r.get("Chain", "")), "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Token", "Category": "A vérifier", "Status": st_, "Imposable": shared_logic.is_imposable_robust(r.get("Imposable", False))})
+                    rows.append({"Date": dt_val, "Account": acc, "Counterparty": cp, "Asset": asset, "Amount": amt, "Value ($)": float(r.get(h_map.get("value ($)")) or 0), "Network": str(r.get(h_map.get("chain"), "")), "Tx Hash": str(r.get(h_map.get("tx hash"), "")), "Source Type": "Token", "Category": "A vérifier", "Status": st_, "Imposable": shared_logic.is_imposable_robust(r.get("Imposable", False))})
                 elif fn.startswith("raw_portfolio_"):
-                    rows.append({"Date": datetime(year, 12, 31), "Account": acc, "Counterparty": "Blockchain Snapshot", "Asset": str(r.get("Asset", "UNKNOWN")), "Amount": float(r.get("Quantity", 0)), "Value ($)": float(r.get("Value ($)") or 0), "Network": str(r.get("Chain", "")), "Tx Hash": f"PORT-{src}-{r.get('Asset')}", "Source Type": "Portfolio", "Category": "Inventaire", "Status": "Valide", "Imposable": False})
+                    rows.append({"Date": datetime(year, 12, 31), "Account": acc, "Counterparty": "Blockchain Snapshot", "Asset": str(r.get(h_map.get("asset"), "UNKNOWN")), "Amount": float(r.get(h_map.get("quantity"), 0)), "Value ($)": float(r.get(h_map.get("value ($)")) or 0), "Network": str(r.get(h_map.get("chain"), "")), "Tx Hash": f"PORT-{src}-{r.get(h_map.get('asset'))}", "Source Type": "Portfolio", "Category": "Inventaire", "Status": "Valide", "Imposable": False})
         except: pass
 
     dff = ensure_columns(pd.DataFrame(rows))

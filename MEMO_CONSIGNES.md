@@ -56,8 +56,14 @@ Ce document récapitule la structure, les fonctions critiques et les règles de 
 - `get_portfolio_snapshot` : Calcul de VGP factuel avec filtrage automatique.
 - `get_safe_opts` : Extraction sécurisée des options pour les widgets (évite les erreurs de type).
 - `standardize_asset` : Normalisation unifiée des noms d'actifs (homoglyphes, NFKC).
+- **Indexation Exhaustive :** `get_known_accounts` doit impérativement agréger les noms issus de `owner_accounts.json`, `position_labels.json` et des journaux qualifiés.
+- **Reconnaissance Universelle des Propriétaires :** Toutes les fonctions de détection (transferts internes, VGP, diagnostics) doivent se baser sur l'agrégation exhaustive des adresses de `owner_accounts.json` et des adresses identifiées dans les journaux.
+- **Gestion des Circuits :** L'outil "Gérer un circuit" dans `app2.py` est indispensable pour qualifier les adresses de transit (bridges, swaps) et les exclure de la VGP fiscale.
 
 ## 3. Règles d'Interface (UI Standards)
-- Afficher systématiquement `✅ Système Opérationnel` dans la sidebar.
-- Utiliser `st.rerun()` après chaque action de modification de données.
-- Ne jamais utiliser `selection_mode` dans `st.data_editor` (compatibilité versions < 1.35.0).
+- **Largeur Plein Écran :** Toutes les applications doivent utiliser `layout="wide"` dans `st.set_page_config` pour garantir une extension maximale de l'affichage.
+- **Système Opérationnel :** Afficher systématiquement `✅ Système Opérationnel` dans la sidebar.
+- **Réactivité :** Utiliser `st.rerun()` après chaque action de modification de données pour garantir la fraîcheur immédiate de l'affichage.
+- **Éditeur de Données :** Ne jamais utiliser `selection_mode` dans `st.data_editor` (compatibilité versions < 1.35.0). Utiliser une colonne 'Sel.' ou 'Mod.' manuelle.
+- **Intégrité Temporelle :** La colonne 'Date' est fondamentale. Toute transaction sans date valide (NaT, None, vide) doit être **exclue** lors du traitement pour éviter de corrompre la chronologie fiscale.
+- **Robustesse des Imports :** Lors de la lecture de CSV, implémenter systématiquement un mapping de colonnes insensible à la casse et insensible aux espaces superflus (strip) pour garantir la détection des champs 'Date', 'Account', 'Asset', etc.
