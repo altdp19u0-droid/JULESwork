@@ -155,6 +155,7 @@ with st.sidebar:
         shared_logic.clean_session_state(preserve_keys=["last_year", "_hub_app2_year"])
         st.cache_data.clear(); sync_data(target_year); st.session_state.last_year = target_year
     st.button("🔄 Sync / Fusion", on_click=sync_data, args=(target_year,), width='stretch')
+
     if st.button("🛡️ Nettoyage Spam Auto", width='stretch'):
         if "journal_qualifie" in st.session_state:
             sl, df = shared_logic.load_spam_list(), st.session_state.journal_qualifie
@@ -164,12 +165,99 @@ with st.sidebar:
     st.divider(); st.header("📊 Filtres")
     if "journal_qualifie" in st.session_state and not st.session_state.journal_qualifie.empty:
         df_f = st.session_state.journal_qualifie
-        fa, fac = st.multiselect("Asset", options=sorted(df_f["Asset"].unique())), st.multiselect("Account", options=sorted(list(shared_logic.get_owner_addresses(df_f))))
-        fst, fct = st.multiselect("Statut", options=sorted(df_f["Status"].unique())), st.multiselect("Catégorie", options=sorted(df_f["Category"].unique()))
+        fa, fac = st.multiselect("Asset", options=shared_logic.get_safe_opts(df_f, "Asset")), st.multiselect("Account", options=shared_logic.get_owner_addresses(df_f))
+        fst, fct = st.multiselect("Statut", options=shared_logic.get_safe_opts(df_f, "Status")), st.multiselect("Catégorie", options=shared_logic.get_safe_opts(df_f, "Category"))
         if st.button("⚡ Appliquer"): st.rerun()
 
+    st.divider(); st.header("⚙️ Référentiels")
+
+    # --- Unified Registration Form ---
+    with st.expander("➕ Enregistrement Unifié", expanded=True):
+        st.caption("Ajouter une adresse ou un label au registre approprié.")
+        reg_addr = st.text_input("Adresse / Hash", placeholder="0x... ou Label", key="reg_addr_input")
+        reg_name = st.text_input("Nom / Label", placeholder="Nom de l'entité", key="reg_name_input")
+        reg_type = st.selectbox("Type de registre", ["Compte Propriétaire", "Position (Protocole)", "Circuit (Bridge/Swap)", "Spam"], key="reg_type_select")
+
+        if st.button("💾 Enregistrer dans le registre", width='stretch'):
+            if reg_addr and reg_name:
+                raw = shared_logic.resolve_raw_addr(reg_addr)
+                if reg_type == "Compte Propriétaire":
+                    om = shared_logic.load_owner_accounts(); om[raw] = reg_name; shared_logic.save_owner_accounts(om)
+                elif reg_type == "Position (Protocole)":
+                    pl = load_position_labels(); pl[raw] = reg_name; save_position_labels(pl)
+                elif reg_type == "Circuit (Bridge/Swap)":
+                    ec = shared_logic.load_external_circuits(); ec["labels"][raw] = reg_name; shared_logic.save_external_circuits(ec)
+                elif reg_type == "Spam":
+                    sl = shared_logic.load_spam_list(); sl.add(raw.lower()); shared_logic.save_spam_list(sl)
+                st.success(f"Enregistré : {reg_name}")
+                st.rerun()
+            else:
+                st.error("Veuillez saisir une adresse et un nom.")
+
+    with st.expander("🛡️ Blacklist Spams", expanded=False):
+        sl = shared_logic.load_spam_list(); st.write(f"Blacklist : **{len(sl)}**")
+        if sl:
+            df_sl = pd.DataFrame(sorted(list(sl)), columns=["Spam Name/Address"])
+            ed_sl = st.data_editor(df_sl, num_rows="dynamic", width='stretch', key="ed_spam_sidebar")
+            if st.button("💾 Sauver Blacklist", key="btn_save_sl_sidebar"):
+                shared_logic.save_spam_list(set(ed_sl["Spam Name/Address"].dropna())); st.rerun()
+
+            # Modification/Suppression Individuelle
+            sa_sl = st.selectbox("Gérer un spam", options=[""]+sorted(list(sl)), key="sel_sl_mgr")
+            if sa_sl:
+                if st.button("🗑️ Supprimer du registre", key="btn_del_sl_sidebar"):
+                    sl.remove(sa_sl); shared_logic.save_spam_list(sl); st.rerun()
+
+    with st.expander("👥 Comptes Propriétaires", expanded=False):
+        om = shared_logic.load_owner_accounts()
+        if om:
+            ed_om = st.data_editor(pd.DataFrame(list(om.items()), columns=["Address", "Label"]), num_rows="dynamic", width='stretch', key="ed_owners_sidebar")
+            if st.button("💾 Sauver Liste Propriétaires", key="btn_save_om_sidebar"):
+                shared_logic.save_owner_accounts({str(r["Address"]).lower(): r["Label"] for _, r in ed_om.iterrows()}); st.rerun()
+
+            sa_om = st.selectbox("Gérer un compte", options=[""]+sorted(list(om.keys())), format_func=lambda x: f"{om[x]} ({x})" if x else "Sélectionner...", key="sel_om_mgr")
+            if sa_om:
+                ml_om = st.text_input("Nouveau Nom", value=om[sa_om], key="mod_lbl_acc_om")
+                if st.button("💾 Appliquer modification", key="btn_mod_om_sidebar"):
+                    om[sa_om]=ml_om.strip(); shared_logic.save_owner_accounts(om); st.rerun()
+                if st.button("🗑️ Supprimer du registre", key="btn_del_om_sidebar"):
+                    del om[sa_om]; shared_logic.save_owner_accounts(om); st.rerun()
+
+    with st.expander("🌐 Circuits (Swaps/Bridges)", expanded=False):
+        ec = shared_logic.load_external_circuits(); lb = ec.get("labels", {})
+        if lb:
+            ed_lb = st.data_editor(pd.DataFrame(list(lb.items()), columns=["Address", "Label"]), num_rows="dynamic", width='stretch', key="ed_circ_sidebar")
+            if st.button("💾 Sauver Liste Circuits", key="btn_save_ec_sidebar"):
+                ec["labels"] = {str(r["Address"]).lower(): r["Label"] for _, r in ed_lb.iterrows()}; shared_logic.save_external_circuits(ec); st.rerun()
+
+            sa_ec = st.selectbox("Gérer un circuit", options=[""]+sorted(list(lb.keys())), format_func=lambda x: f"{lb[x]} ({x})" if x else "Sélectionner...", key="sel_ec_mgr")
+            if sa_ec:
+                ml_ec = st.text_input("Nouveau Nom", value=lb[sa_ec], key="mod_lbl_acc_ec")
+                if st.button("💾 Appliquer modification", key="btn_mod_ec_sidebar"):
+                    ec["labels"][sa_ec]=ml_ec.strip(); shared_logic.save_external_circuits(ec); st.rerun()
+                if st.button("🗑️ Supprimer du registre", key="btn_del_ec_sidebar"):
+                    del ec["labels"][sa_ec]; shared_logic.save_external_circuits(ec); st.rerun()
+
+        circ_disc = shared_logic.get_external_circuits_discovery(st.session_state.get("journal_qualifie"))
+        if circ_disc: st.write("**Dernières découvertes :**"); st.dataframe(pd.DataFrame(circ_disc), hide_index=True)
+
+    with st.expander("🏦 Positions (Protocoles)", expanded=False):
+        pl = load_position_labels()
+        if pl:
+            ed_pl = st.data_editor(pd.DataFrame(list(pl.items()), columns=["Adresse", "Label"]), num_rows="dynamic", width='stretch', key="ed_prot_sidebar")
+            if st.button("💾 Sauver Liste Positions", key="btn_save_pl_sidebar"):
+                save_position_labels({str(r["Adresse"]).lower(): r["Label"] for _, r in ed_pl.iterrows()}); st.rerun()
+
+            sa_pl = st.selectbox("Gérer une position", options=[""]+sorted(list(pl.keys())), format_func=lambda x: f"{pl[x]} ({x})" if x else "Sélectionner...", key="sel_pl_mgr")
+            if sa_pl:
+                ml_pl = st.text_input("Nouveau Nom", value=pl[sa_pl], key="mod_lbl_acc_pl")
+                if st.button("💾 Appliquer modification", key="btn_mod_pl_sidebar"):
+                    pl[sa_pl]=ml_pl.strip(); save_position_labels(pl); st.rerun()
+                if st.button("🗑️ Supprimer du registre", key="btn_del_pl_sidebar"):
+                    del pl[sa_pl]; save_position_labels(pl); st.rerun()
+
 # --- Main App ---
-t_q, t_r, t_m = st.tabs(["📋 Qualification", "🤝 Réconciliation", "⚙️ Gestion des Référentiels"])
+t_q, t_r = st.tabs(["📋 Qualification", "🤝 Réconciliation"])
 
 with t_q:
     st.subheader(f"Journal de Qualification {target_year}")
@@ -190,7 +278,7 @@ with t_q:
         if st.button("🔍 Détecter Transferts Internes", width='stretch'):
             df, ct = shared_logic.detect_internal_transfers(st.session_state.journal_qualifie); st.session_state.journal_qualifie = df; st.rerun()
         cats = sorted(list(set(["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense", "Frais", "Doublon à ignorer"] + list(dfd["Category"].unique()))))
-        edf = st.data_editor(dfd, column_config={"Sel.":st.column_config.CheckboxColumn("Sel."),"Category":st.column_config.SelectboxColumn("Catégorie", options=cats),"Status":st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),"Imposable":st.column_config.CheckboxColumn("Imposable"),"Date":st.column_config.DatetimeColumn(disabled=True),"Account":st.column_config.TextColumn(disabled=True),"Amount":st.column_config.NumberColumn(format="%.6f", disabled=True)}, width='stretch', key="qual_editor_v13")
+        edf = st.data_editor(dfd, column_config={"Sel.":st.column_config.CheckboxColumn("Sel."),"Category":st.column_config.SelectboxColumn("Catégorie", options=cats),"Status":st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),"Imposable":st.column_config.CheckboxColumn("Imposable"),"Date":st.column_config.DatetimeColumn(disabled=True),"Account":st.column_config.TextColumn(disabled=True),"Amount":st.column_config.NumberColumn(format="%.6f", disabled=True)}, width='stretch', key="qual_editor_v16")
         c1, c2 = st.columns(2); [shared_logic.inject_to_app0(edf[edf["Sel."]].drop(columns="Sel.").to_dict('records'), "Fiat", target_year) if c1.button("💶 Flux Fiat (App 0)") else None]; [shared_logic.inject_to_app0(edf[edf["Sel."]].drop(columns="Sel.").to_dict('records'), "Swap", target_year) if c2.button("🔄 Swap (App 0)") else None]
         if st.button("💾 Sanctuariser", type="primary", width='stretch'):
             fj, ec = st.session_state.journal_qualifie, edf.drop(columns=["Sel."])
@@ -207,62 +295,4 @@ with t_r:
                 if st.button(f"✅ Confirmer {lid}"): df_r.loc[df_r["Linked_ID"]==lid, "Link_Status"]="Confirmed"; st.rerun()
                 st.dataframe(gp[["Date", "Account", "Asset", "Amount"]], hide_index=True)
 
-with t_m:
-    st.subheader("⚙️ Gestion des Référentiels (Listes)")
-
-    with st.expander("🛡️ Liste Noire des Spams", expanded=True):
-        sl = shared_logic.load_spam_list(); st.write(f"Blacklist : **{len(sl)}**")
-        if sl:
-            df_sl = pd.DataFrame(sorted(list(sl)), columns=["Spam Name/Address"])
-            ed_sl = st.data_editor(df_sl, num_rows="dynamic", width='stretch', key="ed_spam_list_v13")
-            if st.button("💾 Sauver Blacklist Spams"):
-                shared_logic.save_spam_list(set(ed_sl["Spam Name/Address"].dropna())); st.rerun()
-        ns = st.text_input("Bannir manuellement"); [sl.add(ns.strip().lower()) if st.button("🚫 Ajouter") and ns else None]; shared_logic.save_spam_list(sl)
-
-    with st.expander("👥 Liste des Comptes Propriétaires", expanded=True):
-        om = shared_logic.load_owner_accounts()
-        if om:
-            ed_om = st.data_editor(pd.DataFrame(list(om.items()), columns=["Address", "Label"]), num_rows="dynamic", width='stretch', key="ed_owners_list_v13")
-            if st.button("💾 Sauver Liste Propriétaires"):
-                shared_logic.save_owner_accounts({r["Address"]: r["Label"] for _, r in ed_om.iterrows()}); st.rerun()
-            sa = st.selectbox("Action individuelle", options=[""]+sorted(list(om.keys())), format_func=lambda x: f"{om[x]} ({x})" if x else "Sélectionner...")
-            if sa:
-                ml = st.text_input("Nouveau Nom", value=om[sa], key="mod_lbl_acc_v13")
-                if st.button("💾 Appliquer"): om[sa]=ml.strip(); shared_logic.save_owner_accounts(om); st.rerun()
-                if st.button("🗑️ Supprimer"): del om[sa]; shared_logic.save_owner_accounts(om); st.rerun()
-        noa, nol = st.text_input("Adresse Block"), st.text_input("Nom Label")
-        if st.button("➕ Ajouter aux Propriétaires"): [om.update({shared_logic.resolve_raw_addr(noa): nol}) if noa else None]; shared_logic.save_owner_accounts(om); st.rerun()
-
-    with st.expander("🌐 Liste des Circuits (Swaps/Bridges)", expanded=False):
-        ec = shared_logic.load_external_circuits(); lb = ec.get("labels", {})
-        if lb:
-            ed_lb = st.data_editor(pd.DataFrame(list(lb.items()), columns=["Address", "Label"]), num_rows="dynamic", width='stretch', key="ed_circ_list_v13")
-            if st.button("💾 Sauver Liste Circuits"):
-                ec["labels"] = {r["Address"]: r["Label"] for _, r in ed_lb.iterrows()}; shared_logic.save_external_circuits(ec); st.rerun()
-        circ_disc = shared_logic.get_external_circuits_discovery(st.session_state.get("journal_qualifie"))
-        if circ_disc: st.write("**Dernières découvertes :**"); st.dataframe(pd.DataFrame(circ_disc), hide_index=True)
-
-    with st.expander("🏦 Liste des Positions (Protocoles)", expanded=False):
-        pl = load_position_labels()
-        if pl:
-            ed_pl = st.data_editor(pd.DataFrame(list(pl.items()), columns=["Adresse", "Label"]), num_rows="dynamic", width='stretch', key="ed_prot_list_v13")
-            if st.button("💾 Sauver Liste Positions"):
-                save_position_labels({r["Adresse"]: r["Label"] for _, r in ed_pl.iterrows()}); st.rerun()
-        npa, npl = st.text_input("Adresse Vault"), st.text_input("Label Nom")
-        if st.button("➕ Ajouter Position"): [pl.update({shared_logic.resolve_raw_addr(npa): npl}) if npa else None]; save_position_labels(pl); st.rerun()
-
-    with st.expander("🛡️ Actions de Masse sur le Journal", expanded=False):
-        if "journal_qualifie" in st.session_state and not st.session_state.journal_qualifie.empty:
-            df_m = st.session_state.journal_qualifie
-            am_m = st.multiselect("Asset cible", options=sorted([str(x) for x in df_m["Asset"].dropna().unique()]))
-            cm_m = st.multiselect("CP cible", options=sorted([str(x) for x in df_m["Counterparty"].dropna().unique()]))
-            ts_m = st.selectbox("Nouveau Status", ["À vérifier", "Valide", "Spam"])
-            if st.button("🚀 Exécuter"):
-                slw = [x.lower() for x in (am_m + cm_m)]
-                if ts_m == "Spam":
-                    sl_curr = shared_logic.load_spam_list()
-                    for i in slw: sl_curr.add(i)
-                    shared_logic.save_spam_list(sl_curr)
-                mask = df_m["Asset"].fillna("").str.lower().isin(slw) | df_m["Counterparty"].fillna("").str.lower().apply(shared_logic.resolve_raw_addr).isin(slw)
-                df_m.loc[mask, "Status"] = ts_m
-                st.session_state.journal_qualifie = df_m; st.success("Fait."); st.rerun()
+shared_logic.show_status()

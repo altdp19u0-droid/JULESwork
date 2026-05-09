@@ -686,7 +686,7 @@ def get_external_circuits_discovery(journal_df=None):
     3. Collect accounts having Txs with Owners/Positions (Level 1).
     4. Collect accounts having Txs with Level N collected accounts (Level 2+).
     """
-    owner_addrs = get_owner_addresses(journal_df)
+    owner_addrs = set(get_owner_addresses(journal_df))
 
     pos_labels = {}
     if os.path.exists(POSITIONS_FILE):
