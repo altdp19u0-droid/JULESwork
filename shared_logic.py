@@ -75,6 +75,25 @@ def is_imposable_robust(val):
     s = str(val).upper().strip()
     return s in ["TRUE", "1", "1.0", "VRAI", "YES", "OUI"]
 
+def get_safe_opts(df, col):
+    """Safely extracts unique sorted string options for Streamlit widgets."""
+    if df is None or df.empty or col not in df.columns: return []
+    return sorted([str(x) for x in df[col].dropna().unique()])
+
+def standardize_asset(asset):
+    """Unified asset normalization for the whole suite."""
+    nuance_map = {
+        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
+        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
+        "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
+        "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
+        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
+    }
+    asset_clean = str(asset)
+    for k, v in nuance_map.items():
+        asset_clean = asset_clean.replace(k, v)
+    return unicodedata.normalize('NFKC', asset_clean).upper().strip()
+
 def get_file_path(year, category):
     """Centralized path resolution for all apps."""
     base = os.path.join(EXPORT_BASE_DIR, str(year))
