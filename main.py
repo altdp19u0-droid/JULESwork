@@ -228,7 +228,12 @@ def fetch_data(address, api_key, network):
 
             df['Fiat_Value_EUR'] = df.apply(lambda r: float(r['Amount']) * prices_map.get((r['Asset'], r['Date'].date()), 0.0), axis=1)
 
-        df['Is_Spam'] = df['Counterparty'].apply(lambda x: str(x).lower() in st.session_state.spam_addresses)
+                # Propagation de la liste des spams qualifiés de la suite
+        from shared_logic import load_spam_list, resolve_raw_addr
+        sl = load_spam_list()
+        st.session_state.spam_addresses.update(sl)
+
+        df['Is_Spam'] = df.apply(lambda r: str(r['Counterparty']).lower() in st.session_state.spam_addresses or resolve_raw_addr(r['Counterparty']) in st.session_state.spam_addresses or str(r['Asset']).lower() in st.session_state.spam_addresses, axis=1)
         df['Category'] = df['Asset'].apply(lambda a: 'DeFi' if any(x in a.lower() for x in ['lnd', 'steth', 'steur']) else 'Transfert')
 
     return df
@@ -371,6 +376,14 @@ elif menu == "live_harvest":
         show_spam_live = st.checkbox("Afficher les transactions Spam", value=False, key="chk_show_spam_live")
 
         if not st.session_state.transactions.empty:
+            # Propagation de la liste des spams qualifiés avant consultation
+            from shared_logic import load_spam_list, resolve_raw_addr
+            sl = load_spam_list()
+            st.session_state.spam_addresses.update(sl)
+            # Mise à jour auto des flags spam si de nouveaux spams ont été ajoutés à la suite
+            mask_spam = st.session_state.transactions.apply(lambda r: str(r['Counterparty']).lower() in st.session_state.spam_addresses or resolve_raw_addr(r['Counterparty']) in st.session_state.spam_addresses or str(r['Asset']).lower() in st.session_state.spam_addresses, axis=1)
+            st.session_state.transactions.loc[mask_spam, 'Is_Spam'] = True
+
             # Filtrage strict pour l'inventaire
             clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
             inv = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
