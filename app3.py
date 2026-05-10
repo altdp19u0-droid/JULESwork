@@ -170,14 +170,16 @@ with st.sidebar:
                 except: pass
             st.info(f"{len(pkl_files)} fichiers de cache supprimés.")
 
-    target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, value=datetime.now().year, key="_hub_app3_year")
+    # Unified Hub Year
+    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
+    target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
 
     # Year switch detection
     if "last_target_year" not in st.session_state:
         st.session_state.last_target_year = target_year
 
-    if target_year != st.session_state.last_target_year:
-        shared_logic.clean_session_state(preserve_keys=["last_target_year", "_hub_app3_year"])
+    if target_year != st.session_state.get("last_target_year"):
+        shared_logic.clean_session_state(preserve_keys=["last_target_year"])
         st.session_state.last_target_year = target_year
         st.cache_data.clear()
         st.rerun()
@@ -236,6 +238,29 @@ def calculate_acquisition_price(year):
     # On filtre sur les types "Achat"
     purchases = fiat_df[fiat_df['Type'].str.contains("Achat", na=False)]
     return purchases['Montant EUR'].sum()
+
+# --- Integration Diagnostic Integrity ---
+def get_critical_anomalies(year):
+    """Checks for negative balances that would invalidate the fiscal report."""
+    try:
+        from appDiagCoh import load_all_history, compute_running_balances
+        df_j, df_m = load_all_history()
+        history = compute_running_balances(df_j, df_m)
+        if not history.empty:
+            # Check for negative balances on imposable events for THIS year
+            cessions_neg = history[(history["Running_Bal"] < -1e-8) & (history.get("Is_Cession", False)) & (history["Date"].dt.year == year)]
+            return cessions_neg
+    except: pass
+    return pd.DataFrame()
+
+critical_anomalies = get_critical_anomalies(target_year)
+is_blocked = not critical_anomalies.empty
+
+if is_blocked:
+    st.error(f"🚨 **BLOCAGE FISCAL :** {len(critical_anomalies)} cessions présentent un solde négatif en {target_year}.")
+    st.warning("Conformément aux consignes de sécurité, la génération de rapports est désactivée tant que la cohérence des stocks n'est pas rétablie dans l'**App Diagnostic**.")
+    with st.expander("🔍 Voir les anomalies bloquantes"):
+        st.dataframe(critical_anomalies[["Date", "Account", "Asset", "Amount", "Running_Bal"]])
 
 # --- Tabs ---
 tab_accounts, tab_acq, tab_cessions, tab_bilan = st.tabs([
@@ -627,8 +652,12 @@ with tab_cessions:
                 if col in cessions.columns:
                     cessions[col] = cessions[col].fillna("").astype(str)
 
+            # Styling for VGP <= 0
+            def style_cessions(row):
+                return ['background-color: #ffcccc' if float(row.get("VGP (EUR)", 0)) <= 0 else '' for _ in row]
+
             edited_cessions = st.data_editor(
-                cessions,
+                cessions.style.apply(style_cessions, axis=1),
                 column_config={
                     "VGP (EUR)": st.column_config.NumberColumn("VGP (EUR)", format="%.2f", required=True),
                     "Prix de Cession (EUR)": st.column_config.NumberColumn("Prix Cession (EUR)", format="%.2f"),
@@ -1074,9 +1103,11 @@ with tab_bilan:
             return bytes(pdf.output())
 
         # Explicit trigger for PDF generation to ensure data is present
-        if st.button("📊 Préparer le Rapport PDF Complet", width='stretch', key="btn_gen_pdf"):
+        if st.button("📊 Préparer le Rapport PDF Complet", width='stretch', key="btn_gen_pdf", disabled=is_blocked):
             if df_bilan.empty:
                 st.error("Le bilan est vide, impossible de générer le PDF.")
+            elif is_blocked:
+                st.error("Génération impossible : des anomalies de solde subsistent.")
             else:
                 # Clear stale cache
                 if "fiscal_pdf_bytes" in st.session_state: del st.session_state.fiscal_pdf_bytes

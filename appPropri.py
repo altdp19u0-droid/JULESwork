@@ -13,14 +13,16 @@ EXPORT_BASE_DIR = "sanctuarisation"
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année de consultation", min_value=2015, max_value=2030, value=datetime.now().year, key="_hub_propri_year")
+    # Unified Hub Year
+    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
+    target_year = st.number_input("Année de consultation", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
 
     # Year switch detection
     if "last_propri_year" not in st.session_state:
         st.session_state.last_propri_year = target_year
 
-    if target_year != st.session_state.last_propri_year:
-        shared_logic.clean_session_state(preserve_keys=["last_propri_year", "_hub_propri_year"])
+    if target_year != st.session_state.get("last_propri_year"):
+        shared_logic.clean_session_state(preserve_keys=["last_propri_year"])
         st.session_state.last_propri_year = target_year
         st.cache_data.clear()
         st.rerun()

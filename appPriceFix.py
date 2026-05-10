@@ -53,20 +53,6 @@ with st.sidebar:
     show_status()
 
 # --- Scanner ---
-def load_all_verified_prices():
-    """Loads prices from both global cache and all annual sanctuarised files."""
-    combined = load_price_cache()
-    if os.path.exists(EXPORT_BASE_DIR):
-        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
-        for y in years:
-            path = os.path.join(EXPORT_BASE_DIR, y, f"verified_prices_{y}.json")
-            if os.path.exists(path):
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        combined.update(json.load(f))
-                except: pass
-    return combined
-
 def scan_needed_prices(target_years, exclude_spams=True):
     all_needed = [] # List of dicts: {'Year', 'Asset', 'Date', 'Type'}
     spam_list = load_spam_list() if exclude_spams else set()
@@ -164,7 +150,7 @@ Vous devez soit obtenir le prix via le bouton **Collecte Automatique**, soit le 
 if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)", width='stretch'):
     with st.spinner("Analyse des fichiers sanctuarisés..."):
         df_needed = scan_needed_prices(target_years=selected_years, exclude_spams=exclude_spam)
-        cache = load_all_verified_prices()
+        cache = load_price_cache() # Use centralized logic
 
         results = []
         for _, row in df_needed.iterrows():

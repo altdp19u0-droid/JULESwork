@@ -182,9 +182,11 @@ def sync_data(year):
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres app2")
-    target_year = st.number_input("Année fiscale", 2015, 2030, datetime.now().year, key="_hub_app2_year")
+    # Unified Hub Year
+    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
+    target_year = st.number_input("Année fiscale", 2015, 2030, st.session_state["_hub_target_year"], key="_hub_target_year")
     if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
-        shared_logic.clean_session_state(preserve_keys=["last_year", "_hub_app2_year"])
+        shared_logic.clean_session_state(preserve_keys=["last_year"])
         st.cache_data.clear(); sync_data(target_year); st.session_state.last_year = target_year
     st.button("🔄 Sync / Fusion", on_click=sync_data, args=(target_year,), width='stretch')
 

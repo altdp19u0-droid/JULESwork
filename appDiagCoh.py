@@ -120,14 +120,15 @@ def compute_running_balances(df_j, df_m):
 with st.sidebar:
     st.header("⚙️ Contrôle")
 
-    # Hub Navigation Support
-    target_year = st.number_input("Année focus (Filtre visuel)", 2015, 2030, datetime.now().year, key="_hub_diag_year")
+    # Unified Hub Year
+    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
+    target_year = st.number_input("Année focus (Filtre visuel)", 2015, 2030, st.session_state["_hub_target_year"], key="_hub_target_year")
 
     # Year switch detection
     if "last_diag_year" not in st.session_state:
         st.session_state.last_diag_year = target_year
 
-    if target_year != st.session_state.last_diag_year:
+    if target_year != st.session_state.get("last_diag_year"):
         import shared_logic
         shared_logic.clean_session_state(preserve_keys=["last_diag_year", "_hub_diag_year"])
         st.session_state.last_diag_year = target_year

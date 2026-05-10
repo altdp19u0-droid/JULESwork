@@ -229,14 +229,20 @@ def fetch_data(address, api_key, network):
             df['Fiat_Value_EUR'] = df.apply(lambda r: float(r['Amount']) * prices_map.get((r['Asset'], r['Date'].date()), 0.0), axis=1)
 
                 # Propagation de la liste des spams qualifiés de la suite
-        from shared_logic import load_spam_list, resolve_raw_addr
-        sl = load_spam_list()
-        st.session_state.spam_addresses.update(sl)
+        from shared_logic import validate_spam_exclusion
+        # Centralized recursive spam detection
+        leaked_indices = validate_spam_exclusion(df)
+        df['Is_Spam'] = False
+        if leaked_indices:
+            df.loc[leaked_indices, 'Is_Spam'] = True
 
-        df['Is_Spam'] = df.apply(lambda r: str(r['Counterparty']).lower() in st.session_state.spam_addresses or resolve_raw_addr(r['Counterparty']) in st.session_state.spam_addresses or str(r['Asset']).lower() in st.session_state.spam_addresses, axis=1)
-        df['Category'] = df['Asset'].apply(lambda a: 'DeFi' if any(x in a.lower() for x in ['lnd', 'steth', 'steur']) else 'Transfert')
+        df['Category'] = df['Asset'].apply(lambda a: 'DeFi' if any(x in str(a).lower() for x in ['lnd', 'steth', 'steur']) else 'Transfert')
 
     return df
+
+# --- Shared Session Initialization ---
+if "_hub_target_year" not in st.session_state:
+    st.session_state["_hub_target_year"] = datetime.now().year
 
 # --- UI PRINCIPALE: Navigation Hub ---
 menu_options = {

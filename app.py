@@ -62,7 +62,9 @@ with st.sidebar:
     chains = st.multiselect("Chaînes à sonder", list(CHAIN_APIS.keys()), default=list(CHAIN_APIS.keys()))
 
     st.divider()
-    target_year = st.number_input("Année à sanctuariser", min_value=2015, max_value=2030, value=datetime.now().year, key="_hub_app_year")
+    # Unified Hub Year
+    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
+    target_year = st.number_input("Année à sanctuariser", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
     max_txs = st.number_input("Max transactions par chaîne", min_value=10, max_value=50000, value=2000, step=100, key="app_max_txs")
 
     st.divider()
@@ -76,6 +78,14 @@ with st.sidebar:
 
     st.divider()
     show_status()
+
+# --- RAW V4 Standard ---
+RAW_V4_COLUMNS = [
+    "Date", "Chain", "Tx_Hash", "Type", "Method", "Account",
+    "From", "To", "From_Label", "To_Label", "Counterparty",
+    "Asset", "Amount", "Fee_Asset", "Fee_Amount",
+    "Source_Way", "Audit_Status", "Fee_Audit_Alert"
+]
 
 # --- Shared Logic ---
 def call_api(url, params=None):
@@ -191,15 +201,31 @@ if harvest_btn:
 
             for b in balances:
                 token = b.get("token", {})
+                asset_sym = token.get("symbol", "NATIVE" if not token else "TOKEN")
+                qty = float(b.get("value", 0)) / (10**int(token.get("decimals", 18) or 18))
+
+                # Mapping to RAW V4 Schema
                 portfolio_all.append({
+                    "Date": datetime(target_year, 12, 31).isoformat(),
                     "Chain": chain,
-                    "Asset": token.get("symbol", "NATIVE" if not token else "TOKEN"),
-                    "Quantity": float(b.get("value", 0)) / (10**int(token.get("decimals", 18) or 18)),
-                    "Price ($)": float(b.get("token_price") or 0.0),
-                    "Value ($)": float(b.get("value_in_usd") or 0.0), # Blockscout donne souvent USD
-                    "Contract": token.get("address")
+                    "Tx_Hash": f"PORT-{addr_c.lower()}-{asset_sym}",
+                    "Type": "Portfolio",
+                    "Method": "Snapshot",
+                    "Account": addr_c.lower(),
+                    "From": "Blockchain",
+                    "To": addr_c.lower(),
+                    "From_Label": "",
+                    "To_Label": "",
+                    "Counterparty": "Blockchain Snapshot",
+                    "Asset": asset_sym,
+                    "Amount": qty,
+                    "Fee_Asset": "",
+                    "Fee_Amount": 0.0,
+                    "Source_Way": "Way_1",
+                    "Audit_Status": "RAW",
+                    "Fee_Audit_Alert": ""
                 })
-        df_portfolio = pd.DataFrame(portfolio_all)
+        df_portfolio = pd.DataFrame(portfolio_all, columns=RAW_V4_COLUMNS)
         st.dataframe(df_portfolio, width='stretch')
         st.session_state.portfolio = df_portfolio
 
@@ -248,18 +274,30 @@ if harvest_btn:
                 val_usd = val * rate_usd if rate_usd > 0 else float(t.get("value_in_usd") or 0.0)
                 fee_usd = fee * rate_usd if rate_usd > 0 else 0.0
 
+                # Mapping to RAW V4 Schema
                 tx_all.append({
-                    "Date": dt, "Chain": chain, "Tx Hash": tx_hash, "Type": "Native/Internal",
-                    "Method": method, "Block": block, "From": f_addr, "To": t_addr,
-                    "Value ETH": val, "Value ($)": val_usd, "Rate ($)": rate_usd,
-                    "Fee ETH": fee if f_raw == addr_c.lower() else 0.0,
-                    "Fee ($)": fee_usd if f_raw == addr_c.lower() else 0.0,
+                    "Date": dt.isoformat(),
+                    "Chain": chain,
+                    "Tx_Hash": tx_hash,
+                    "Type": "Native",
+                    "Method": method,
                     "Account": addr_c.lower(),
-                    "Counterparty": t_addr if f_raw == addr_c.lower() else f_addr
+                    "From": f_addr,
+                    "To": t_addr,
+                    "From_Label": "",
+                    "To_Label": "",
+                    "Counterparty": t_addr if f_raw == addr_c.lower() else f_addr,
+                    "Asset": native,
+                    "Amount": val,
+                    "Fee_Asset": native,
+                    "Fee_Amount": fee if f_raw == addr_c.lower() else 0.0,
+                    "Source_Way": "Way_1",
+                    "Audit_Status": "RAW",
+                    "Fee_Audit_Alert": ""
                 })
             progress_tx.progress((idx + 1) / len(chains))
 
-        df_tx = pd.DataFrame(tx_all)
+        df_tx = pd.DataFrame(tx_all, columns=RAW_V4_COLUMNS)
         if not df_tx.empty:
             df_tx = df_tx.sort_values("Date", ascending=False)
         st.dataframe(df_tx, width='stretch')
@@ -308,16 +346,30 @@ if harvest_btn:
                 if rate_usd == 0 and val_usd > 0 and val > 0:
                     rate_usd = val_usd / val
 
+                # Mapping to RAW V4 Schema
                 tok_all.append({
-                    "Date": dt, "Chain": chain, "Token": asset, "Token ID": tok_id,
-                    "Tx Hash": tx_hash, "From": f_addr, "To": t_addr, "Value": float(val),
-                    "Value ($)": val_usd, "Rate ($)": rate_usd,
+                    "Date": dt.isoformat(),
+                    "Chain": chain,
+                    "Tx_Hash": tx_hash,
+                    "Type": "Token",
+                    "Method": "",
                     "Account": addr_c.lower(),
-                    "Counterparty": t_addr if f_raw == addr_c.lower() else f_addr
+                    "From": f_addr,
+                    "To": t_addr,
+                    "From_Label": "",
+                    "To_Label": "",
+                    "Counterparty": t_addr if f_raw == addr_c.lower() else f_addr,
+                    "Asset": asset,
+                    "Amount": float(val),
+                    "Fee_Asset": "", # Often not directly available in token transfer event
+                    "Fee_Amount": 0.0,
+                    "Source_Way": "Way_1",
+                    "Audit_Status": "RAW",
+                    "Fee_Audit_Alert": ""
                 })
             progress_tok.progress((idx + 1) / len(chains))
 
-        df_tok = pd.DataFrame(tok_all)
+        df_tok = pd.DataFrame(tok_all, columns=RAW_V4_COLUMNS)
         if not df_tok.empty:
             df_tok = df_tok.sort_values("Date", ascending=False)
         st.dataframe(df_tok, width='stretch')
@@ -333,14 +385,22 @@ if has_data:
     st.subheader("💾 Étape Finale : Sanctuariser")
     addr_short = address[:10] if address else "Unknown"
     if st.button(f"Enregistrer les fichiers bruts pour {addr_short}... ({target_year})", width='stretch'):
+        from shared_logic import standardize_df_addresses
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        prefix = f"{address}_{ts}"
 
-        st.session_state.portfolio.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False, encoding="utf-8-sig")
-        st.session_state.transactions.to_csv(os.path.join(year_dir, f"raw_transactions_{prefix}.csv"), index=False, encoding="utf-8-sig")
-        st.session_state.tokens.to_csv(os.path.join(year_dir, f"raw_token_transfers_{prefix}.csv"), index=False, encoding="utf-8-sig")
+        # Standardize addresses to lowercase hex before sanctuarization
+        addr_standardized = address.lower().strip()
+        prefix = f"{addr_standardized}_{ts}"
+
+        df_port = standardize_df_addresses(st.session_state.portfolio)
+        df_tx = standardize_df_addresses(st.session_state.transactions)
+        df_tok = standardize_df_addresses(st.session_state.tokens)
+
+        df_port.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False, encoding="utf-8-sig")
+        df_tx.to_csv(os.path.join(year_dir, f"raw_transactions_{prefix}.csv"), index=False, encoding="utf-8-sig")
+        df_tok.to_csv(os.path.join(year_dir, f"raw_token_transfers_{prefix}.csv"), index=False, encoding="utf-8-sig")
 
         st.balloons()
         st.success(f"📂 Fichiers enregistrés dans : {year_dir}")

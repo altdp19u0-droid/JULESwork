@@ -16,12 +16,12 @@ if "current_year" not in st.session_state:
     st.session_state.current_year = datetime.now().year
 
 def load_manual_data(year):
-    year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
-    fiat_path = os.path.join(year_dir, f"manual_fiat_{year}.csv")
-    pos_path = os.path.join(year_dir, f"manual_positions_{year}.csv")
-    swap_path = os.path.join(year_dir, f"manual_swaps_{year}.csv")
+    from shared_logic import get_file_path, standardize_df_addresses
+    fiat_path = get_file_path(year, 'fiat')
+    pos_path = get_file_path(year, 'positions')
+    swap_path = get_file_path(year, 'swaps')
 
-    if os.path.exists(fiat_path):
+    if fiat_path and os.path.exists(fiat_path):
         df = pd.read_csv(fiat_path, encoding="utf-8-sig")
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
 
@@ -92,10 +92,12 @@ if "fiat_journal" not in st.session_state:
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=st.session_state.current_year, key="_hub_app0_year")
+    # Unified Hub Year
+    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
+    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
 
-    if target_year != st.session_state.current_year:
-        # _hub_ keys are auto-preserved by clean_session_state
+    if target_year != st.session_state.get("current_year"):
+        # _hub_ keys (including _hub_target_year) are auto-preserved by clean_session_state
         import shared_logic
         shared_logic.clean_session_state(preserve_keys=["current_year"])
         st.session_state.current_year = target_year
@@ -606,22 +608,28 @@ col_save1, col_save2 = st.columns([2, 1])
 
 with col_save1:
     if st.button(f"💾 Sanctuariser & Mettre à jour le registre {target_year}", width='stretch', type="primary"):
+        from shared_logic import get_file_path, standardize_df_addresses
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
 
-        fiat_path = os.path.join(year_dir, f"manual_fiat_{target_year}.csv")
-        pos_path = os.path.join(year_dir, f"manual_positions_{target_year}.csv")
-        swap_path = os.path.join(year_dir, f"manual_swaps_{target_year}.csv")
+        fiat_path = get_file_path(target_year, 'fiat')
+        pos_path = get_file_path(target_year, 'positions')
+        swap_path = get_file_path(target_year, 'swaps')
 
-        st.session_state.fiat_journal.to_csv(fiat_path, index=False, encoding="utf-8-sig")
-        st.session_state.positions_journal.to_csv(pos_path, index=False, encoding="utf-8-sig")
-        st.session_state.swaps_journal.to_csv(swap_path, index=False, encoding="utf-8-sig")
+        # Forced Normalization before saving
+        df_fiat = standardize_df_addresses(st.session_state.fiat_journal)
+        df_pos = standardize_df_addresses(st.session_state.positions_journal)
+        df_swaps = standardize_df_addresses(st.session_state.swaps_journal)
+
+        df_fiat.to_csv(fiat_path, index=False, encoding="utf-8-sig")
+        df_pos.to_csv(pos_path, index=False, encoding="utf-8-sig")
+        df_swaps.to_csv(swap_path, index=False, encoding="utf-8-sig")
 
         # Backups
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        st.session_state.fiat_journal.to_csv(os.path.join(year_dir, f"backup_fiat_{ts}.csv"), index=False, encoding="utf-8-sig")
-        st.session_state.positions_journal.to_csv(os.path.join(year_dir, f"backup_positions_{ts}.csv"), index=False, encoding="utf-8-sig")
-        st.session_state.swaps_journal.to_csv(os.path.join(year_dir, f"backup_swaps_{ts}.csv"), index=False, encoding="utf-8-sig")
+        df_fiat.to_csv(os.path.join(year_dir, f"backup_fiat_{ts}.csv"), index=False, encoding="utf-8-sig")
+        df_pos.to_csv(os.path.join(year_dir, f"backup_positions_{ts}.csv"), index=False, encoding="utf-8-sig")
+        df_swaps.to_csv(os.path.join(year_dir, f"backup_swaps_{ts}.csv"), index=False, encoding="utf-8-sig")
 
         st.balloons()
         st.success(f"📂 Registres mis à jour et sauvegardés dans : {year_dir}")

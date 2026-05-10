@@ -38,13 +38,15 @@ def load_position_labels():
 # --- UI sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, value=datetime.now().year, key="_hub_app2vgp_year")
+    # Unified Hub Year
+    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
+    target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
 
     # Year switch detection
     if "last_vgp_year" not in st.session_state:
         st.session_state.last_vgp_year = target_year
 
-    if target_year != st.session_state.last_vgp_year:
+    if target_year != st.session_state.get("last_vgp_year"):
         # Hub keys are auto-preserved by clean_session_state
         import shared_logic
         shared_logic.clean_session_state(preserve_keys=["last_vgp_year"])

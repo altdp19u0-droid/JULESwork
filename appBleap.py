@@ -144,7 +144,9 @@ def process_bleap_csv(df):
 # --- Main App ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=datetime.now().year, key="_hub_bleap_year")
+    # Unified Hub Year
+    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
+    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
     st.divider()
     show_status()
     st.divider()
