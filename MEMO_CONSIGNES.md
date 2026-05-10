@@ -1,50 +1,74 @@
 # MÉMOIRE TECHNIQUE ET CONSIGNES ARCHITECTURALES (SUITE JULES CRYPTO)
 
-Ce document récapitule la structure, les fonctions critiques et les règles de non-régression de la suite logicielle.
+Ce document est le référentiel unique de la structure, des fonctions critiques et des règles de non-régression de la suite logicielle.
 
-**INTERDICTIONS ABSOLUES : D'OMETTRE DE CONSULTER, DE SUPPRIMER OU MODIFIER CE MEMO_CONSIGNES.MD SANS L'ACCORD DE L'UTILISATEUR.**
+**INTERDICTIONS ABSOLUES : IL EST STRICTEMENT INTERDIT D'OMETTRE DE CONSULTER, DE SUPPRIMER OU DE MODIFIER CE MÉMOIRE SANS L'ACCORD EXPLICITE ET PRÉALABLE DE L'UTILISATEUR.**
 
-## 1. Principes Fondamentaux (Droit de Regard de l'Agent)
-- **Sanctuarisation :** Chaque année fiscale est isolée dans `/sanctuarisation/{year}/`. Les fichiers `.csv` qualifiés sont la source de vérité pour les calculs fiscaux.
-- **Continuité Historique :** Les soldes de fin d'année (EOY) sont portés à l'année suivante.
-- **Centralisation :** Toute logique partagée (Calculs fiscaux Art. 150 VH bis, valorisation EUR, normalisation d'adresses, indexation) doit résider dans `shared_logic.py`.
-- **Non-Régression :** Ne jamais supprimer une fonctionnalité UI (expanders, filtres, outils de détection) lors d'une refactorisation technique.
-- **Exclusion des Spams (Zéro Spam) :** Tout actif ou transaction marqué comme 'Spam' doit être **strictement exclu** de tous les calculs avals (VGP, Portefeuille, Bilan Fiscal). Cette règle s'applique impérativement au module "Live Harvest" de `main.py`.
+---
 
-## 2. Moteur de Collecte 3-Voies & Standard "RAW" (Sanctuarisation V4)
-Ce protocole définit la gestion de la récolte de données pour garantir une complétude absolue (Zéro Omission) et une harmonisation totale entre Blockchain et Plateformes.
+## I. GOUVERNANCE & PRINCIPES FONDAMENTAUX
+1. **Sanctuarisation Annuelle :** Chaque année fiscale est isolée dans `/sanctuarisation/{year}/`. Les fichiers `.csv` qualifiés sont la source de vérité absolue.
+2. **Continuité Historique :** Les soldes de fin d'année (EOY) sont portés à l'année suivante comme point de départ.
+3. **Logique Centralisée :** Toute logique partagée (Calculs Art. 150 VH bis, valorisation EUR, normalisation d'adresses, indexation exhaustive) doit résider exclusivement dans `shared_logic.py`.
+4. **Non-Régression Fonctionnelle :** Ne jamais supprimer une fonctionnalité UI (expanders, filtres, outils de détection ou de gestion) lors d'une refactorisation.
+5. **Zéro Spam Universel :** Tout actif ou transaction marqué comme 'Spam' dans `app2.py` ou via la blacklist globale doit être **strictement exclu** de tous les calculs (VGP, Portefeuille, Bilan Fiscal) et affichages avals, y compris dans le module "Live Harvest".
 
-### A. Architecture du Moteur (app.py)
+---
+
+## II. PHASE 1 : RÉCOLTE & STANDARD "RAW" (app.py)
 Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de tout calcul fiscal ou de prix**.
-- **VOIE 1 (Blockscout Deep Scan) :** Priorité sémantique (étiquettes de contrats From_Label/To_Label).
-- **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2).
-- **VOIE 3 (Imports CEX/Offline) :** Intégration des fichiers `raw_*.csv` produits par les apps spécialisées (ex: `appNeverless.py`, `appBleap.py`).
 
-### B. Standard de Données Cible (SCHEMA RAW V4)
-Tout fichier produit par le moteur ou par un importeur Voie 3 doit utiliser ce schéma :
-- **Colonnes :** Date (UTC ISO 8601), Chain, Tx_Hash (ID unique), Type (Native, Token, Internal, CEX_Mvt), Method, Account, From, To, From_Label, To_Label, Counterparty, Asset, Amount (Positif), Fee_Asset, Fee_Amount, Source_Way, Audit_Status, Fee_Audit_Alert.
+### 1. Architecture du Moteur à 3 Voies
+- **VOIE 1 (Blockscout Deep Scan) :** Priorité sémantique (extraction des étiquettes From_Label/To_Label et types de processus).
+- **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2 via Etherscan/BscScan).
+- **VOIE 3 (Imports CEX/Offline) :** Intégration des fichiers `raw_*.csv` produits par les apps spécialisées (ex: `appNeverless.py`, `appBleap.py`). `app.py` doit détecter et agréger ces fichiers.
+
+### 2. Standard de Données Cible (SCHEMA RAW V4)
+Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma :
+- **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount** (Valeur positive), **Fee_Asset**, **Fee_Amount**, **Source_Way** (Way_1, Way_2, Way_3), **Audit_Status**, **Fee_Audit_Alert**.
 - **Zéro Valorisation :** Les fichiers RAW ne contiennent aucune conversion EUR/USD.
 
-### C. Logique d'Audit & Harmonisation
-- **Dédoublonnage :** Fusion par `Tx_Hash`. Priorité à la ligne la plus riche.
+### 3. Logique d'Audit & Harmonisation
+- **Dédoublonnage :** Fusion par `Tx_Hash`. Priorité à la ligne la plus riche en métadonnées.
 - **Audit Bloquant :** Sanctuarisation interdite tant que des conflits de frais ou transferts orphelins subsistent.
-- **Agrégation Exhaustive (app2.py) :** Le moteur de qualification doit traiter chaque ligne possible des fichiers bruts. En cas de colonne manquante, utiliser des fallbacks (ex: Date par défaut au 31/12 pour inventaires).
 
-## 3. Structure de la Suite Logicielle
+---
 
-### `main.py` (Hub)
-- Navigation unifiée. Protège l'état global via clés `_hub_`.
-- **Live Harvest :** Utilise obligatoirement la liste des spams qualifiés (`shared_logic.load_spam_list`) pour le filtrage temps réel.
+## III. PHASE 2 : QUALIFICATION & NETTOYAGE (app2.py)
+C'est l'étape critique de transformation des données brutes en journal comptable.
 
-### `app2.py` (Qualification & Nettoyage - Step 2) - **CRITIQUE**
-- **Fusion (Sync) :** Intégration exhaustive des données brutes avec protection contre la perte de date.
-- **Gestion des Doublons :** Expander de revue et **surlignage rouge** des lignes suspectes.
-- **Réconciliation :** Confirmation manuelle des liens inter-comptes.
-- **Référentiels (Sidebar) :** Enregistrement unifié et fonctions CRUD (Edit/Delete).
+1. **Agrégation Exhaustive :** Doit traiter chaque ligne des fichiers bruts sans exception. Utilise des fallbacks (ex: Date 31/12 pour inventaires si absent).
+2. **Gestion des Doublons Suspects :**
+    - Détection fine par trio (Montant/Asset/Compte) à date identique.
+    - **Interface :** Expander de revue dédié et **surlignage rouge** des lignes suspectes dans le tableau.
+3. **Réconciliation des Maillons :**
+    - Appariement des transferts (ex: Bridge Out -> Bridge In).
+    - **Interface :** Confirmation manuelle ("Proposed" vs "Confirmed") avec résumé statistique.
+4. **Gestion des Référentiels (Sidebar) :**
+    - **Enregistrement Unifié :** Formulaire sidebar pour assigner une adresse/label à un registre (Propriétaire, Position, Circuit, Spam).
+    - **CRUD Manuel :** Chaque registre (Spams, Propriétaires, Circuits, Positions) doit disposer de fonctions individuelles de **Modification** et **Suppression**.
 
-## 4. Règles d'Interface (UI Standards)
+---
+
+## IV. PHASE 3 : AUDIT, VGP & FISCALITÉ
+Utilisation des données nettoyées pour le reporting final.
+
+1. **VGP Cumulative (app2VGP) :** Calcul factuel par sommation des comptes. Correction de prix directe via `st.data_editor` avec mise à jour du cache.
+2. **Bilan Fiscal (app3) :**
+    - Application stricte de l'Art. 150 VH bis.
+    - Ratio d'abattement plafonné à 1.0.
+    - Génération de PDF Unicode (via DejaVuSans) et export CSV d'audit complet.
+3. **Diagnostic (appDiagCoh) :** Traçage chronologique par actif et détection des soldes négatifs.
+4. **Valorisation (shared_logic) :** Politique "Zéro-Fallback" (0.0 si erreur API) pour forcer l'audit manuel et garantir l'intégrité fiscale.
+
+---
+
+## V. STANDARDS TECHNIQUES & UI (TOUTES APPS)
 - **Largeur Plein Écran :** Utilisation systématique de `layout="wide"`.
-- **Système Opérationnel :** Succès `✅ Système Opérationnel` permanent en sidebar.
-- **Réactivité :** Appel à `st.rerun()` après toute modification.
-- **Intégrité Temporelle :** Exclusion de toute transaction sans date valide (NaT, None).
-- **Robustesse des Imports :** Mapping CSV insensible à la casse et sans espaces (strip).
+- **Navigation Hub (main.py) :** Orchestre l'accès aux modules et protège l'état via les clés `_hub_`.
+- **Réactivité :** Appel systématique à `st.rerun()` après chaque modification de données.
+- **Système Opérationnel :** Message de succès `✅ Système Opérationnel` permanent en sidebar.
+- **Intégrité des Données :**
+    - **Dates :** Exclusion automatique de toute transaction sans date valide (NaT, None).
+    - **Imports :** Mapping CSV insensible à la casse et sans espaces superflus (`strip`).
+    - **Indexation :** `get_known_accounts` doit agréger les noms de `owner_accounts.json`, `position_labels.json` et des journaux.
