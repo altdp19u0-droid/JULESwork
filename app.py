@@ -29,27 +29,38 @@ CHAIN_APIS = {
     "Ethereum": {
         "v1": "https://blockscout.com/eth/mainnet/api/",
         "v2": "https://eth.blockscout.com/api/v2",
+        "api_host": "api.etherscan.io",
         "native": "ETH"
     },
     "Arbitrum": {
         "v1": "https://blockscout.com/arb/mainnet/api/",
         "v2": "https://arbitrum.blockscout.com/api/v2",
+        "api_host": "api.arbiscan.io",
         "native": "ETH"
     },
     "Base": {
         "v1": "https://base.blockscout.com/api/",
         "v2": "https://base.blockscout.com/api/v2",
+        "api_host": "api.basescan.org",
         "native": "ETH"
     },
     "Polygon": {
         "v1": "https://polygon.blockscout.com/api/",
         "v2": "https://polygon.blockscout.com/api/v2",
+        "api_host": "api.polygonscan.com",
         "native": "POL"
     },
     "Optimism": {
         "v1": "https://optimism.blockscout.com/api/",
         "v2": "https://optimism.blockscout.com/api/v2",
+        "api_host": "api-optimistic.etherscan.io",
         "native": "ETH"
+    },
+    "BSC": {
+        "v1": "https://api.bscscan.com/api",
+        "v2": "https://api.bscscan.com/api",
+        "api_host": "api.bscscan.com",
+        "native": "BNB"
     }
 }
 
@@ -59,13 +70,19 @@ EXPORT_BASE_DIR = "sanctuarisation"
 with st.sidebar:
     st.header("⚙️ Paramètres de Récolte")
     address = st.text_input("Adresse Blockchain (0x...)", "")
-    chains = st.multiselect("Chaînes à sonder", list(CHAIN_APIS.keys()), default=list(CHAIN_APIS.keys()))
+    chains = st.multiselect("Chaînes à sonder", list(CHAIN_APIS.keys()), default=["Ethereum", "Polygon", "Arbitrum", "Base", "Optimism"])
 
     st.divider()
     # Unified Hub Year
     if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
     target_year = st.number_input("Année à sanctuariser", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
     max_txs = st.number_input("Max transactions par chaîne", min_value=10, max_value=50000, value=2000, step=100, key="app_max_txs")
+
+    st.divider()
+    st.subheader("🔑 Clés API (Voie 2)")
+    api_keys = load_api_keys()
+
+    st.info("💡 Ajoutez vos clés dans `api_keys.json` ou utilisez le Hub pour une récolte précise.")
 
     st.divider()
     st.info("💡 **Conseil Multicomptes** : Récoltez et sanctuarisez vos adresses les unes après les autres. Le dossier final contiendra un fichier par compte.")
@@ -86,6 +103,44 @@ RAW_V4_COLUMNS = [
     "Asset", "Amount", "Fee_Asset", "Fee_Amount",
     "Source_Way", "Audit_Status", "Fee_Audit_Alert"
 ]
+
+# --- Way 2 API Helper ---
+def fetch_etherscan_way2(api_host, addr, api_key, year, max_items, native):
+    items = []
+    if not api_key: return []
+
+    endpoints = [
+        ("txlist", "Native"), ("tokentx", "Tokens"),
+        ("txlistinternal", "Internal")
+    ]
+
+    for action, label in endpoints:
+        start_block = 0
+        for loop in range(10): # Max 100,000 txs per type
+            url = f"https://{api_host}/api?module=account&action={action}&address={addr}&startblock={start_block}&endblock=99999999&offset=10000&sort=asc&apikey={api_key}"
+            try:
+                res = requests.get(url, timeout=20).json()
+                results = res.get("result", [])
+                if str(res.get("status")) != "1" or not isinstance(results, list) or not results:
+                    break
+
+                for t in results:
+                    dt = datetime.fromtimestamp(int(t['timeStamp']), tz=tz.tzutc())
+                    if dt.year == year:
+                        # Normalize to RAW V4 right here or in a separate merge function
+                        items.append((t, label, dt))
+                    elif dt.year > year:
+                         break # Assuming asc sort, might need optimization
+
+                # Pagination
+                last_block = int(results[-1].get('blockNumber', 0))
+                if last_block <= start_block: break
+                start_block = last_block + 1
+                if len(results) < 10000: break
+                time.sleep(0.2)
+            except: break
+
+    return items[:max_items]
 
 # --- Shared Logic ---
 def call_api(url, params=None):
@@ -170,213 +225,183 @@ def fetch_portfolio_v2(api_v2, addr):
 harvest_btn = st.button("🚀 Lancer la Récolte Totale (Step 1 : Brutes)", width='stretch')
 
 # Détection de présence de données pour l'affichage permanent
-has_data = not st.session_state.transactions.empty or not st.session_state.tokens.empty
+has_data = not st.session_state.transactions.empty or not st.session_state.portfolio.empty
 
 # Affichage des données mémorisées (en dehors du bloc bouton pour persistance)
 if has_data:
-    st.subheader("📦 Portfolio (Dernière Récolte)")
-    st.dataframe(st.session_state.portfolio, width='stretch')
+    if not st.session_state.portfolio.empty:
+        st.subheader("📦 Portfolio (Dernière Récolte)")
+        st.dataframe(st.session_state.portfolio, width='stretch')
 
-    st.subheader(f"📝 Transactions (Dernière Récolte)")
-    st.dataframe(st.session_state.transactions, width='stretch')
-
-    st.subheader(f"🪙 Token Transfers (Dernière Récolte)")
-    st.dataframe(st.session_state.tokens, width='stretch')
+    if not st.session_state.transactions.empty:
+        st.subheader(f"📝 Journal Brut Consolidé (Dernière Récolte)")
+        st.info("Ce journal agrège les données des 3 voies (Blockscout, API et Imports).")
+        st.dataframe(st.session_state.transactions, width='stretch')
 
 if harvest_btn:
     if not address or not Web3.is_address(address):
         st.error("❌ Adresse invalide.")
     else:
-        addr_c = Web3.to_checksum_address(address)
+        addr_c = Web3.to_checksum_address(address).lower()
         st.info(f"🔍 Analyse de l'adresse : {addr_c}")
 
-        # 1. Harvest Portfolio (Balances Actuelles)
+        global_raw_txs = []
+
+        # 1. Harvest Portfolio (ÉTAT ACTUEL - VOIE 1)
         st.subheader("📦 Portfolio (État Actuel - Blockscout)")
         portfolio_all = []
         for chain in chains:
             v2 = CHAIN_APIS[chain]["v2"]
             balances = fetch_portfolio_v2(v2, addr_c)
-            if isinstance(balances, dict) and "items" in balances:
-                balances = balances["items"]
-
+            if isinstance(balances, dict) and "items" in balances: balances = balances["items"]
             for b in balances:
                 token = b.get("token", {})
                 asset_sym = token.get("symbol", "NATIVE" if not token else "TOKEN")
                 qty = float(b.get("value", 0)) / (10**int(token.get("decimals", 18) or 18))
-
-                # Mapping to RAW V4 Schema
                 portfolio_all.append({
                     "Date": datetime(target_year, 12, 31).isoformat(),
-                    "Chain": chain,
-                    "Tx_Hash": f"PORT-{addr_c.lower()}-{asset_sym}",
-                    "Type": "Portfolio",
-                    "Method": "Snapshot",
-                    "Account": addr_c.lower(),
-                    "From": "Blockchain",
-                    "To": addr_c.lower(),
-                    "From_Label": "",
-                    "To_Label": "",
-                    "Counterparty": "Blockchain Snapshot",
-                    "Asset": asset_sym,
-                    "Amount": qty,
-                    "Fee_Asset": "",
-                    "Fee_Amount": 0.0,
-                    "Source_Way": "Way_1",
-                    "Audit_Status": "RAW",
-                    "Fee_Audit_Alert": ""
+                    "Chain": chain, "Tx_Hash": f"PORT-{addr_c}-{asset_sym}",
+                    "Type": "Portfolio", "Method": "Snapshot", "Account": addr_c,
+                    "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "",
+                    "Counterparty": "Blockchain Snapshot", "Asset": asset_sym, "Amount": qty,
+                    "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1",
+                    "Audit_Status": "RAW", "Fee_Audit_Alert": ""
                 })
-        df_portfolio = pd.DataFrame(portfolio_all, columns=RAW_V4_COLUMNS)
-        st.dataframe(df_portfolio, width='stretch')
-        st.session_state.portfolio = df_portfolio
+        st.session_state.portfolio = pd.DataFrame(portfolio_all, columns=RAW_V4_COLUMNS)
+        st.dataframe(st.session_state.portfolio, width='stretch')
 
-        # 2. Harvest Transactions (Natives/Internes)
-        st.subheader("📝 Transactions (Journal Brut)")
-        tx_all = []
-        progress_tx = st.progress(0)
+        # 2. MULTI-WAY HARVEST
+        st.subheader("📝 Récolte Multivoie (Journal Brut)")
+        pbar = st.progress(0)
+
         for idx, chain in enumerate(chains):
-            st.write(f"🌐 Transactions sur **{chain}**...")
-            v2 = CHAIN_APIS[chain]["v2"]
-            v1 = CHAIN_APIS[chain]["v1"]
-            native = CHAIN_APIS[chain]["native"]
+            st.write(f"🌐 Analyse de **{chain}**...")
+            v2, v1 = CHAIN_APIS[chain]["v2"], CHAIN_APIS[chain]["v1"]
+            api_host, native = CHAIN_APIS[chain]["api_host"], CHAIN_APIS[chain]["native"]
+            api_key = api_keys.get(chain)
 
-            # Txs via V2
-            raw_txs = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "transactions")
-            if not raw_txs: raw_txs = fetch_blockscout_v1_fallback(v1, addr_c, "txlist", max_txs, target_year)
-
-            for t in raw_txs:
+            # --- VOIE 1 : BLOCKSCOUT ---
+            # Native
+            raw_v1_txs = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "transactions")
+            if not raw_v1_txs: raw_v1_txs = fetch_blockscout_v1_fallback(v1, addr_c, "txlist", max_txs, target_year)
+            for t in raw_v1_txs:
                 if "timestamp" in t: # V2
                     dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
                     val = float(t.get("value", 0)) / 1e18
-                    gas_used = int(t.get("gas_used", 0))
-                    gas_price = int(t.get("gas_price", 0))
-                    f_raw = t.get("from", {}).get("hash", "").lower()
-                    t_raw = t.get("to", {}).get("hash", "").lower()
-                    f_addr = format_addr(t.get("from"))
-                    t_addr = format_addr(t.get("to"))
-                    method = t.get("method", "")
-                    block = t.get("block", "")
-                    tx_hash = t.get("hash")
+                    f_raw, t_raw = t.get("from", {}).get("hash", "").lower(), t.get("to", {}).get("hash", "").lower()
+                    f_l, t_l = t.get("from", {}).get("name", ""), t.get("to", {}).get("name", "")
+                    tx_h = t.get("hash")
+                    gas_u, gas_p = int(t.get("gas_used", 0)), int(t.get("gas_price", 0))
+                    meth = t.get("method", "")
                 else: # V1
                     dt = datetime.fromtimestamp(int(t.get("timeStamp", 0)), tz=tz.tzutc())
                     val = float(t.get("value", 0)) / 1e18
-                    gas_used = int(t.get("gasUsed", 0))
-                    gas_price = int(t.get("gasPrice", 0))
-                    f_addr = t.get("from", "").lower()
-                    t_addr = t.get("to", "").lower()
-                    f_raw, t_raw = f_addr, t_addr
-                    method = "" # V1 API basique n'a pas method facilement
-                    block = t.get("blockNumber", "")
-                    tx_hash = t.get("hash")
+                    f_raw, t_raw = t.get("from", "").lower(), t.get("to", "").lower()
+                    f_l, t_l = "", ""
+                    tx_h = t.get("hash")
+                    gas_u, gas_p = int(t.get("gasUsed", 0)), int(t.get("gasPrice", 0))
+                    meth = ""
 
-                fee = (gas_used * gas_price) / 1e18
-                # Extraction USD native V2 via historic_exchange_rate
-                rate_usd = float(t.get("historic_exchange_rate") or 0.0)
-                val_usd = val * rate_usd if rate_usd > 0 else float(t.get("value_in_usd") or 0.0)
-                fee_usd = fee * rate_usd if rate_usd > 0 else 0.0
-
-                # Mapping to RAW V4 Schema
-                tx_all.append({
-                    "Date": dt.isoformat(),
-                    "Chain": chain,
-                    "Tx_Hash": tx_hash,
-                    "Type": "Native",
-                    "Method": method,
-                    "Account": addr_c.lower(),
-                    "From": f_addr,
-                    "To": t_addr,
-                    "From_Label": "",
-                    "To_Label": "",
-                    "Counterparty": t_addr if f_raw == addr_c.lower() else f_addr,
-                    "Asset": native,
-                    "Amount": val,
-                    "Fee_Asset": native,
-                    "Fee_Amount": fee if f_raw == addr_c.lower() else 0.0,
-                    "Source_Way": "Way_1",
-                    "Audit_Status": "RAW",
-                    "Fee_Audit_Alert": ""
+                fee = (gas_u * gas_p) / 1e18
+                global_raw_txs.append({
+                    "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native",
+                    "Method": meth, "Account": addr_c, "From": f_raw, "To": t_raw,
+                    "From_Label": f_l, "To_Label": t_l,
+                    "Counterparty": t_raw if f_raw == addr_c else f_raw,
+                    "Asset": native, "Amount": val if t_raw == addr_c else -val,
+                    "Fee_Asset": native, "Fee_Amount": fee if f_raw == addr_c else 0.0,
+                    "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": ""
                 })
-            progress_tx.progress((idx + 1) / len(chains))
 
-        df_tx = pd.DataFrame(tx_all, columns=RAW_V4_COLUMNS)
-        if not df_tx.empty:
-            df_tx = df_tx.sort_values("Date", ascending=False)
-        st.dataframe(df_tx, width='stretch')
-        st.session_state.transactions = df_tx
-
-        # 3. Harvest Token Transfers
-        st.subheader("🪙 Token Transfers (ERC-20/721/1155)")
-        tok_all = []
-        progress_tok = st.progress(0)
-        for idx, chain in enumerate(chains):
-            st.write(f"🌐 Transferts sur **{chain}**...")
-            v2 = CHAIN_APIS[chain]["v2"]
-            v1 = CHAIN_APIS[chain]["v1"]
-
-            raw_toks = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "token-transfers")
-            if not raw_toks: raw_toks = fetch_blockscout_v1_fallback(v1, addr_c, "tokentx", max_txs, target_year)
-
-            for t in raw_toks:
+            # Tokens
+            raw_v1_toks = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "token-transfers")
+            if not raw_v1_toks: raw_v1_toks = fetch_blockscout_v1_fallback(v1, addr_c, "tokentx", max_txs, target_year)
+            for t in raw_v1_toks:
                 if "token" in t: # V2
                     dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
                     tok = t.get("token", {})
                     asset = tok.get("symbol", "TOKEN")
-                    tok_id = t.get("token_id", "")
                     dec = int(tok.get("decimals") or 18)
-                    raw_val = extract_value(t.get("total") or t.get("value", "0"))
-                    val = float(raw_val) / (10**dec)
-                    f_raw = t.get("from", {}).get("hash", "").lower()
-                    t_raw = t.get("to", {}).get("hash", "").lower()
-                    f_addr = format_addr(t.get("from"))
-                    t_addr = format_addr(t.get("to"))
-                    tx_hash = t.get("tx_hash") or t.get("hash") or t.get("transaction_hash")
+                    val = float(extract_value(t.get("total") or t.get("value", "0"))) / (10**dec)
+                    f_raw, t_raw = t.get("from", {}).get("hash", "").lower(), t.get("to", {}).get("hash", "").lower()
+                    f_l, t_l = t.get("from", {}).get("name", ""), t.get("to", {}).get("name", "")
+                    tx_h = t.get("tx_hash") or t.get("hash")
                 else: # V1
                     dt = datetime.fromtimestamp(int(t.get("timeStamp", 0)), tz=tz.tzutc())
                     asset = t.get("tokenSymbol", "TOKEN")
-                    tok_id = t.get("tokenID", "")
-                    dec = int(t.get("tokenDecimal") or 18)
-                    val = float(t.get("value", 0)) / (10**dec)
-                    f_addr = t.get("from", "").lower()
-                    t_addr = t.get("to", "").lower()
-                    f_raw, t_raw = f_addr, t_addr
-                    tx_hash = t.get("hash")
+                    val = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal") or 18))
+                    f_raw, t_raw = t.get("from", "").lower(), t.get("to", "").lower()
+                    f_l, t_l = "", ""
+                    tx_h = t.get("hash")
 
-                # Extraction USD tokens V2 (Step 2: improved rate calculation)
-                val_usd = float(t.get("value_in_usd") or 0.0)
-                rate_usd = float(t.get("token", {}).get("exchange_rate") or 0.0)
-                if rate_usd == 0 and val_usd > 0 and val > 0:
-                    rate_usd = val_usd / val
-
-                # Mapping to RAW V4 Schema
-                tok_all.append({
-                    "Date": dt.isoformat(),
-                    "Chain": chain,
-                    "Tx_Hash": tx_hash,
-                    "Type": "Token",
-                    "Method": "",
-                    "Account": addr_c.lower(),
-                    "From": f_addr,
-                    "To": t_addr,
-                    "From_Label": "",
-                    "To_Label": "",
-                    "Counterparty": t_addr if f_raw == addr_c.lower() else f_addr,
-                    "Asset": asset,
-                    "Amount": float(val),
-                    "Fee_Asset": "", # Often not directly available in token transfer event
-                    "Fee_Amount": 0.0,
-                    "Source_Way": "Way_1",
-                    "Audit_Status": "RAW",
-                    "Fee_Audit_Alert": ""
+                global_raw_txs.append({
+                    "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Token",
+                    "Method": "", "Account": addr_c, "From": f_raw, "To": t_raw,
+                    "From_Label": f_l, "To_Label": t_l,
+                    "Counterparty": t_raw if f_raw == addr_c else f_raw,
+                    "Asset": asset, "Amount": val if t_raw == addr_c else -val,
+                    "Fee_Asset": "", "Fee_Amount": 0.0,
+                    "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": ""
                 })
-            progress_tok.progress((idx + 1) / len(chains))
 
-        df_tok = pd.DataFrame(tok_all, columns=RAW_V4_COLUMNS)
-        if not df_tok.empty:
-            df_tok = df_tok.sort_values("Date", ascending=False)
-        st.dataframe(df_tok, width='stretch')
-        st.session_state.tokens = df_tok
+            # --- VOIE 2 : API SCANS ---
+            if api_key:
+                st.write(f"🔎 Scan Way_2 pour **{chain}**...")
+                items_v2 = fetch_etherscan_way2(api_host, addr_c, api_key, target_year, max_txs, native)
+                for t, label, dt in items_v2:
+                    tx_h = t.get("hash")
+                    f_r, t_r = t.get("from", "").lower(), t.get("to", "").lower()
+                    amt = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal", 18) or 18))
+                    fee_v2 = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 1e18
+                    asset_v2 = t.get("tokenSymbol") or native
+                    global_raw_txs.append({
+                        "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": label,
+                        "Method": t.get("functionName", ""), "Account": addr_c, "From": f_r, "To": t_r,
+                        "From_Label": "", "To_Label": "",
+                        "Counterparty": t_r if f_r == addr_c else f_r,
+                        "Asset": asset_v2, "Amount": amt if t_r == addr_c else -amt,
+                        "Fee_Asset": native if f_r == addr_c else "",
+                        "Fee_Amount": fee_v2 if f_r == addr_c else 0.0,
+                        "Source_Way": "Way_2", "Audit_Status": "RAW", "Fee_Audit_Alert": ""
+                    })
+            pbar.progress((idx + 1) / len(chains))
 
-        st.success(f"✅ Récolte terminée pour l'année {target_year} !")
-        st.rerun() # Force re-execution to show the Sanctuarize button immediately
+        # --- VOIE 3 : IMPORTS ---
+        st.write("📂 Détection imports RAW (Voie 3)...")
+        y_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
+        if os.path.exists(y_dir):
+            for f in os.listdir(y_dir):
+                if f.startswith("raw_") and f.endswith(".csv") and "portfolio" not in f:
+                    try:
+                        df_way3 = pd.read_csv(os.path.join(y_dir, f))
+                        for _, r in df_way3.iterrows():
+                            d_v = r.to_dict(); d_v["Source_Way"] = "Way_3"; global_raw_txs.append(d_v)
+                    except: pass
+
+        # --- FUSION & DÉDOUBLONNAGE ---
+        df_merged = pd.DataFrame(global_raw_txs, columns=RAW_V4_COLUMNS)
+        if not df_merged.empty:
+            df_merged["Date"] = pd.to_datetime(df_merged["Date"], utc=True, errors="coerce")
+            df_merged = df_merged.dropna(subset=["Date", "Tx_Hash"])
+            def consolidate_group(group):
+                w1 = group[group["Source_Way"] == "Way_1"]
+                w2 = group[group["Source_Way"] == "Way_2"]
+                res = group.iloc[0].copy()
+                if not w1.empty:
+                    res["From_Label"] = w1.iloc[0].get("From_Label", ""); res["To_Label"] = w1.iloc[0].get("To_Label", "")
+                if not w2.empty:
+                    res["Fee_Amount"] = w2.iloc[0].get("Fee_Amount", 0.0); res["Method"] = w2.iloc[0].get("Method", "")
+                    res["Source_Way"] = "Way_1+2" if not w1.empty else "Way_2"
+                return res
+            df_final = df_merged.groupby(["Tx_Hash", "Asset", "Account"]).apply(consolidate_group).reset_index(drop=True)
+            st.session_state.transactions = df_final.sort_values("Date", ascending=False)
+
+            # Summary stats
+            ways_count = df_merged["Source_Way"].value_counts().to_dict()
+            st.success("✅ Récolte Multivoie terminée.")
+            st.info(f"📊 **Statistiques de Récolte :** Way_1: {ways_count.get('Way_1', 0)} | Way_2: {ways_count.get('Way_2', 0)} | Way_3: {ways_count.get('Way_3', 0)}")
+
+        st.rerun()
 
 # --- Sanctuarisation ---
 # Affichage permanent si données présentes (pour éviter la disparition après récolte)
@@ -396,11 +421,13 @@ if has_data:
 
         df_port = standardize_df_addresses(st.session_state.portfolio)
         df_tx = standardize_df_addresses(st.session_state.transactions)
-        df_tok = standardize_df_addresses(st.session_state.tokens)
 
-        df_port.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False, encoding="utf-8-sig")
-        df_tx.to_csv(os.path.join(year_dir, f"raw_transactions_{prefix}.csv"), index=False, encoding="utf-8-sig")
-        df_tok.to_csv(os.path.join(year_dir, f"raw_token_transfers_{prefix}.csv"), index=False, encoding="utf-8-sig")
+        if not df_port.empty:
+            df_port.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False, encoding="utf-8-sig")
+
+        if not df_tx.empty:
+            # Enregistrement du journal consolidé (Toutes voies confondues)
+            df_tx.to_csv(os.path.join(year_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False, encoding="utf-8-sig")
 
         st.balloons()
         st.success(f"📂 Fichiers enregistrés dans : {year_dir}")

@@ -21,10 +21,12 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 ### 1. Architecture du Moteur à 3 Voies
 - **VOIE 1 (Blockscout Deep Scan) :** Priorité sémantique (extraction des étiquettes From_Label/To_Label et types de processus).
 - **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2 via Etherscan/BscScan).
-- **VOIE 3 (Imports CEX/Offline) :** Intégration des fichiers `raw_*.csv` produits par les apps spécialisées (ex: `appNeverless.py`, `appBleap.py`). `app.py` doit détecter et agréger ces fichiers.
+- **VOIE 3 (Imports CEX/Offline) :** Intégration automatique des fichiers `raw_*.csv` locaux (ex: Neverless, Bleap).
+- **FUSION INTELLIGENTE :** Dédoublonnage par le triplet `(Tx_Hash, Asset, Account)`. La fusion doit préserver les labels de la Voie 1 et injecter les frais/méthodes de la Voie 2.
+- **NOMMAGE CONSOLIDÉ :** Le fichier final doit porter le suffixe `_consolidated_` pour indiquer le traitement multivoie.
 
 ### 2. Standard de Données Cible (SCHEMA RAW V4)
-Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma :
+Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma de 18 colonnes :
 - **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount** (Valeur positive), **Fee_Asset**, **Fee_Amount**, **Source_Way** (Way_1, Way_2, Way_3), **Audit_Status**, **Fee_Audit_Alert**.
 - **Zéro Valorisation :** Les fichiers RAW ne contiennent aucune conversion EUR/USD.
 
