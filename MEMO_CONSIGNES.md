@@ -23,16 +23,18 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 - **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2 via Etherscan/BscScan).
 - **VOIE 3 (Imports CEX/Offline) :** Intégration automatique des fichiers `raw_*.csv` locaux (ex: Neverless, Bleap).
 - **FUSION INTELLIGENTE :** Dédoublonnage par le triplet `(Tx_Hash, Asset, Account)`. La fusion doit préserver les labels de la Voie 1 et injecter les frais/méthodes de la Voie 2.
-- **NOMMAGE CONSOLIDÉ :** Le fichier final doit porter le suffixe `_consolidated_` pour indiquer le traitement multivoie.
+- **NOMMAGE CONSOLIDÉ :** Le fichier final doit impérativement porter le suffixe `_consolidated_` (ex: `raw_transactions_consolidated_*.csv`) pour indiquer le traitement multivoie.
+- **UI RÉCOLTE :** L'interface doit afficher séparément les journaux de transactions natives et de transferts de tokens pour un contrôle visuel immédiat, ainsi qu'un résumé statistique des voies (Way 1, 2, 3).
+- **CLÉ UNIVERSELLE :** Permettre la saisie d'une clé API unique en UI s'appliquant à tous les réseaux par défaut.
 
 ### 2. Standard de Données Cible (SCHEMA RAW V4)
-Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma de 18 colonnes :
-- **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount** (Valeur positive), **Fee_Asset**, **Fee_Amount**, **Source_Way** (Way_1, Way_2, Way_3), **Audit_Status**, **Fee_Audit_Alert**.
-- **Zéro Valorisation :** Les fichiers RAW ne contiennent aucune conversion EUR/USD.
+Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma de 19 colonnes :
+- **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount** (Valeur algébrique), **Fee_Asset**, **Fee_Amount**, **Source_Way** (Way_1, Way_2, Way_3 ou Way_1+2), **Audit_Status**, **Fee_Audit_Alert**, **Source_Exchange_Rate** (Prix unitaire source).
+- **Zéro Valorisation :** Les fichiers RAW ne contiennent aucune conversion EUR/USD externe. Seul le prix fourni par la source est capturé dans `Source_Exchange_Rate`.
 
 ### 3. Logique d'Audit & Harmonisation
 - **Dédoublonnage :** Fusion par `Tx_Hash`. Priorité à la ligne la plus riche en métadonnées.
-- **Audit Bloquant :** Sanctuarisation interdite tant que des conflits de frais ou transferts orphelins subsistent.
+- **Audit Bloquant :** Sanctuarisation interdite si des colonnes critiques (`Date`, `Asset`, `Amount`) sont vides ou si des doublons de Hash internes à une voie persistent.
 
 ---
 

@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 import requests
 from datetime import datetime
-from shared_logic import get_known_accounts, get_price_eur, get_fiat_rate
+from shared_logic import get_known_accounts, show_status, pd_read_csv_safe
 import time
 import json
 import io
@@ -14,25 +14,19 @@ st.set_page_config(page_title="Jules Crypto - Import Bleap (appBleap)", layout="
 st.title("🚜 Importeur Spécialisé Bleap")
 
 EXPORT_BASE_DIR = "sanctuarisation"
-PRICE_CACHE_FILE = "historical_prices_cache.json"
 
-
-# --- Helper: Robust CSV reading ---
-def pd_read_csv_safe(file):
-    try:
-        return pd.read_csv(file, encoding="utf-8-sig", sep=None, engine='python')
-    except:
-        try:
-            file.seek(0)
-            return pd.read_csv(io.BytesIO(file.read()), encoding="latin-1", sep=None, engine='python')
-        except:
-            file.seek(0)
-            return pd.read_csv(file, encoding="utf-8", errors="replace", sep=None, engine='python')
+# RAW V4 Standard columns
+RAW_V4_COLUMNS = [
+    "Date", "Chain", "Tx_Hash", "Type", "Method", "Account",
+    "From", "To", "From_Label", "To_Label", "Counterparty",
+    "Asset", "Amount", "Fee_Asset", "Fee_Amount",
+    "Source_Way", "Audit_Status", "Fee_Audit_Alert"
+]
 
 # --- Processing Engine ---
 def process_bleap_csv(df):
     new_rows = []
-    account = "Bleap_App"
+    account = "bleap_app" # Normalized to lowercase
 
     # Filter out non-completed
     df = df[df["Status"] == "COMPLETED"].copy()
@@ -44,102 +38,70 @@ def process_bleap_csv(df):
         # Parsing date
         dt_str = str(row.get("Created At", row.get("Completed At", "")))
         try:
-            dt = pd.to_datetime(dt_str)
+            dt = pd.to_datetime(dt_str, utc=True)
         except:
             dt = datetime.now()
 
         t_type = str(row.get("Type", ""))
         desc = str(row.get("Description", ""))
-        currency = str(row.get("Currency", ""))
+        currency = str(row.get("Currency", "")).upper().strip()
         amount = pd.to_numeric(row.get("Amount"), errors='coerce') or 0.0
         fees = pd.to_numeric(row.get("Fees"), errors='coerce') or 0.0
 
         is_imp = False
-        cp = "System"
-        val = 0.0
+        cp = "system"
+        val = amount # Sign handled below
 
+        # Detection category for audit metadata
         if t_type == "Top Up":
-            cp = "banq N26"
-            cat = "Achat"
+            cp = "banq n26"
             val = amount # Entry
         elif t_type == "Off-Ramp" and "Bank Transfer (Sell)" in desc:
-            cp = "banq N26"
-            cat = "Vente"
+            cp = "banq n26"
             val = -amount # Exit
-            if currency == "EURA":
-                is_imp = True
+            if currency == "EURA": is_imp = True
         elif "Earn" in t_type or "Bridge" in t_type:
-            cat = "Transfert Interne"
-            # Logic simplified: Deposit is OUT to Earn, Withdrawal is IN from Earn
             val = -amount if "Deposit" in t_type else amount
-            cp = "Bleap_Earn"
+            cp = "bleap_earn"
         elif "Exchange" in t_type or "Trade" in t_type:
-            cat = "Swap"
-            val = amount # The leg we see in the CSV
-            cp = "Swap"
+            val = amount # The leg we see
+            cp = "swap"
         elif t_type == "Deposit":
-            cat = "Transfert In"
             val = amount
-            cp = "External"
+            cp = "external"
         elif t_type == "Withdrawal":
-            cat = "Transfert Out"
             val = -amount
-            cp = "External"
-        else:
-            cat = "A vérifier"
-            val = amount
-            cp = "Unknown"
-
-        # Calculation of Value ($) and Value (EUR)
-        price_eur = get_price_eur(currency, dt)
-        val_eur = abs(val) * price_eur
-        rate_usd_eur = get_fiat_rate("USD", dt)
-        val_usd = val_eur / rate_usd_eur if rate_usd_eur > 0 else 0.0
+            cp = "external"
 
         # Robust synthetic Hash including timestamp to avoid collisions
         ts_ms = int(dt.timestamp() * 1000)
-        # Use idx (row index) and a secondary counter to ensure absolute uniqueness
         safe_hash = f"BLP-{ts_ms}-{idx}-{i}"
 
-        # Create row
+        # Create row (Way 3 - Import)
         new_rows.append({
-            "Date": dt,
+            "Date": dt.isoformat(),
             "Chain": "Bleap",
-            "Token": currency, # Preserve nuances
-            "Token ID": "",
-            "Tx Hash": safe_hash,
+            "Tx_Hash": safe_hash,
+            "Type": "CEX_Mvt",
+            "Method": t_type,
+            "Account": account,
             "From": cp if val > 0 else account,
             "To": account if val > 0 else cp,
-            "Value": abs(val),
-            "Value ($)": val_usd,
-            "Rate ($)": (val_usd / abs(val)) if val != 0 else 0.0,
-            "Account": account,
+            "From_Label": "",
+            "To_Label": "",
             "Counterparty": cp,
-            "Category": cat,
-            "Imposable": is_imp
+            "Asset": currency,
+            "Amount": val,
+            "Fee_Asset": currency if fees > 0 else "",
+            "Fee_Amount": fees,
+            "Source_Way": "Way_3",
+            "Audit_Status": "RAW",
+            "Fee_Audit_Alert": ""
         })
-
-        # Handle Fees
-        if fees > 0:
-             new_rows.append({
-                "Date": dt,
-                "Chain": "Bleap",
-                "Token": currency,
-                "Token ID": "",
-                "Tx Hash": f"FEE-{safe_hash}",
-                "From": account,
-                "To": "Fees",
-                "Value": fees,
-                "Value ($)": (fees * price_eur) / rate_usd_eur if rate_usd_eur > 0 else 0.0,
-                "Rate ($)": price_eur / rate_usd_eur if rate_usd_eur > 0 else 0.0,
-                "Account": account,
-                "Counterparty": "Bleap_Fees",
-                "Imposable": False
-            })
 
         progress_bar.progress((i + 1) / total_rows)
 
-    return pd.DataFrame(new_rows)
+    return pd.DataFrame(new_rows, columns=RAW_V4_COLUMNS)
 
 # --- Main App ---
 with st.sidebar:
@@ -167,16 +129,15 @@ if uploaded_file:
 
     if "bleap_final" in st.session_state:
         st.divider()
-        st.subheader("✅ Résultat au format Sanctuarisation")
+        st.subheader("✅ Résultat au format RAW V4 (Voie 3)")
 
-        # Interactivité pour la colonne Imposable
+        # Display result
         edited_df = st.data_editor(
             st.session_state.bleap_final,
             column_config={
-                "Imposable": st.column_config.CheckboxColumn("Taxable (Imp.)", help="Coché pour les Off-Ramp EURA vers N26."),
-                "Value ($)": st.column_config.NumberColumn(format="%.2f", disabled=True),
-                "Value": st.column_config.NumberColumn(format="%.8f", disabled=True),
                 "Date": st.column_config.DatetimeColumn(disabled=True),
+                "Amount": st.column_config.NumberColumn(format="%.8f", disabled=True),
+                "Fee_Amount": st.column_config.NumberColumn(format="%.8f", disabled=True),
             },
             width='stretch',
             num_rows="fixed",

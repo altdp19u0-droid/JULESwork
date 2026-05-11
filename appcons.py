@@ -10,18 +10,7 @@ import tempfile
 import unicodedata
 import traceback
 from datetime import datetime, time as dt_time
-from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur, show_status
-
-# --- Helpers ---
-def pd_read_csv_safe(path):
-    """Robust CSV reading for Windows with encoding fallbacks."""
-    try:
-        return pd.read_csv(path, encoding="utf-8-sig")
-    except:
-        try:
-            return pd.read_csv(path, encoding="latin-1")
-        except:
-            return pd.read_csv(path, encoding="utf-8", errors="replace")
+from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur, show_status, pd_read_csv_safe
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto - Explorateur (appcons)", layout="wide")

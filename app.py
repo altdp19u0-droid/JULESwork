@@ -80,9 +80,15 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🔑 Clés API (Voie 2)")
-    api_keys = load_api_keys()
 
-    st.info("💡 Ajoutez vos clés dans `api_keys.json` ou utilisez le Hub pour une récolte précise.")
+    # Universal Key Input
+    universal_key = st.text_input("Clé API Unique (Etherscan/BscScan...)", type="password", help="Cette clé sera utilisée pour tous les réseaux si aucune clé spécifique n'est trouvée.")
+
+    api_keys_loaded = load_api_keys()
+    # Merge: Specific keys from file take priority over universal key
+    api_keys = {c: api_keys_loaded.get(c, universal_key) for c in CHAIN_APIS.keys()}
+
+    st.info("💡 Les clés spécifiques dans `api_keys.json` restent prioritaires.")
 
     st.divider()
     st.info("💡 **Conseil Multicomptes** : Récoltez et sanctuarisez vos adresses les unes après les autres. Le dossier final contiendra un fichier par compte.")
@@ -96,12 +102,12 @@ with st.sidebar:
     st.divider()
     show_status()
 
-# --- RAW V4 Standard ---
+# --- RAW V4 Standard (19 colonnes) ---
 RAW_V4_COLUMNS = [
     "Date", "Chain", "Tx_Hash", "Type", "Method", "Account",
     "From", "To", "From_Label", "To_Label", "Counterparty",
     "Asset", "Amount", "Fee_Asset", "Fee_Amount",
-    "Source_Way", "Audit_Status", "Fee_Audit_Alert"
+    "Source_Way", "Audit_Status", "Fee_Audit_Alert", "Source_Exchange_Rate"
 ]
 
 # --- Way 2 API Helper ---
@@ -234,9 +240,27 @@ if has_data:
         st.dataframe(st.session_state.portfolio, width='stretch')
 
     if not st.session_state.transactions.empty:
-        st.subheader(f"📝 Journal Brut Consolidé (Dernière Récolte)")
-        st.info("Ce journal agrège les données des 3 voies (Blockscout, API et Imports).")
-        st.dataframe(st.session_state.transactions, width='stretch')
+        df_all = st.session_state.transactions
+
+        # Standardisation des types pour l'affichage (Unification Sémantique)
+        df_all["Type"] = df_all["Type"].replace({"Tokens": "Token", "Native/Internal": "Native"})
+
+        # Display Native Transactions
+        df_native = df_all[df_all["Type"].isin(["Native", "Internal"])]
+        if not df_native.empty:
+            st.subheader("📝 Transactions Natives & Internes (Journal Brut)")
+            st.dataframe(df_native, width='stretch')
+
+        # Display Token Transfers
+        df_tokens = df_all[df_all["Type"] == "Token"]
+        if not df_tokens.empty:
+            st.subheader("🪙 Token Transfers (Journal Brut)")
+            st.dataframe(df_tokens, width='stretch')
+
+        st.divider()
+        st.subheader(f"📑 Journal Brut Consolidé (Complet)")
+        st.info("Ce tableau regroupe l'intégralité des données fusionnées des 3 voies.")
+        st.dataframe(df_all, width='stretch')
 
 if harvest_btn:
     if not address or not Web3.is_address(address):
@@ -310,7 +334,7 @@ if harvest_btn:
                     "Counterparty": t_raw if f_raw == addr_c else f_raw,
                     "Asset": native, "Amount": val if t_raw == addr_c else -val,
                     "Fee_Asset": native, "Fee_Amount": fee if f_raw == addr_c else 0.0,
-                    "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": ""
+                    "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
                 })
 
             # Tokens
@@ -341,7 +365,7 @@ if harvest_btn:
                     "Counterparty": t_raw if f_raw == addr_c else f_raw,
                     "Asset": asset, "Amount": val if t_raw == addr_c else -val,
                     "Fee_Asset": "", "Fee_Amount": 0.0,
-                    "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": ""
+                    "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
                 })
 
             # --- VOIE 2 : API SCANS ---
@@ -362,7 +386,7 @@ if harvest_btn:
                         "Asset": asset_v2, "Amount": amt if t_r == addr_c else -amt,
                         "Fee_Asset": native if f_r == addr_c else "",
                         "Fee_Amount": fee_v2 if f_r == addr_c else 0.0,
-                        "Source_Way": "Way_2", "Audit_Status": "RAW", "Fee_Audit_Alert": ""
+                        "Source_Way": "Way_2", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
                     })
             pbar.progress((idx + 1) / len(chains))
 

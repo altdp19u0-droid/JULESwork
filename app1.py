@@ -15,11 +15,19 @@ st.title("📥 Import CSV Universel")
 
 EXPORT_BASE_DIR = "sanctuarisation"
 
-# --- Target Schemas ---
-SCHEMAS = {
-    "Portfolio": ["Chain", "Asset", "Quantity", "Price ($)", "Value ($)", "Contract"],
-    "Transactions (Native)": ["Date", "Chain", "Tx Hash", "Type", "Method", "From", "To", "Value ETH", "Value ($)", "Rate ($)", "Fee ETH", "Fee ($)", "Account", "Counterparty"],
-    "Token Transfers": ["Date", "Chain", "Token", "Token ID", "Tx Hash", "From", "To", "Value", "Value ($)", "Rate ($)", "Account", "Counterparty"]
+# --- RAW V4 Standard (19 colonnes) ---
+RAW_V4_COLUMNS = [
+    "Date", "Chain", "Tx_Hash", "Type", "Method", "Account",
+    "From", "To", "From_Label", "To_Label", "Counterparty",
+    "Asset", "Amount", "Fee_Asset", "Fee_Amount",
+    "Source_Way", "Audit_Status", "Fee_Audit_Alert", "Source_Exchange_Rate"
+]
+
+# --- UI Mapping Assistants ---
+UI_MAPPING_SCHEMAS = {
+    "Portfolio": ["Chain", "Asset", "Amount"],
+    "Transactions (Native)": ["Date", "Chain", "Tx_Hash", "From", "To", "Asset", "Amount", "Fee_Amount"],
+    "Token Transfers": ["Date", "Chain", "Tx_Hash", "From", "To", "Asset", "Amount"]
 }
 
 # --- Sidebar ---
@@ -28,7 +36,7 @@ with st.sidebar:
     # Unified Hub Year
     if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
     target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
-    import_type = st.selectbox("Type de données", list(SCHEMAS.keys()))
+    import_type = st.selectbox("Type de données", list(UI_MAPPING_SCHEMAS.keys()))
 
     st.divider()
     st.info("💡 Cet outil transforme vos exports (Exchange, Ledger) au format standard du système.")
@@ -36,19 +44,8 @@ with st.sidebar:
     st.divider()
     show_status()
 
-# --- Helpers ---
-def pd_read_csv_safe(file):
-    """Robust CSV reading with encoding fallbacks."""
-    try:
-        # Try to read first few bytes to detect delimiter or encoding issues
-        return pd.read_csv(file, encoding="utf-8-sig")
-    except:
-        try:
-            file.seek(0)
-            return pd.read_csv(file, encoding="latin-1")
-        except:
-            file.seek(0)
-            return pd.read_csv(file, encoding="utf-8", errors="replace")
+# --- Helpers (Centralized logic) ---
+from shared_logic import pd_read_csv_safe
 
 # --- Main App ---
 uploaded_file = st.file_uploader("Choisir un fichier CSV", type="csv")
@@ -62,7 +59,7 @@ if uploaded_file:
     st.subheader("🗺️ Mapping des colonnes")
 
     source_cols = ["(Aucun / Ignorer)"] + list(df_raw.columns)
-    target_cols = SCHEMAS[import_type]
+    target_cols = UI_MAPPING_SCHEMAS[import_type]
 
     mapping = {}
     col1, col2 = st.columns(2)
@@ -80,32 +77,36 @@ if uploaded_file:
 
     st.divider()
     if st.button("🚀 Transformer & Préparer l'Export", type="primary", width='stretch'):
-        # 1. Selection des colonnes
         final_rows = []
         for _, row in df_raw.iterrows():
-            new_row = {}
+            v4_row = {c: "" for c in RAW_V4_COLUMNS}
+            v4_row["Source_Way"] = "Way_3"
+            v4_row["Audit_Status"] = "RAW"
+            v4_row["Amount"] = 0.0
+            v4_row["Fee_Amount"] = 0.0
+            v4_row["Source_Exchange_Rate"] = 0.0
+
             for t_col, s_col in mapping.items():
-                if s_col == "(Aucun / Ignorer)":
-                    new_row[t_col] = None
-                else:
-                    new_row[t_col] = row[s_col]
-            final_rows.append(new_row)
+                if s_col != "(Aucun / Ignorer)":
+                    val = row[s_col]
+                    if t_col in RAW_V4_COLUMNS:
+                        v4_row[t_col] = val
+                    elif t_col == "Chain":
+                        v4_row["Chain"] = val
 
-        df_mapped = pd.DataFrame(final_rows)
+            final_rows.append(v4_row)
 
-        # 2. Nettoyage & Parsing
-        # Dates
+        df_mapped = pd.DataFrame(final_rows, columns=RAW_V4_COLUMNS)
+
         if "Date" in df_mapped.columns:
-            df_mapped["Date"] = pd.to_datetime(df_mapped["Date"], errors='coerce')
+            df_mapped["Date"] = pd.to_datetime(df_mapped["Date"], errors='coerce', utc=True)
+            df_mapped["Date"] = df_mapped["Date"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # Numbers
-        num_cols = ["Quantity", "Price ($)", "Value ($)", "Value ETH", "Value", "Rate ($)", "Fee ETH", "Fee ($)"]
-        for c in num_cols:
-            if c in df_mapped.columns:
-                df_mapped[c] = pd.to_numeric(df_mapped[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0.0)
+        for c in ["Amount", "Fee_Amount", "Source_Exchange_Rate"]:
+            df_mapped[c] = pd.to_numeric(df_mapped[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0.0)
 
         st.session_state.df_mapped = df_mapped
-        st.success("Transformation terminée !")
+        st.success("Transformation terminée au format RAW V4 !")
 
     if "df_mapped" in st.session_state:
         st.subheader("✅ Résultat de la transformation")
@@ -123,8 +124,8 @@ if uploaded_file:
 
             file_name = ""
             if import_type == "Portfolio": file_name = f"raw_portfolio_{prefix}.csv"
-            elif import_type == "Transactions (Native)": file_name = f"raw_transactions_{prefix}.csv"
-            else: file_name = f"raw_token_transfers_{prefix}.csv"
+            elif import_type == "Transactions (Native)": file_name = f"raw_transactions_native_{prefix}.csv"
+            else: file_name = f"raw_token_transfers_token_{prefix}.csv"
 
             save_path = os.path.join(year_dir, file_name)
             st.session_state.df_mapped.to_csv(save_path, index=False, encoding="utf-8-sig")
