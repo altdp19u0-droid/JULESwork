@@ -27,31 +27,31 @@ def load_api_keys():
 
 CHAIN_APIS = {
     "Ethereum": {
-        "v1": "https://blockscout.com/eth/mainnet/api/",
+        "v1": "https://eth.blockscout.com/api",
         "v2": "https://eth.blockscout.com/api/v2",
         "api_host": "api.etherscan.io",
         "native": "ETH"
     },
     "Arbitrum": {
-        "v1": "https://blockscout.com/arb/mainnet/api/",
+        "v1": "https://arbitrum.blockscout.com/api",
         "v2": "https://arbitrum.blockscout.com/api/v2",
         "api_host": "api.arbiscan.io",
         "native": "ETH"
     },
     "Base": {
-        "v1": "https://base.blockscout.com/api/",
+        "v1": "https://base.blockscout.com/api",
         "v2": "https://base.blockscout.com/api/v2",
         "api_host": "api.basescan.org",
         "native": "ETH"
     },
     "Polygon": {
-        "v1": "https://polygon.blockscout.com/api/",
+        "v1": "https://polygon.blockscout.com/api",
         "v2": "https://polygon.blockscout.com/api/v2",
         "api_host": "api.polygonscan.com",
         "native": "POL"
     },
     "Optimism": {
-        "v1": "https://optimism.blockscout.com/api/",
+        "v1": "https://optimism.blockscout.com/api",
         "v2": "https://optimism.blockscout.com/api/v2",
         "api_host": "api-optimistic.etherscan.io",
         "native": "ETH"
@@ -240,22 +240,24 @@ if has_data:
         st.dataframe(st.session_state.portfolio, width='stretch')
 
     if not st.session_state.transactions.empty:
-        df_all = st.session_state.transactions
+        df_all = st.session_state.transactions.copy()
 
-        # Standardisation des types pour l'affichage (Unification Sémantique)
-        df_all["Type"] = df_all["Type"].replace({"Tokens": "Token", "Native/Internal": "Native"})
+        # Unification sémantique robuste pour le filtrage UI
+        df_all["Type_UI"] = df_all["Type"].astype(str).str.lower().str.replace("s", "")
 
         # Display Native Transactions
-        df_native = df_all[df_all["Type"].isin(["Native", "Internal"])]
+        mask_native = df_all["Type_UI"].isin(["native", "internal", "native/internal"])
+        df_native = df_all[mask_native]
         if not df_native.empty:
             st.subheader("📝 Transactions Natives & Internes (Journal Brut)")
-            st.dataframe(df_native, width='stretch')
+            st.dataframe(df_native.drop(columns=["Type_UI"]), width='stretch')
 
-        # Display Token Transfers
-        df_tokens = df_all[df_all["Type"] == "Token"]
+        # Display Token Transfers (Including CEX movements)
+        mask_token = df_all["Type_UI"].isin(["token", "cex_mvt"])
+        df_tokens = df_all[mask_token]
         if not df_tokens.empty:
             st.subheader("🪙 Token Transfers (Journal Brut)")
-            st.dataframe(df_tokens, width='stretch')
+            st.dataframe(df_tokens.drop(columns=["Type_UI"]), width='stretch')
 
         st.divider()
         st.subheader(f"📑 Journal Brut Consolidé (Complet)")
@@ -300,6 +302,15 @@ if harvest_btn:
 
         for idx, chain in enumerate(chains):
             st.write(f"🌐 Analyse de **{chain}**...")
+
+            # Real-time feedback containers for current chain
+            c_fb1, c_fb2 = st.columns(2)
+            fb_native = c_fb1.empty()
+            fb_tokens = c_fb2.empty()
+
+            chain_txs = []
+            chain_toks = []
+
             v2, v1 = CHAIN_APIS[chain]["v2"], CHAIN_APIS[chain]["v1"]
             api_host, native = CHAIN_APIS[chain]["api_host"], CHAIN_APIS[chain]["native"]
             api_key = api_keys.get(chain)
@@ -327,7 +338,7 @@ if harvest_btn:
                     meth = ""
 
                 fee = (gas_u * gas_p) / 1e18
-                global_raw_txs.append({
+                v4_tx = {
                     "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native",
                     "Method": meth, "Account": addr_c, "From": f_raw, "To": t_raw,
                     "From_Label": f_l, "To_Label": t_l,
@@ -335,7 +346,11 @@ if harvest_btn:
                     "Asset": native, "Amount": val if t_raw == addr_c else -val,
                     "Fee_Asset": native, "Fee_Amount": fee if f_raw == addr_c else 0.0,
                     "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
-                })
+                }
+                global_raw_txs.append(v4_tx)
+                chain_txs.append(v4_tx)
+
+            fb_native.caption(f"✅ {len(chain_txs)} Transactions Natives")
 
             # Tokens
             raw_v1_toks = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "token-transfers")
@@ -358,7 +373,7 @@ if harvest_btn:
                     f_l, t_l = "", ""
                     tx_h = t.get("hash")
 
-                global_raw_txs.append({
+                v4_tok = {
                     "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Token",
                     "Method": "", "Account": addr_c, "From": f_raw, "To": t_raw,
                     "From_Label": f_l, "To_Label": t_l,
@@ -366,7 +381,11 @@ if harvest_btn:
                     "Asset": asset, "Amount": val if t_raw == addr_c else -val,
                     "Fee_Asset": "", "Fee_Amount": 0.0,
                     "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
-                })
+                }
+                global_raw_txs.append(v4_tok)
+                chain_toks.append(v4_tok)
+
+            fb_tokens.caption(f"✅ {len(chain_toks)} Transferts de Tokens")
 
             # --- VOIE 2 : API SCANS ---
             if api_key:
@@ -417,7 +436,7 @@ if harvest_btn:
                     res["Fee_Amount"] = w2.iloc[0].get("Fee_Amount", 0.0); res["Method"] = w2.iloc[0].get("Method", "")
                     res["Source_Way"] = "Way_1+2" if not w1.empty else "Way_2"
                 return res
-            df_final = df_merged.groupby(["Tx_Hash", "Asset", "Account"]).apply(consolidate_group).reset_index(drop=True)
+            df_final = df_merged.groupby(["Tx_Hash", "Asset", "Account", "Chain"]).apply(consolidate_group).reset_index(drop=True)
             st.session_state.transactions = df_final.sort_values("Date", ascending=False)
 
             # Summary stats
