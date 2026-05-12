@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 import requests
 from datetime import datetime
-from shared_logic import get_known_accounts, show_status, pd_read_csv_safe
+import shared_logic as sl
 import time
 import json
 import io
@@ -125,6 +125,8 @@ if uploaded_file:
     if st.button("🚀 Lancer la transcription Bleap", type="primary", width='stretch'):
         with st.spinner("Analyse et recherche des prix..."):
             df_final = process_bleap_csv(df_raw)
+            # Apply standard identification
+            df_final = sl.standardize_df_addresses(df_final)
             st.session_state.bleap_final = df_final
             st.success(f"Transcription terminée : {len(df_final)} lignes générées.")
 
@@ -159,5 +161,7 @@ if uploaded_file:
             st.balloons()
             st.success(f"Fichier sanctuarisé dans : `{save_path}`")
 
+st.sidebar.divider()
+sl.show_status()
 st.sidebar.divider()
 st.sidebar.caption("Import Bleap v1.0 - appBleap")

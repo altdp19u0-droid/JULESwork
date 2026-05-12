@@ -26,7 +26,11 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 - **NOMMAGE CONSOLIDÉ :** Le fichier final doit impérativement porter le suffixe `_consolidated_` (ex: `raw_transactions_consolidated_*.csv`) pour indiquer le traitement multivoie.
 - **UI RÉCOLTE :** L'interface doit obligatoirement afficher trois tableaux distincts en conclusion de récolte par compte, même s'ils sont vides : **Portfolio**, **Transactions** et **Tokens**. Un message d'état doit confirmer l'accessibilité de Blockscout et Etherscan.
 - **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `resolve_owner_display` pour discriminer et unifier les identités. Le standard absolu est le format : **`Identifiant_Technique (Nom_Amical)`**. La suite doit impérativement dédoublonner les listes via `get_owner_display_list` pour qu'une même identité (liée par `owner_accounts.json`) n'apparaisse qu'une seule fois dans les menus et rapports. Un suivi incrémental des comptes collectés doit rester visible.
-- **CLÉ UNIVERSELLE :** Permettre la saisie d'une clé API unique en UI s'appliquant à tous les réseaux par défaut.
+- **GESTION DES CLÉS API :**
+    - **Clé Universelle (V2 Unifiée) :** Permettre la saisie d'une clé API unique s'appliquant à tous les réseaux.
+    - **Support Etherscan V2 :** Utiliser systématiquement l'endpoint `https://api.etherscan.io/v2/api` avec le paramètre `chainid` pour les réseaux compatibles (Ethereum, Base, Arbitrum, BSC, etc.). Cela permet une récolte multi-chaîne avec une seule clé V2.
+    - **Temporisation FREE Plan :** Appliquer une pause de **400ms** minimum entre chaque appel API et gérer le retry automatique de **5s** en cas de "Rate Limit" pour respecter strictement les quotas des comptes gratuits (5 calls/sec).
+    - **Diagnostic Explicite :** Capturer et afficher le message d'erreur brut de l'API (ex: "Invalid API Key") au lieu d'un message générique.
 
 ### 2. Standard de Données Cible (SCHEMA RAW V4)
 Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma de 19 colonnes :

@@ -283,11 +283,8 @@ menu = st.session_state["_hub_current_menu"]
 
 # Auto-discovery of owner accounts
 def get_discovered_accounts():
-    discovered = set()
-    if not st.session_state.transactions.empty:
-        discovered.update(st.session_state.transactions['Account'].dropna().unique())
-    discovered.update(sl.get_known_accounts(include_mappings=False))
-    return sorted([str(x) for x in discovered if str(x).strip()])
+    """Returns a list of unique identities discovered in session and journals."""
+    return sl.get_owner_display_list(st.session_state.transactions)
 
 with st.sidebar:
     st.divider()
