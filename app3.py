@@ -278,7 +278,7 @@ with tab_accounts:
     owners_map = shared_logic.load_owner_accounts()
 
     # Initialize variables to avoid NameError in downstream tabs/PDF generation
-    accounts = list(set(owners_map.values())) # Use all known owner labels
+    accounts = []
     derived_local = pd.DataFrame()
     df_protocols = pd.DataFrame()
 
@@ -293,16 +293,18 @@ with tab_accounts:
             except: pass
     pos_df = pd.concat(manual_all) if manual_all else pd.DataFrame()
 
+    # Consolidate all account IDs (hex or label) from journal and registered owners
+    all_acc_ids = set(owners_map.keys())
     if not journal.empty:
-        accounts = list(journal['Account'].dropna().unique())
-        st.write(f"Comptes identifiés dans le journal : `{', '.join(accounts)}`")
-    else:
+        all_acc_ids.update(journal['Account'].dropna().unique())
+
+    # Format for display
+    accounts = sorted([shared_logic.format_owner_display(a, owners_map.get(a)) for a in all_acc_ids])
+
+    if journal.empty:
         st.info("Aucune transaction dans le journal de cette année. Utilisation des comptes propriétaires connus.")
 
-    # Consolidate accounts list with snapshot results for PDF and UI consistency
-    if not derived_local.empty:
-        snap_accs = derived_local["Account"].unique().tolist()
-        accounts = sorted(list(set(accounts + snap_accs)))
+    st.write(f"Comptes identifiés : `{', '.join(accounts)}`" if accounts else "Aucun compte identifié.")
 
     # --- NEW: Report from Previous Year ---
     st.divider()

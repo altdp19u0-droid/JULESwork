@@ -235,10 +235,15 @@ harvest_btn = st.button("🚀 Lancer la Récolte Totale (Step 1 : Brutes)", widt
 # Liste des Comptes Collectés (Visible au-dessus de la récolte)
 if st.session_state.harvested_accounts:
     st.subheader("🏦 Suivi de la Récolte Session")
-    acc_df = pd.DataFrame([
-        {"Compte": a, "Txs": v["tx"], "Actifs": v["portfolio"]}
-        for a, v in st.session_state.harvested_accounts.items()
-    ])
+    from shared_logic import load_owner_accounts, format_owner_display
+    owners_map = load_owner_accounts()
+
+    acc_data = []
+    for a, v in st.session_state.harvested_accounts.items():
+        disp = format_owner_display(a, owners_map.get(a))
+        acc_data.append({"Compte": disp, "Txs": v["tx"], "Actifs": v["portfolio"]})
+
+    acc_df = pd.DataFrame(acc_data)
     st.dataframe(acc_df, hide_index=True, width='stretch')
 
 # Affichage des 3 Tableaux Obligatoires (Par compte récolté)
@@ -257,9 +262,13 @@ if display_registry:
     st.divider()
     st.header("📋 Tableaux de Collecte par Compte")
 
+    from shared_logic import load_owner_accounts, format_owner_display
+    owners_map = load_owner_accounts()
+
     for addr, data in display_registry.items():
         is_active = (addr == active_addr)
-        with st.expander(f"👤 Compte : {addr} {'(Actif)' if is_active else ''}", expanded=is_active):
+        disp_name = format_owner_display(addr, owners_map.get(addr))
+        with st.expander(f"👤 Compte : {disp_name} {'(Actif)' if is_active else ''}", expanded=is_active):
             # Message d'état des APIs
             api_status = data.get("status", {})
             if any(v is not None for v in api_status.values()):
@@ -453,21 +462,21 @@ if harvest_btn:
                 if items_v2:
                     if eth_status_final is False: eth_status_final = True
                     for t, label, dt in items_v2:
-                    tx_h = t.get("hash")
-                    f_r, t_r = t.get("from", "").lower(), t.get("to", "").lower()
-                    amt = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal", 18) or 18))
-                    fee_v2 = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 1e18
-                    asset_v2 = t.get("tokenSymbol") or native
-                    global_raw_txs.append({
-                        "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": label,
-                        "Method": t.get("functionName", ""), "Account": addr_c, "From": f_r, "To": t_r,
-                        "From_Label": "", "To_Label": "",
-                        "Counterparty": t_r if f_r == addr_c else f_r,
-                        "Asset": asset_v2, "Amount": amt if t_r == addr_c else -amt,
-                        "Fee_Asset": native if f_r == addr_c else "",
-                        "Fee_Amount": fee_v2 if f_r == addr_c else 0.0,
-                        "Source_Way": "Way_2", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
-                    })
+                        tx_h = t.get("hash")
+                        f_r, t_r = t.get("from", "").lower(), t.get("to", "").lower()
+                        amt = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal", 18) or 18))
+                        fee_v2 = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 1e18
+                        asset_v2 = t.get("tokenSymbol") or native
+                        global_raw_txs.append({
+                            "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": label,
+                            "Method": t.get("functionName", ""), "Account": addr_c, "From": f_r, "To": t_r,
+                            "From_Label": "", "To_Label": "",
+                            "Counterparty": t_r if f_r == addr_c else f_r,
+                            "Asset": asset_v2, "Amount": amt if t_r == addr_c else -amt,
+                            "Fee_Asset": native if f_r == addr_c else "",
+                            "Fee_Amount": fee_v2 if f_r == addr_c else 0.0,
+                            "Source_Way": "Way_2", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
+                        })
             pbar.progress((idx + 1) / len(chains))
 
         # --- VOIE 3 : IMPORTS ---

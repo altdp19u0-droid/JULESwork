@@ -65,6 +65,24 @@ def standardize_df_addresses(df):
             df[col] = df[col].apply(standardize_address_string)
     return df
 
+def format_owner_display(identifier, name):
+    """
+    Standardized display for owner accounts:
+    - Address-based: '0x123... (Name)' or '0x123...' if no name.
+    - Label-based: 'Name (Label)' or 'Label' if no name.
+    """
+    ident = str(identifier).strip()
+    nm = str(name).strip() if name else ""
+
+    if not nm or nm.lower() == "nan" or nm == ident:
+        return ident
+
+    if ident.lower().startswith("0x"):
+        return f"{ident} ({nm})"
+    else:
+        # For non-blockchain addresses, we prioritize the Name
+        return f"{nm} ({ident})"
+
 def pd_read_csv_safe(path):
     try: return pd.read_csv(path, encoding="utf-8-sig")
     except:

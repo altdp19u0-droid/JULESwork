@@ -531,6 +531,9 @@ else:
     # get_portfolio_snapshot handles historical carryover
     snapshot_df, vgp_eoy = shared_logic.get_portfolio_snapshot(target_year, eoy_date)
 
+    # Load owners for display mapping
+    owners_map = shared_logic.load_owner_accounts()
+
     c1, c2, c3 = st.columns(3)
     c1.metric("Prix d'Acquisition Total (A)", f"{total_acq:,.2f} €", help="Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
     c2.metric(f"Valeur Patrimoniale (31/12/{target_year})", f"{vgp_eoy:,.2f} €", help="Valeur totale du portefeuille (VGP) à la fin de l'année.")
@@ -659,7 +662,10 @@ else:
         # 1. Filter snapshot for Owners
         mask_owner = snapshot_df["Location"].str.startswith("Account:", na=False)
         df_balances = snapshot_df[mask_owner].copy()
-        df_balances["Compte"] = df_balances["Location"].str.replace("Account: ", "")
+        def map_owner_bal(loc):
+            addr = loc.replace("Account: ", "")
+            return shared_logic.format_owner_display(addr, owners_map.get(addr))
+        df_balances["Compte"] = df_balances["Location"].apply(map_owner_bal)
 
         display_bal_cols = ["Compte", "Asset", "Entrées", "Sorties", "Solde", "Prix (EUR)", "Valeur (EUR)", "Notes"]
         df_balances = apply_notes(df_balances)

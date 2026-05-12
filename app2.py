@@ -245,11 +245,12 @@ with st.sidebar:
     with st.expander("👥 Comptes Propriétaires", expanded=False):
         om = shared_logic.load_owner_accounts()
         if om:
-            ed_om = st.data_editor(pd.DataFrame(list(om.items()), columns=["Address", "Label"]), num_rows="dynamic", width='stretch', key="ed_owners_sidebar")
+            # Table logic remains technical (Address/Label) for storage integrity
+            ed_om = st.data_editor(pd.DataFrame(list(om.items()), columns=["Address/Hash", "Nom/Label"]), num_rows="dynamic", width='stretch', key="ed_owners_sidebar")
             if st.button("💾 Sauver Liste Propriétaires", key="btn_save_om_sidebar"):
-                shared_logic.save_owner_accounts({str(r["Address"]).lower(): r["Label"] for _, r in ed_om.iterrows()}); st.rerun()
+                shared_logic.save_owner_accounts({str(r["Address/Hash"]).lower(): r["Nom/Label"] for _, r in ed_om.iterrows()}); st.rerun()
 
-            sa_om = st.selectbox("Gérer un compte", options=[""]+sorted(list(om.keys())), format_func=lambda x: f"{om[x]} ({x})" if x else "Sélectionner...", key="sel_om_mgr")
+            sa_om = st.selectbox("Gérer un compte", options=[""]+sorted(list(om.keys())), format_func=lambda x: shared_logic.format_owner_display(x, om[x]) if x else "Sélectionner...", key="sel_om_mgr")
             if sa_om:
                 ml_om = st.text_input("Nouveau Nom", value=om[sa_om], key="mod_lbl_acc_om")
                 if st.button("💾 Appliquer modification", key="btn_mod_om_sidebar"):
