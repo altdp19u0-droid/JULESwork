@@ -15,8 +15,9 @@ st.title("🚜 Sanctuarisation des Données Blockchain (Harvest Pure)")
 
 # Initialisation Session State
 if "transactions" not in st.session_state: st.session_state.transactions = pd.DataFrame()
-if "tokens" not in st.session_state: st.session_state.tokens = pd.DataFrame()
 if "portfolio" not in st.session_state: st.session_state.portfolio = pd.DataFrame()
+if "harvested_accounts" not in st.session_state: st.session_state.harvested_accounts = {} # {addr: {"tx": 0, "portfolio": 0}}
+if "account_data_registry" not in st.session_state: st.session_state.account_data_registry = {} # {addr: {"portfolio": df, "transactions": df, "status": {}}}
 
 # Configuration des Réseaux avec Blockscout V1 et V2
 def load_api_keys():
@@ -113,8 +114,9 @@ RAW_V4_COLUMNS = [
 # --- Way 2 API Helper ---
 def fetch_etherscan_way2(api_host, addr, api_key, year, max_items, native):
     items = []
-    if not api_key: return []
+    if not api_key: return [], False # On garde list vide si pas de clé
 
+    success = False
     endpoints = [
         ("txlist", "Native"), ("tokentx", "Tokens"),
         ("txlistinternal", "Internal")
@@ -130,13 +132,13 @@ def fetch_etherscan_way2(api_host, addr, api_key, year, max_items, native):
                 if str(res.get("status")) != "1" or not isinstance(results, list) or not results:
                     break
 
+                if results: success = True
                 for t in results:
                     dt = datetime.fromtimestamp(int(t['timeStamp']), tz=tz.tzutc())
                     if dt.year == year:
-                        # Normalize to RAW V4 right here or in a separate merge function
                         items.append((t, label, dt))
                     elif dt.year > year:
-                         break # Assuming asc sort, might need optimization
+                         break
 
                 # Pagination
                 last_block = int(results[-1].get('blockNumber', 0))
@@ -146,7 +148,7 @@ def fetch_etherscan_way2(api_host, addr, api_key, year, max_items, native):
                 time.sleep(0.2)
             except: break
 
-    return items[:max_items]
+    return items[:max_items], success
 
 # --- Shared Logic ---
 def call_api(url, params=None):
@@ -225,44 +227,83 @@ def format_addr(addr_obj):
 def fetch_portfolio_v2(api_v2, addr):
     url = f"{api_v2}/addresses/{addr}/token-balances"
     data = call_api(url)
-    return data if data else []
+    return data # Can be None if failure
 
 # --- Main App Logic ---
 harvest_btn = st.button("🚀 Lancer la Récolte Totale (Step 1 : Brutes)", width='stretch')
 
-# Détection de présence de données pour l'affichage permanent
-has_data = not st.session_state.transactions.empty or not st.session_state.portfolio.empty
+# Liste des Comptes Collectés (Visible au-dessus de la récolte)
+if st.session_state.harvested_accounts:
+    st.subheader("🏦 Suivi de la Récolte Session")
+    acc_df = pd.DataFrame([
+        {"Compte": a, "Txs": v["tx"], "Actifs": v["portfolio"]}
+        for a, v in st.session_state.harvested_accounts.items()
+    ])
+    st.dataframe(acc_df, hide_index=True, width='stretch')
 
-# Affichage des données mémorisées (en dehors du bloc bouton pour persistance)
-if has_data:
-    if not st.session_state.portfolio.empty:
-        st.subheader("📦 Portfolio (Dernière Récolte)")
-        st.dataframe(st.session_state.portfolio, width='stretch')
+# Affichage des 3 Tableaux Obligatoires (Par compte récolté)
+# On inclut l'adresse actuellement saisie dès qu'elle est présente
+active_addr = address.lower().strip() if address.strip() else None
 
-    if not st.session_state.transactions.empty:
-        df_all = st.session_state.transactions.copy()
+display_registry = st.session_state.account_data_registry.copy()
+if active_addr and active_addr not in display_registry:
+    display_registry[active_addr] = {
+        "portfolio": pd.DataFrame(columns=RAW_V4_COLUMNS),
+        "transactions": pd.DataFrame(columns=RAW_V4_COLUMNS),
+        "status": {"blockscout": None, "etherscan": None}
+    }
 
-        # Unification sémantique robuste pour le filtrage UI
-        df_all["Type_UI"] = df_all["Type"].astype(str).str.lower().str.replace("s", "")
+if display_registry:
+    st.divider()
+    st.header("📋 Tableaux de Collecte par Compte")
 
-        # Display Native Transactions
-        mask_native = df_all["Type_UI"].isin(["native", "internal", "native/internal"])
-        df_native = df_all[mask_native]
-        if not df_native.empty:
-            st.subheader("📝 Transactions Natives & Internes (Journal Brut)")
-            st.dataframe(df_native.drop(columns=["Type_UI"]), width='stretch')
+    for addr, data in display_registry.items():
+        is_active = (addr == active_addr)
+        with st.expander(f"👤 Compte : {addr} {'(Actif)' if is_active else ''}", expanded=is_active):
+            # Message d'état des APIs
+            api_status = data.get("status", {})
+            if any(v is not None for v in api_status.values()):
+                c1, c2 = st.columns(2)
+                bs_st = api_status.get("blockscout")
+                eth_st = api_status.get("etherscan")
 
-        # Display Token Transfers (Including CEX movements)
-        mask_token = df_all["Type_UI"].isin(["token", "cex_mvt"])
-        df_tokens = df_all[mask_token]
-        if not df_tokens.empty:
-            st.subheader("🪙 Token Transfers (Journal Brut)")
-            st.dataframe(df_tokens.drop(columns=["Type_UI"]), width='stretch')
+                if bs_st is True: c1.success("✅ Blockscout : Connecté")
+                elif bs_st is False: c1.error("❌ Blockscout : Erreur d'accès / Serveur injoignable")
+                elif bs_st == "empty": c1.warning("ℹ️ Blockscout : Connecté (Mais aucun actif trouvé)")
 
-        st.divider()
-        st.subheader(f"📑 Journal Brut Consolidé (Complet)")
-        st.info("Ce tableau regroupe l'intégralité des données fusionnées des 3 voies.")
-        st.dataframe(df_all, width='stretch')
+                if eth_st is True: c2.success("✅ Etherscan/API : Connecté")
+                elif eth_st is False: c2.error("❌ Etherscan/API : Erreur d'accès ou Clé invalide")
+                elif eth_st == "empty": c2.warning("ℹ️ Etherscan/API : Connecté (Mais aucun mouvement trouvé)")
+            else:
+                st.info("💡 Cliquez sur 'Lancer la Récolte' pour interroger les APIs Blockscout et Etherscan pour ce compte.")
+
+            # 1. TABLEAU PORTFOLIO
+            st.markdown("#### 📦 Portfolio")
+            df_p = data.get("portfolio", pd.DataFrame(columns=RAW_V4_COLUMNS))
+            st.dataframe(df_p, width='stretch', key=f"df_p_{addr}")
+            if df_p.empty and api_status.get("blockscout") is None:
+                st.caption("En attente de récolte...")
+
+            # 2. TABLEAU TRANSACTIONS
+            st.markdown("#### 📝 Transactions")
+            df_t = data.get("transactions", pd.DataFrame(columns=RAW_V4_COLUMNS))
+            df_native = pd.DataFrame(columns=RAW_V4_COLUMNS)
+            if not df_t.empty:
+                df_t["Type_UI"] = df_t["Type"].astype(str).str.lower().str.replace("s", "")
+                mask_native = df_t["Type_UI"].isin(["native", "internal", "native/internal"])
+                df_native = df_t[mask_native].drop(columns=["Type_UI"], errors="ignore")
+
+            st.dataframe(df_native, width='stretch', key=f"df_n_{addr}")
+
+            # 3. TABLEAU TOKENS
+            st.markdown("#### 🪙 Tokens")
+            df_tokens = pd.DataFrame(columns=RAW_V4_COLUMNS)
+            if not df_t.empty:
+                # Type_UI already created above if not empty
+                mask_token = df_t["Type_UI"].isin(["token", "cex_mvt"])
+                df_tokens = df_t[mask_token].drop(columns=["Type_UI"], errors="ignore")
+
+            st.dataframe(df_tokens, width='stretch', key=f"df_t_{addr}")
 
 if harvest_btn:
     if not address or not Web3.is_address(address):
@@ -272,29 +313,40 @@ if harvest_btn:
         st.info(f"🔍 Analyse de l'adresse : {addr_c}")
 
         global_raw_txs = []
+        bs_status_final = False # False=Error, True=Success, "empty"=Vide
+        eth_status_final = bool(not any(api_keys.values())) # True si pas de clés (pas d'erreur)
 
         # 1. Harvest Portfolio (ÉTAT ACTUEL - VOIE 1)
         st.subheader("📦 Portfolio (État Actuel - Blockscout)")
         portfolio_all = []
         for chain in chains:
             v2 = CHAIN_APIS[chain]["v2"]
-            balances = fetch_portfolio_v2(v2, addr_c)
-            if isinstance(balances, dict) and "items" in balances: balances = balances["items"]
-            for b in balances:
-                token = b.get("token", {})
-                asset_sym = token.get("symbol", "NATIVE" if not token else "TOKEN")
-                qty = float(b.get("value", 0)) / (10**int(token.get("decimals", 18) or 18))
-                portfolio_all.append({
-                    "Date": datetime(target_year, 12, 31).isoformat(),
-                    "Chain": chain, "Tx_Hash": f"PORT-{addr_c}-{asset_sym}",
-                    "Type": "Portfolio", "Method": "Snapshot", "Account": addr_c,
-                    "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "",
-                    "Counterparty": "Blockchain Snapshot", "Asset": asset_sym, "Amount": qty,
-                    "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1",
-                    "Audit_Status": "RAW", "Fee_Audit_Alert": ""
-                })
+            try:
+                balances = fetch_portfolio_v2(v2, addr_c)
+                if balances is not None:
+                    if bs_status_final is False: bs_status_final = "empty"
+                    if isinstance(balances, dict) and "items" in balances: balances = balances["items"]
+                    if balances:
+                        bs_status_final = True
+                        for b in balances:
+                            token = b.get("token", {})
+                            asset_sym = token.get("symbol", "NATIVE" if not token else "TOKEN")
+                            qty = float(b.get("value", 0)) / (10**int(token.get("decimals", 18) or 18))
+                            portfolio_all.append({
+                                "Date": datetime(target_year, 12, 31).isoformat(),
+                                "Chain": chain, "Tx_Hash": f"PORT-{addr_c}-{asset_sym}",
+                                "Type": "Portfolio", "Method": "Snapshot", "Account": addr_c,
+                                "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "",
+                                "Counterparty": "Blockchain Snapshot", "Asset": asset_sym, "Amount": qty,
+                                "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1",
+                                "Audit_Status": "RAW", "Fee_Audit_Alert": ""
+                            })
+                else:
+                    # technical error for this chain
+                    pass
+            except: pass
+
         st.session_state.portfolio = pd.DataFrame(portfolio_all, columns=RAW_V4_COLUMNS)
-        st.dataframe(st.session_state.portfolio, width='stretch')
 
         # 2. MULTI-WAY HARVEST
         st.subheader("📝 Récolte Multivoie (Journal Brut)")
@@ -390,8 +442,17 @@ if harvest_btn:
             # --- VOIE 2 : API SCANS ---
             if api_key:
                 st.write(f"🔎 Scan Way_2 pour **{chain}**...")
-                items_v2 = fetch_etherscan_way2(api_host, addr_c, api_key, target_year, max_txs, native)
-                for t, label, dt in items_v2:
+                items_v2, way2_success = fetch_etherscan_way2(api_host, addr_c, api_key, target_year, max_txs, native)
+                if way2_success:
+                    if eth_status_final in [False, True]: eth_status_final = True
+                    else: eth_status_final = True # Prioritize Success
+                elif items_v2 == [] and way2_success is False:
+                    # Error or no results? fetch_etherscan_way2 returns False if not status 1
+                    pass
+
+                if items_v2:
+                    if eth_status_final is False: eth_status_final = True
+                    for t, label, dt in items_v2:
                     tx_h = t.get("hash")
                     f_r, t_r = t.get("from", "").lower(), t.get("to", "").lower()
                     amt = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal", 18) or 18))
@@ -438,6 +499,18 @@ if harvest_btn:
                 return res
             df_final = df_merged.groupby(["Tx_Hash", "Asset", "Account", "Chain"]).apply(consolidate_group).reset_index(drop=True)
             st.session_state.transactions = df_final.sort_values("Date", ascending=False)
+
+            # Met à jour le suivi
+            if addr_c not in st.session_state.harvested_accounts: st.session_state.harvested_accounts[addr_c] = {"tx":0, "portfolio":0}
+            st.session_state.harvested_accounts[addr_c]["tx"] = len(st.session_state.transactions)
+            st.session_state.harvested_accounts[addr_c]["portfolio"] = len(st.session_state.portfolio)
+
+            # Enregistrement dans le registre par compte pour affichage permanent
+            st.session_state.account_data_registry[addr_c] = {
+                "portfolio": st.session_state.portfolio.copy(),
+                "transactions": st.session_state.transactions.copy(),
+                "status": {"blockscout": bs_status_final, "etherscan": eth_status_final}
+            }
 
             # Summary stats
             ways_count = df_merged["Source_Way"].value_counts().to_dict()
