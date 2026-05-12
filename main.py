@@ -1,11 +1,15 @@
-import streamlit as st
-import pandas as pd
-import requests
-from datetime import datetime
+import os
+import json
 import time
+import requests
+import pandas as pd
+from datetime import datetime
+import streamlit as st
+import unicodedata
+import shared_logic as sl
 
 # --- Configuration ---
-st.set_page_config(page_title="Jules Crypto Tracker Harvest Pro", layout="wide")
+st.set_page_config(page_title="Jules Crypto Hub - Navigation", layout="wide")
 
 # Configuration des Réseaux (Architecture demandée)
 NETWORKS_CFG = {
@@ -16,6 +20,11 @@ NETWORKS_CFG = {
     "Optimism": {"host": "api-optimistic.etherscan.io", "native": "ETH", "free_api": "https://optimism.blockscout.com/api/v2"},
     "BSC": {"host": "api.bscscan.com", "native": "BNB", "free_api": "https://api.bscscan.com/api"}
 }
+
+# --- Status Indicator ---
+def show_status():
+    st.sidebar.success("✅ Système Opérationnel")
+    st.sidebar.caption(f"Logique Partagée : OK")
 
 # --- Initialisation de la Session ---
 REQUIRED_COLS = ['Source', 'ID', 'Date', 'Account', 'Asset', 'Type', 'Amount', 'Fee', 'Fiat_Value_EUR', 'Counterparty', 'Network', 'Is_Spam', 'Category']
@@ -34,55 +43,6 @@ if 'fiat_accounts' not in st.session_state:
 if 'spam_addresses' not in st.session_state:
     st.session_state.spam_addresses = set()
 
-# --- Fonctions de Prix & Conversion ---
-
-@st.cache_data(ttl=86400)
-def get_eur_usd_rate(date_obj):
-    date_str = date_obj.strftime("%Y-%m-%d")
-    try:
-        url = f"https://api.frankfurter.app/{date_str}?from=USD&to=EUR"
-        res = requests.get(url, timeout=5).json()
-        return res["rates"]["EUR"]
-    except: return 0.92
-
-@st.cache_data(ttl=3600)
-def get_price_usd(asset, date_obj):
-    if asset is None or not isinstance(asset, str) or not asset.strip():
-        return 0.0
-
-    asset = asset.upper().strip()
-    cg_map = {
-        "ETH": "ethereum", "BNB": "binancecoin", "POL": "polygon-ecosystem-token",
-        "USDT": "tether", "USDC": "usd-coin", "DAI": "dai",
-        "EURA": "ageur", "AGEUR": "ageur", "STEUR": "stasis-euro",
-        "8LND": "8lnd", "BTC": "bitcoin", "WBTC": "wrapped-bitcoin",
-        "ARB": "arbitrum", "OP": "optimism", "MATIC": "matic-network"
-    }
-    asset_id = cg_map.get(asset, asset.lower())
-    d_str = date_obj.strftime("%d-%m-%Y")
-
-    try:
-        url = f"https://api.coingecko.com/api/v3/coins/{asset_id}/history?date={d_str}&localization=false"
-        res = requests.get(url, timeout=5).json()
-        if "market_data" in res: return res["market_data"]["current_price"]["usd"]
-    except: pass
-
-    try:
-        ts = int(time.mktime(date_obj.timetuple()))
-        url = f"https://coins.llama.fi/prices/historical/{ts}/coingecko:{asset_id}"
-        res = requests.get(url, timeout=5).json()
-        if "coins" in res and res["coins"]:
-            return res["coins"][next(iter(res["coins"]))]["price"]
-    except: pass
-
-    if asset in ["USDT", "USDC", "DAI"]: return 1.0
-    if asset in ["EURA", "AGEUR", "STEUR"]: return 1.08
-    return 0.0
-
-def get_price_eur(asset, date_obj):
-    usd = get_price_usd(asset, date_obj)
-    if usd == 0: return 0.0
-    return usd * get_eur_usd_rate(date_obj)
 
 # --- MOTEUR DE RÉCOLTE ULTIME (V3.0) ---
 
@@ -261,7 +221,7 @@ def fetch_data(address, api_key, network):
             if total_req > 0:
                 pbar = st.progress(0)
                 for idx, row in enumerate(combos.itertuples()):
-                    prices_map[(row.Asset, row.Day)] = get_price_eur(row.Asset, row.Day)
+                    prices_map[(row.Asset, row.Day)] = sl.get_price_eur(row.Asset, row.Day)
                     # Respect du Rate Limit CoinGecko (1 requête par sec environ)
                     if total_req > 5: time.sleep(1.05)
                     pbar.progress((idx+1)/total_req)
@@ -269,18 +229,101 @@ def fetch_data(address, api_key, network):
 
             df['Fiat_Value_EUR'] = df.apply(lambda r: float(r['Amount']) * prices_map.get((r['Asset'], r['Date'].date()), 0.0), axis=1)
 
-        df['Is_Spam'] = df['Counterparty'].apply(lambda x: str(x).lower() in st.session_state.spam_addresses)
-        df['Category'] = df['Asset'].apply(lambda a: 'DeFi' if any(x in a.lower() for x in ['lnd', 'steth', 'steur']) else 'Transfert')
+                # Propagation de la liste des spams qualifiés de la suite
+        # Centralized recursive spam detection
+        leaked_indices = sl.validate_spam_exclusion(df)
+        df['Is_Spam'] = False
+        if leaked_indices:
+            df.loc[leaked_indices, 'Is_Spam'] = True
+
+        df['Category'] = df['Asset'].apply(lambda a: 'DeFi' if any(x in str(a).lower() for x in ['lnd', 'steth', 'steur']) else 'Transfert')
 
     return df
 
-# --- UI PRINCIPALE ---
-st.sidebar.title("Jules Crypto Pro V3")
-menu = st.sidebar.selectbox("Navigation", ["Harvest", "Consultation", "Frais & Fiscalité", "Settings"], key="main_nav")
+# --- Shared Session Initialization ---
+if "_hub_target_year" not in st.session_state:
+    st.session_state["_hub_target_year"] = datetime.now().year
 
-if menu == "Harvest":
-    st.header("🚜 Récolte Massive de Données")
-    t1, t2 = st.tabs(["Exploration Automatique", "Saisie Manuelle"])
+# --- UI PRINCIPALE: Navigation Hub ---
+menu_options = {
+    "🏠 Accueil": "home",
+    "🚜 Step 1: Harvest (app)": "app",
+    "🏦 Step 0: Registre Manuel (app0)": "app0",
+    "⚖️ Step 2: Qualification (app2)": "app2",
+    "🧮 Step 3a: Calcul VGP (app2VGP)": "app2VGP",
+    "👤 Step 3b: Dashboard Patrimoine (appPropri)": "appPropri",
+    "🏛️ Step 3c: Fiscalité (app3)": "app3",
+    "🕵️ Step 4: Diagnostic (appDiagCoh)": "appDiagCoh",
+    "🔍 Fix: Collecteur Prix (appPriceFix)": "appPriceFix",
+    "🧪 Live Harvest Pro (main)": "live_harvest"
+}
+
+# Ensure the navigation state is initialized
+if "_hub_current_menu" not in st.session_state:
+    st.session_state["_hub_current_menu"] = "home"
+
+# Render Navigation Hub at the TOP of the sidebar
+st.sidebar.title("💎 Jules Crypto Hub")
+
+# Create a mapping for finding the index
+menu_labels = list(menu_options.keys())
+menu_values = list(menu_options.values())
+default_index = menu_values.index(st.session_state["_hub_current_menu"]) if st.session_state["_hub_current_menu"] in menu_values else 0
+
+menu_selection = st.sidebar.selectbox(
+    "🚀 Navigation",
+    options=menu_labels,
+    index=default_index,
+    key="_hub_nav_selectbox_v14" # Versioned key for robustness
+)
+
+# Update the state immediately
+st.session_state["_hub_current_menu"] = menu_options[menu_selection]
+menu = st.session_state["_hub_current_menu"]
+
+# Auto-discovery of owner accounts
+def get_discovered_accounts():
+    """Returns a list of unique identities discovered in session and journals."""
+    return sl.get_owner_display_list(st.session_state.transactions)
+
+with st.sidebar:
+    st.divider()
+    st.subheader("🏦 Comptes Propriétaires")
+
+    # Use the new deduplicated list logic from shared_logic
+    owner_displays = sl.get_owner_display_list()
+    if owner_displays:
+        for disp in owner_displays:
+            st.sidebar.caption(f"• {disp}")
+    else:
+        st.sidebar.info("Aucun compte détecté.")
+
+    new_acc = st.text_input("Ajouter un compte manuel", placeholder="ex: 0x... ou Label", key="main_hub_add_acc_txt")
+    if st.button("➕ Ajouter", key="main_hub_add_acc_btn"):
+        if new_acc:
+            om = sl.load_owner_accounts()
+            raw = sl.resolve_raw_addr(new_acc)
+            om[raw] = new_acc # Use the input as label if it's not a raw address
+            sl.save_owner_accounts(om)
+            st.success(f"Compte '{new_acc}' ajouté au registre.")
+            st.rerun()
+
+# --- Routing Logic ---
+if menu == "home":
+    st.header("Bienvenue dans votre Hub Crypto Jules")
+    st.write("Sélectionnez un module dans la barre latérale pour commencer votre traitement fiscal.")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.info("### 🚜 Étape 1 : Récolte\nCollectez vos données on-chain via Blockscout et Etherscan.")
+    with c2:
+        st.info("### ⚖️ Étape 2 : Qualification\nNettoyez les spams et qualifiez vos mouvements.")
+    with c3:
+        st.info("### 🏛️ Étape 3 : Fiscalité\nCalculez votre VGP et générez votre rapport fiscal.")
+
+elif menu == "live_harvest":
+    st.header("🚜 Récolte Massive de Données (Live)")
+    t1, t2, t3, t4, t5 = st.tabs(["Récolte deep", "Consultation", "Fiscalité", "Saisie Manuelle", "Settings"])
 
     with t1:
         with st.form("harvest_form"):
@@ -290,7 +333,26 @@ if menu == "Harvest":
             key = st.text_input(f"Clé API pour {net} (Optionnel)", type="password")
             submit = st.form_submit_button("Lancer la récolte profonde")
 
-    with t2:
+        if submit and addr:
+            new_df = fetch_data(addr, key, net)
+            if not new_df.empty:
+                st.session_state.transactions = pd.concat([st.session_state.transactions, new_df])
+                st.session_state.transactions = st.session_state.transactions.drop_duplicates(subset=['ID', 'Asset', 'Network'], keep='first')
+                st.session_state.transactions = st.session_state.transactions.sort_values('Date', ascending=False)
+                st.session_state.accounts_metadata[f"{addr[:10]}... ({net})"] = {"Count": len(new_df)}
+                st.success(f"Récolte réussie : {len(new_df)} lignes.")
+
+        if st.session_state.accounts_metadata:
+            st.subheader("📋 Gestion des Comptes")
+            for acc, meta in list(st.session_state.accounts_metadata.items()):
+                c1, c2 = st.columns([4, 1])
+                msg = f"{acc} : {meta.get('Count', 0)} transactions"
+                if meta.get("Manual"): msg += " (Manuel)"
+                c1.info(msg)
+                if c2.button("Supprimer", key=f"del_{acc}"):
+                    del st.session_state.accounts_metadata[acc]; st.rerun()
+
+    with t4:
         st.subheader("📝 Ajouter une transaction isolée")
         with st.form("manual_entry"):
             mc1, mc2, mc3 = st.columns(3)
@@ -308,96 +370,104 @@ if menu == "Harvest":
                     'Amount': m_amt, 'Fee': 0.0, 'Fiat_Value_EUR': 0.0,
                     'Counterparty': 'User', 'Network': m_net, 'Is_Spam': False, 'Category': m_cat
                 }])
-                new_row['Fiat_Value_EUR'] = new_row.apply(lambda r: float(r['Amount']) * get_price_eur(r['Asset'], r['Date']), axis=1)
+                new_row['Fiat_Value_EUR'] = new_row.apply(lambda r: float(r['Amount']) * sl.get_price_eur(r['Asset'], r['Date']), axis=1)
                 st.session_state.transactions = pd.concat([st.session_state.transactions, new_row], ignore_index=True)
                 st.success("Ajouté !")
 
-    if submit and addr:
-        new_df = fetch_data(addr, key, net)
-        if not new_df.empty:
-            st.session_state.transactions = pd.concat([st.session_state.transactions, new_df])
-            st.session_state.transactions = st.session_state.transactions.drop_duplicates(subset=['ID', 'Asset', 'Network'], keep='first')
-            st.session_state.transactions = st.session_state.transactions.sort_values('Date', ascending=False)
-            st.session_state.accounts_metadata[f"{addr[:10]}... ({net})"] = {"Count": len(new_df)}
-            st.success(f"Récolte réussie : {len(new_df)} lignes.")
+    with t2:
+        st.header("🔍 Consultation & Inventaire")
+        show_spam_live = st.checkbox("Afficher les transactions Spam", value=False, key="chk_show_spam_live")
 
-    if st.session_state.accounts_metadata:
-        for acc, meta in list(st.session_state.accounts_metadata.items()):
-            c1, c2 = st.columns([4, 1])
-            c1.info(f"{acc} : {meta['Count']} transactions")
-            if c2.button("Supprimer", key=f"del_{acc}"):
-                del st.session_state.accounts_metadata[acc]; st.rerun()
+        if not st.session_state.transactions.empty:
+            # Propagation de la liste des spams qualifiés avant consultation
+            sl_spam = sl.load_spam_list()
+            st.session_state.spam_addresses.update(sl_spam)
+            # Mise à jour auto des flags spam si de nouveaux spams ont été ajoutés à la suite
+            mask_spam = st.session_state.transactions.apply(lambda r: str(r['Counterparty']).lower() in st.session_state.spam_addresses or sl.resolve_raw_addr(r['Counterparty']) in st.session_state.spam_addresses or str(r['Asset']).lower() in st.session_state.spam_addresses, axis=1)
+            st.session_state.transactions.loc[mask_spam, 'Is_Spam'] = True
 
-elif menu == "Consultation":
-    st.header("🔍 Consultation & Inventaire")
-    show_spam = st.sidebar.checkbox("Afficher les transactions Spam", value=False)
+            # Filtrage strict pour l'inventaire
+            clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
+            inv = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
+            inv = inv[inv['Amount'].abs() > 1e-9]
 
-    if not st.session_state.transactions.empty:
-        # Filtrage strict pour l'inventaire
+            if not inv.empty:
+                st.subheader("📦 Position Actuelle (Hors Spam)")
+                now = datetime.now()
+                inv['p_eur'] = inv['Asset'].apply(lambda a: float(sl.get_price_eur(str(a), now)))
+                inv['val_eur'] = inv['Amount'] * inv['p_eur']
+                inv = inv.sort_values('val_eur', ascending=False)
+                cols = st.columns(min(len(inv), 4))
+                for idx, row in inv.iterrows():
+                    with cols[idx % 4]: st.metric(row['Asset'], f"{row['Amount']:.4f}", f"{row['val_eur']:,.2f} €")
+
+            st.divider()
+            df_display = st.session_state.transactions.copy()
+            # Masquage immédiat si l'option est décochée (Comportement automatique)
+            if not show_spam_live:
+                df_display = df_display[df_display['Is_Spam'] == False]
+
+            # On libère aussi la liste des assets filtrables de tout spam
+            available_assets = sorted(df_display['Asset'].unique())
+            f_asset_live = st.multiselect("Filtrer Asset", options=available_assets, key="f_asset_live")
+            if f_asset_live: df_display = df_display[df_display['Asset'].isin(f_asset_live)]
+
+            st.subheader("📝 Historique des Mouvements")
+            edited = st.data_editor(df_display.sort_values('Date', ascending=False), width='stretch', key="tx_ed_live")
+            if st.button("💾 Sauvegarder modifications", key="btn_save_live"):
+                for _, row in edited.iterrows():
+                    # Mise à jour de la ligne spécifique
+                    mask = (st.session_state.transactions['ID'] == row['ID']) & (st.session_state.transactions['Asset'] == row['Asset'])
+                    st.session_state.transactions.loc[mask, 'Is_Spam'] = row['Is_Spam']
+                    st.session_state.transactions.loc[mask, 'Category'] = row['Category']
+
+                    # Propagation du marquage Spam à l'adresse de contrepartie
+                    cp = str(row['Counterparty']).lower()
+                    if row['Is_Spam']:
+                        st.session_state.spam_addresses.add(cp)
+                        st.session_state.transactions.loc[st.session_state.transactions['Counterparty'].str.lower() == cp, 'Is_Spam'] = True
+                    else:
+                        if cp in st.session_state.spam_addresses:
+                            st.session_state.spam_addresses.remove(cp)
+                            # On réactive les transactions si on retire le flag spam global
+                            st.session_state.transactions.loc[st.session_state.transactions['Counterparty'].str.lower() == cp, 'Is_Spam'] = False
+                st.success("Enregistré ! (Propagation appliquée)"); st.rerun()
+
+    with t3:
+        st.header("⚖️ Fiscalité (Art. 150 VH bis)")
+        st.session_state.fiat_accounts = st.data_editor(st.session_state.fiat_accounts, num_rows="dynamic", width='stretch', key="ed_fiat_live")
         clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
-        inv = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
-        inv = inv[inv['Amount'].abs() > 1e-9]
+        if not clean_df.empty:
+            # Valeur Globale Portefeuille
+            inv = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
+            vgp = sum([float(row['Amount']) * sl.get_price_eur(str(row['Asset']), datetime.now()) for _, row in inv.iterrows()])
+            st.metric("Valeur Globale Portefeuille (VGP)", f"{vgp:,.2f} €")
+            prix_acq = st.number_input("Prix d'acquisition total (EUR)", value=0.0, key="prix_acq_live")
+            prix_vent = st.number_input("Montant de la cession (EUR)", value=0.0, key="prix_vent_live")
+            if prix_vent > 0 and vgp > 0:
+                pv = prix_vent - (prix_acq * (prix_vent / vgp))
+                st.success(f"Plus-value : {pv:,.2f} € | Impôt estimé (30%) : {pv*0.3:,.2f} €")
 
-        if not inv.empty:
-            st.subheader("📦 Position Actuelle (Hors Spam)")
-            now = datetime.now()
-            inv['p_eur'] = inv['Asset'].apply(lambda a: float(get_price_eur(str(a), now)))
-            inv['val_eur'] = inv['Amount'] * inv['p_eur']
-            inv = inv.sort_values('val_eur', ascending=False)
-            cols = st.columns(min(len(inv), 4))
-            for idx, row in inv.iterrows():
-                with cols[idx % 4]: st.metric(row['Asset'], f"{row['Amount']:.4f}", f"{row['val_eur']:,.2f} €")
+    with t5:
+        if st.button("🗑️ Vider toute la base de données", key="btn_clear_live"):
+            st.session_state.transactions = pd.DataFrame(columns=REQUIRED_COLS)
+            st.session_state.accounts_metadata = {}; st.rerun()
 
-        st.divider()
-        df_display = st.session_state.transactions.copy()
-        # Masquage immédiat si l'option est décochée (Comportement automatique)
-        if not show_spam:
-            df_display = df_display[df_display['Is_Spam'] == False]
+# --- Integrated Module Loading ---
+elif menu in ["app", "app0", "app2", "app2VGP", "appPropri", "app3", "appDiagCoh", "appPriceFix"]:
+    module_name = menu
+    try:
+        st.info(f"Chargement du module `{module_name}.py`...")
 
-        # On libère aussi la liste des assets filtrables de tout spam
-        available_assets = sorted(df_display['Asset'].unique())
-        f_asset = st.multiselect("Filtrer Asset", options=available_assets)
-        if f_asset: df_display = df_display[df_display['Asset'].isin(f_asset)]
+        with open(f"{module_name}.py", "r", encoding="utf-8") as f:
+            code = f.read()
+            # We strip the set_page_config call if present to avoid Streamlit error
+            code = code.replace("st.set_page_config", "# st.set_page_config")
+            exec(code, globals())
 
-        st.subheader("📝 Historique des Mouvements")
-        edited = st.data_editor(df_display.sort_values('Date', ascending=False), use_container_width=True, key="tx_ed")
-        if st.button("💾 Sauvegarder modifications"):
-            for _, row in edited.iterrows():
-                # Mise à jour de la ligne spécifique
-                mask = (st.session_state.transactions['ID'] == row['ID']) & (st.session_state.transactions['Asset'] == row['Asset'])
-                st.session_state.transactions.loc[mask, 'Is_Spam'] = row['Is_Spam']
-                st.session_state.transactions.loc[mask, 'Category'] = row['Category']
+    except Exception as e:
+        st.error(f"Erreur lors du chargement du module {module_name} : {e}")
+        st.exception(e)
 
-                # Propagation du marquage Spam à l'adresse de contrepartie
-                cp = str(row['Counterparty']).lower()
-                if row['Is_Spam']:
-                    st.session_state.spam_addresses.add(cp)
-                    st.session_state.transactions.loc[st.session_state.transactions['Counterparty'].str.lower() == cp, 'Is_Spam'] = True
-                else:
-                    if cp in st.session_state.spam_addresses:
-                        st.session_state.spam_addresses.remove(cp)
-                        # On réactive les transactions si on retire le flag spam global
-                        st.session_state.transactions.loc[st.session_state.transactions['Counterparty'].str.lower() == cp, 'Is_Spam'] = False
-            st.success("Enregistré ! (Propagation appliquée)"); st.rerun()
-
-elif menu == "Frais & Fiscalité":
-    st.header("⚖️ Fiscalité (Art. 150 VH bis)")
-    st.session_state.fiat_accounts = st.data_editor(st.session_state.fiat_accounts, num_rows="dynamic", use_container_width=True)
-    clean_df = st.session_state.transactions[st.session_state.transactions['Is_Spam'] == False]
-    if not clean_df.empty:
-        # Valeur Globale Portefeuille
-        inv = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
-        vgp = sum([float(row['Amount']) * get_price_eur(str(row['Asset']), datetime.now()) for _, row in inv.iterrows()])
-        st.metric("Valeur Globale Portefeuille (VGP)", f"{vgp:,.2f} €")
-        prix_acq = st.number_input("Prix d'acquisition total (EUR)", value=0.0)
-        prix_vent = st.number_input("Montant de la cession (EUR)", value=0.0)
-        if prix_vent > 0 and vgp > 0:
-            pv = prix_vent - (prix_acq * (prix_vent / vgp))
-            st.success(f"Plus-value : {pv:,.2f} € | Impôt estimé (30%) : {pv*0.3:,.2f} €")
-
-elif menu == "Settings":
-    if st.button("🗑️ Vider toute la base de données"):
-        st.session_state.transactions = pd.DataFrame(columns=REQUIRED_COLS)
-        st.session_state.accounts_metadata = {}; st.rerun()
-
-st.sidebar.divider(); st.sidebar.caption("Jules AI Harvest Pro v3.0")
+st.sidebar.divider(); show_status()
+st.sidebar.divider(); st.sidebar.caption("Jules Crypto Hub v1.0")
