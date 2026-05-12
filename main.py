@@ -1,11 +1,12 @@
-import streamlit as st
-import pandas as pd
-import requests
-from datetime import datetime
-import time
-import importlib
 import os
-from shared_logic import get_price_eur, get_fiat_rate, show_status
+import json
+import time
+import requests
+import pandas as pd
+from datetime import datetime
+import streamlit as st
+import unicodedata
+import shared_logic as sl
 
 # --- Configuration ---
 st.set_page_config(page_title="Jules Crypto Hub - Navigation", layout="wide")
@@ -220,7 +221,7 @@ def fetch_data(address, api_key, network):
             if total_req > 0:
                 pbar = st.progress(0)
                 for idx, row in enumerate(combos.itertuples()):
-                    prices_map[(row.Asset, row.Day)] = get_price_eur(row.Asset, row.Day)
+                    prices_map[(row.Asset, row.Day)] = sl.get_price_eur(row.Asset, row.Day)
                     # Respect du Rate Limit CoinGecko (1 requête par sec environ)
                     if total_req > 5: time.sleep(1.05)
                     pbar.progress((idx+1)/total_req)
@@ -229,9 +230,8 @@ def fetch_data(address, api_key, network):
             df['Fiat_Value_EUR'] = df.apply(lambda r: float(r['Amount']) * prices_map.get((r['Asset'], r['Date'].date()), 0.0), axis=1)
 
                 # Propagation de la liste des spams qualifiés de la suite
-        from shared_logic import validate_spam_exclusion
         # Centralized recursive spam detection
-        leaked_indices = validate_spam_exclusion(df)
+        leaked_indices = sl.validate_spam_exclusion(df)
         df['Is_Spam'] = False
         if leaked_indices:
             df.loc[leaked_indices, 'Is_Spam'] = True
@@ -274,7 +274,7 @@ menu_selection = st.sidebar.selectbox(
     "🚀 Navigation",
     options=menu_labels,
     index=default_index,
-    key="_hub_nav_selectbox_v13" # Versioned key for robustness
+    key="_hub_nav_selectbox_v14" # Versioned key for robustness
 )
 
 # Update the state immediately
@@ -286,16 +286,15 @@ def get_discovered_accounts():
     discovered = set()
     if not st.session_state.transactions.empty:
         discovered.update(st.session_state.transactions['Account'].dropna().unique())
-    from shared_logic import get_known_accounts
-    discovered.update(get_known_accounts(include_mappings=False))
+    discovered.update(sl.get_known_accounts(include_mappings=False))
     return sorted([str(x) for x in discovered if str(x).strip()])
 
 with st.sidebar:
     st.divider()
     st.subheader("🏦 Comptes Propriétaires")
 
-    # Use the new deduplicated list logic
-    owner_displays = shared_logic.get_owner_display_list()
+    # Use the new deduplicated list logic from shared_logic
+    owner_displays = sl.get_owner_display_list()
     if owner_displays:
         for disp in owner_displays:
             st.sidebar.caption(f"• {disp}")
@@ -305,11 +304,10 @@ with st.sidebar:
     new_acc = st.text_input("Ajouter un compte manuel", placeholder="ex: 0x... ou Label", key="main_hub_add_acc_txt")
     if st.button("➕ Ajouter", key="main_hub_add_acc_btn"):
         if new_acc:
-            from shared_logic import load_owner_accounts, save_owner_accounts, resolve_raw_addr
-            om = load_owner_accounts()
-            raw = resolve_raw_addr(new_acc)
+            om = sl.load_owner_accounts()
+            raw = sl.resolve_raw_addr(new_acc)
             om[raw] = new_acc # Use the input as label if it's not a raw address
-            save_owner_accounts(om)
+            sl.save_owner_accounts(om)
             st.success(f"Compte '{new_acc}' ajouté au registre.")
             st.rerun()
 
@@ -375,7 +373,7 @@ elif menu == "live_harvest":
                     'Amount': m_amt, 'Fee': 0.0, 'Fiat_Value_EUR': 0.0,
                     'Counterparty': 'User', 'Network': m_net, 'Is_Spam': False, 'Category': m_cat
                 }])
-                new_row['Fiat_Value_EUR'] = new_row.apply(lambda r: float(r['Amount']) * get_price_eur(r['Asset'], r['Date']), axis=1)
+                new_row['Fiat_Value_EUR'] = new_row.apply(lambda r: float(r['Amount']) * sl.get_price_eur(r['Asset'], r['Date']), axis=1)
                 st.session_state.transactions = pd.concat([st.session_state.transactions, new_row], ignore_index=True)
                 st.success("Ajouté !")
 
@@ -385,11 +383,10 @@ elif menu == "live_harvest":
 
         if not st.session_state.transactions.empty:
             # Propagation de la liste des spams qualifiés avant consultation
-            from shared_logic import load_spam_list, resolve_raw_addr
-            sl = load_spam_list()
-            st.session_state.spam_addresses.update(sl)
+            sl_spam = sl.load_spam_list()
+            st.session_state.spam_addresses.update(sl_spam)
             # Mise à jour auto des flags spam si de nouveaux spams ont été ajoutés à la suite
-            mask_spam = st.session_state.transactions.apply(lambda r: str(r['Counterparty']).lower() in st.session_state.spam_addresses or resolve_raw_addr(r['Counterparty']) in st.session_state.spam_addresses or str(r['Asset']).lower() in st.session_state.spam_addresses, axis=1)
+            mask_spam = st.session_state.transactions.apply(lambda r: str(r['Counterparty']).lower() in st.session_state.spam_addresses or sl.resolve_raw_addr(r['Counterparty']) in st.session_state.spam_addresses or str(r['Asset']).lower() in st.session_state.spam_addresses, axis=1)
             st.session_state.transactions.loc[mask_spam, 'Is_Spam'] = True
 
             # Filtrage strict pour l'inventaire
@@ -400,7 +397,7 @@ elif menu == "live_harvest":
             if not inv.empty:
                 st.subheader("📦 Position Actuelle (Hors Spam)")
                 now = datetime.now()
-                inv['p_eur'] = inv['Asset'].apply(lambda a: float(get_price_eur(str(a), now)))
+                inv['p_eur'] = inv['Asset'].apply(lambda a: float(sl.get_price_eur(str(a), now)))
                 inv['val_eur'] = inv['Amount'] * inv['p_eur']
                 inv = inv.sort_values('val_eur', ascending=False)
                 cols = st.columns(min(len(inv), 4))
@@ -446,7 +443,7 @@ elif menu == "live_harvest":
         if not clean_df.empty:
             # Valeur Globale Portefeuille
             inv = clean_df.groupby('Asset').agg({'Amount': 'sum'}).reset_index()
-            vgp = sum([float(row['Amount']) * get_price_eur(str(row['Asset']), datetime.now()) for _, row in inv.iterrows()])
+            vgp = sum([float(row['Amount']) * sl.get_price_eur(str(row['Asset']), datetime.now()) for _, row in inv.iterrows()])
             st.metric("Valeur Globale Portefeuille (VGP)", f"{vgp:,.2f} €")
             prix_acq = st.number_input("Prix d'acquisition total (EUR)", value=0.0, key="prix_acq_live")
             prix_vent = st.number_input("Montant de la cession (EUR)", value=0.0, key="prix_vent_live")
@@ -463,13 +460,8 @@ elif menu == "live_harvest":
 elif menu in ["app", "app0", "app2", "app2VGP", "appPropri", "app3", "appDiagCoh", "appPriceFix"]:
     module_name = menu
     try:
-        # We dynamicallly import and run the module's main logic
-        # Note: most apps run on import because of their structure
-        # To avoid re-importing identical UI, we can use run_module pattern
         st.info(f"Chargement du module `{module_name}.py`...")
 
-        # Method: Execution of the script content in the current context
-        # This keeps the sidebar and session state unified
         with open(f"{module_name}.py", "r", encoding="utf-8") as f:
             code = f.read()
             # We strip the set_page_config call if present to avoid Streamlit error

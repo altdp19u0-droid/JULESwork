@@ -45,7 +45,7 @@ with st.sidebar:
     show_status()
 
 # --- Helpers (Centralized logic) ---
-from shared_logic import pd_read_csv_safe
+import shared_logic as sl
 
 # --- Main App ---
 uploaded_file = st.file_uploader("Choisir un fichier CSV", type="csv")
@@ -97,6 +97,8 @@ if uploaded_file:
             final_rows.append(v4_row)
 
         df_mapped = pd.DataFrame(final_rows, columns=RAW_V4_COLUMNS)
+        # Apply standard identification
+        df_mapped = sl.standardize_df_addresses(df_mapped)
 
         if "Date" in df_mapped.columns:
             df_mapped["Date"] = pd.to_datetime(df_mapped["Date"], errors='coerce', utc=True)

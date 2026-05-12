@@ -25,12 +25,12 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 - **FUSION INTELLIGENTE :** Dédoublonnage par le triplet `(Tx_Hash, Asset, Account)`. La fusion doit préserver les labels de la Voie 1 et injecter les frais/méthodes de la Voie 2.
 - **NOMMAGE CONSOLIDÉ :** Le fichier final doit impérativement porter le suffixe `_consolidated_` (ex: `raw_transactions_consolidated_*.csv`) pour indiquer le traitement multivoie.
 - **UI RÉCOLTE :** L'interface doit obligatoirement afficher trois tableaux distincts en conclusion de récolte par compte, même s'ils sont vides : **Portfolio**, **Transactions** et **Tokens**. Un message d'état doit confirmer l'accessibilité de Blockscout et Etherscan.
-- **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `format_owner_display` pour discriminer et unifier les identités. Un compte avec hex + label doit être fusionné en : **`Adresse (Nom)`**. Un compte label + nom doit être : **`Nom (Label)`**. La suite doit dédoublonner les listes pour qu'une même identité n'apparaisse qu'une fois. Un suivi incrémental des comptes collectés doit être visible.
+- **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `resolve_owner_display` pour discriminer et unifier les identités. Le standard absolu est le format : **`Identifiant_Technique (Nom_Amical)`**. La suite doit impérativement dédoublonner les listes via `get_owner_display_list` pour qu'une même identité (liée par `owner_accounts.json`) n'apparaisse qu'une seule fois dans les menus et rapports. Un suivi incrémental des comptes collectés doit rester visible.
 - **CLÉ UNIVERSELLE :** Permettre la saisie d'une clé API unique en UI s'appliquant à tous les réseaux par défaut.
 
 ### 2. Standard de Données Cible (SCHEMA RAW V4)
 Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma de 19 colonnes :
-- **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount** (Valeur algébrique), **Fee_Asset**, **Fee_Amount**, **Source_Way** (Way_1, Way_2, Way_3 ou Way_1+2), **Audit_Status**, **Fee_Audit_Alert**, **Source_Exchange_Rate** (Prix unitaire source).
+- **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount** (Valeur algébrique avec signe géré dès la récolte), **Fee_Asset**, **Fee_Amount**, **Source_Way** (Way_1, Way_2, Way_3 ou Way_1+2), **Audit_Status**, **Fee_Audit_Alert**, **Source_Exchange_Rate** (Prix unitaire source).
 - **Zéro Valorisation :** Les fichiers RAW ne contiennent aucune conversion EUR/USD externe. Seul le prix fourni par la source est capturé dans `Source_Exchange_Rate`.
 
 ### 3. Logique d'Audit & Harmonisation
@@ -58,13 +58,13 @@ C'est l'étape critique de transformation des données brutes en journal comptab
 ## IV. PHASE 3 : AUDIT, VGP & FISCALITÉ
 Utilisation des données nettoyées pour le reporting final.
 
-1. **VGP Cumulative (app2VGP) :** Calcul factuel par sommation des comptes. Correction de prix directe via `st.data_editor` avec mise à jour du cache.
+1. **VGP Cumulative (app2VGP) :** Calcul factuel par sommation des soldes (Comptes, Positions, Créances). Correction de prix directe via `st.data_editor` avec mise à jour simultanée du cache global et annuel.
 2. **Bilan Fiscal (app3) :**
-    - Application stricte de l'Art. 150 VH bis.
-    - Ratio d'abattement plafonné à 1.0.
-    - Génération de PDF Unicode (via DejaVuSans) et export CSV d'audit complet.
-3. **Diagnostic (appDiagCoh) :** Traçage chronologique par actif et détection des soldes négatifs.
-4. **Valorisation (shared_logic) :** Politique "Zéro-Fallback" (0.0 si erreur API) pour forcer l'audit manuel et garantir l'intégrité fiscale.
+    - **Sécurité Fiscale (Lock) :** Blocage automatique de la génération de rapport si `appDiagCoh.py` détecte des ruptures de stock (soldes négatifs) sur des cessions.
+    - **Calcul Art. 150 VH bis :** Application stricte, ratio d'abattement plafonné à 1.0, exclusion des VGP non positives.
+    - **PDF Professionnel :** Génération Unicode (DejaVuSans), gestion du word-wrap pour les adresses longues, synchronisation des hauteurs de lignes.
+3. **Diagnostic (appDiagCoh) :** Traçage chronologique par actif/compte et détection des soldes négatifs comme outil de réparation.
+4. **Valorisation (shared_logic) :** Politique "Zéro-Fallback" (0.0 si erreur API) pour forcer l'audit manuel et garantir l'intégrité fiscale. Utilisation des taux BCE (Frankfurter) pour les assets indexés fiat.
 
 ---
 

@@ -207,16 +207,22 @@ else:
         for c in ["Account", "Asset", "Tx Hash"]:
             edit_df[c] = edit_df[c].fillna("").astype(str)
 
+        # Display standardized account names
+        edit_df["Account"] = edit_df["Account"].apply(shared_logic.resolve_owner_display)
+
         edited_cessions = st.data_editor(
             edit_df,
             column_config={
                 "VGP (EUR)": st.column_config.NumberColumn("VGP (EUR)", format="%.2f", help="Valeur totale du portefeuille à cette date"),
                 "Date": st.column_config.DatetimeColumn(disabled=True),
+                "Account": st.column_config.TextColumn("Compte", disabled=True),
                 "Amount": st.column_config.NumberColumn(disabled=True),
                 "Asset": st.column_config.TextColumn(disabled=True),
+                "Value ($)": st.column_config.NumberColumn(disabled=True),
+                "Tx Hash": st.column_config.TextColumn(disabled=True),
             },
             width='stretch',
-            key="vgp_editor"
+            key="vgp_editor_v4"
         )
 
         # Injection des modifs manuelles dans le journal principal
@@ -240,6 +246,14 @@ else:
             snapshot_df, total_val = get_portfolio_snapshot(journal, selected_date, force_full_history=force_full, start_recalc_year=start_year)
             if not snapshot_df.empty:
                 st.write(f"Composition du portefeuille au **{selected_date}** :")
+
+                # Standardize Location display
+                def map_loc_display(loc):
+                    if loc.startswith("Account: "):
+                        addr = loc.replace("Account: ", "")
+                        return f"Compte: {shared_logic.resolve_owner_display(addr)}"
+                    return loc
+                snapshot_df["Emplacement"] = snapshot_df["Location"].apply(map_loc_display)
 
                 # --- IDENTIFY CIRCUITS & UNLABELED ---
                 circuits_df = snapshot_df[snapshot_df.get("Is_Circuit", False) == True]
@@ -275,11 +289,12 @@ else:
                         "Entrées": st.column_config.NumberColumn("Total Entrées", format="%.6f", disabled=True),
                         "Sorties": st.column_config.NumberColumn("Total Sorties", format="%.6f", disabled=True),
                         "Asset": st.column_config.TextColumn(disabled=True),
-                        "Location": st.column_config.TextColumn(disabled=True),
+                        "Emplacement": st.column_config.TextColumn(disabled=True),
+                        "Location": None, # Hide technical col
                         "Is_Circuit": st.column_config.CheckboxColumn("Circuit?", disabled=True),
                     },
                     width='stretch',
-                    key=f"audit_ed_{selected_date}"
+                    key=f"audit_ed_v5_{selected_date}"
                 )
 
                 # Recalculate Total with manual edits (Excluding circuits)

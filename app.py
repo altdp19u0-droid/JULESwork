@@ -7,7 +7,7 @@ import pandas as pd
 from datetime import datetime
 from dateutil import tz
 from web3 import Web3
-from shared_logic import show_status
+import shared_logic as sl
 
 # --- Configuration & Initialization ---
 st.set_page_config(page_title="Jules Crypto Harvest Pro - Sanctuarisation V7", layout="wide")
@@ -70,7 +70,18 @@ EXPORT_BASE_DIR = "sanctuarisation"
 # --- Sidebar Inputs ---
 with st.sidebar:
     st.header("⚙️ Paramètres de Récolte")
-    address = st.text_input("Adresse Blockchain (0x...)", "")
+
+    # Selection of known accounts or new address
+    known_displays = sl.get_owner_display_list()
+    addr_opts = ["-- Nouvelle Adresse --"] + known_displays
+    selected_addr = st.selectbox("Sélectionner un compte", addr_opts)
+
+    if selected_addr == "-- Nouvelle Adresse --":
+        address = st.text_input("Entrer l'adresse (0x...)", "")
+    else:
+        address = sl.resolve_raw_addr(selected_addr)
+        st.caption(f"Cible : `{address}`")
+
     chains = st.multiselect("Chaînes à sonder", list(CHAIN_APIS.keys()), default=["Ethereum", "Polygon", "Arbitrum", "Base", "Optimism"])
 
     st.divider()
@@ -238,7 +249,7 @@ if st.session_state.harvested_accounts:
 
     acc_data = []
     for a, v in st.session_state.harvested_accounts.items():
-        disp = shared_logic.resolve_owner_display(a)
+        disp = sl.resolve_owner_display(a)
         acc_data.append({"Compte": disp, "Txs": v["tx"], "Actifs": v["portfolio"]})
 
     acc_df = pd.DataFrame(acc_data)
@@ -262,7 +273,7 @@ if display_registry:
 
     for addr, data in display_registry.items():
         is_active = (addr == active_addr)
-        disp_name = shared_logic.resolve_owner_display(addr)
+        disp_name = sl.resolve_owner_display(addr)
         with st.expander(f"👤 Compte : {disp_name} {'(Actif)' if is_active else ''}", expanded=is_active):
             # Message d'état des APIs
             api_status = data.get("status", {})
@@ -310,10 +321,11 @@ if display_registry:
             st.dataframe(df_tokens, width='stretch', key=f"df_t_{addr}")
 
 if harvest_btn:
-    if not address or not Web3.is_address(address):
+    raw_addr = sl.resolve_raw_addr(address)
+    if not raw_addr or not Web3.is_address(raw_addr):
         st.error("❌ Adresse invalide.")
     else:
-        addr_c = Web3.to_checksum_address(address).lower()
+        addr_c = Web3.to_checksum_address(raw_addr).lower()
         st.info(f"🔍 Analyse de l'adresse : {addr_c}")
 
         global_raw_txs = []
@@ -494,13 +506,28 @@ if harvest_btn:
             def consolidate_group(group):
                 w1 = group[group["Source_Way"] == "Way_1"]
                 w2 = group[group["Source_Way"] == "Way_2"]
-                res = group.iloc[0].copy()
+                w3 = group[group["Source_Way"] == "Way_3"]
+
+                # Base choice: Way 3 > Way 1 > Way 2
+                if not w3.empty: res = w3.iloc[0].copy()
+                elif not w1.empty: res = w1.iloc[0].copy()
+                else: res = w2.iloc[0].copy()
+
                 if not w1.empty:
-                    res["From_Label"] = w1.iloc[0].get("From_Label", ""); res["To_Label"] = w1.iloc[0].get("To_Label", "")
+                    res["From_Label"] = w1.iloc[0].get("From_Label", "")
+                    res["To_Label"] = w1.iloc[0].get("To_Label", "")
                 if not w2.empty:
-                    res["Fee_Amount"] = w2.iloc[0].get("Fee_Amount", 0.0); res["Method"] = w2.iloc[0].get("Method", "")
-                    res["Source_Way"] = "Way_1+2" if not w1.empty else "Way_2"
+                    res["Fee_Amount"] = w2.iloc[0].get("Fee_Amount", 0.0)
+                    res["Method"] = w2.iloc[0].get("Method", "")
+
+                # Consolidate Source_Way string
+                ways = sorted(group["Source_Way"].unique())
+                res["Source_Way"] = "+".join(ways).replace("Way_", "")
+                if not res["Source_Way"].startswith("Way_"):
+                    res["Source_Way"] = "Way_" + res["Source_Way"]
+
                 return res
+
             df_final = df_merged.groupby(["Tx_Hash", "Asset", "Account", "Chain"]).apply(consolidate_group).reset_index(drop=True)
             st.session_state.transactions = df_final.sort_values("Date", ascending=False)
 
@@ -530,19 +557,21 @@ has_data = not st.session_state.transactions.empty or not st.session_state.portf
 if has_data:
     st.divider()
     st.subheader("💾 Étape Finale : Sanctuariser")
-    addr_short = address[:10] if address else "Unknown"
+
+    raw_addr_final = sl.resolve_raw_addr(address)
+    addr_short = raw_addr_final[:10] if raw_addr_final else "Unknown"
+
     if st.button(f"Enregistrer les fichiers bruts pour {addr_short}... ({target_year})", width='stretch'):
-        from shared_logic import standardize_df_addresses
         year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         os.makedirs(year_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Standardize addresses to lowercase hex before sanctuarization
-        addr_standardized = address.lower().strip()
+        addr_standardized = raw_addr_final.lower().strip()
         prefix = f"{addr_standardized}_{ts}"
 
-        df_port = standardize_df_addresses(st.session_state.portfolio)
-        df_tx = standardize_df_addresses(st.session_state.transactions)
+        df_port = sl.standardize_df_addresses(st.session_state.portfolio)
+        df_tx = sl.standardize_df_addresses(st.session_state.transactions)
 
         if not df_port.empty:
             df_port.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False, encoding="utf-8-sig")

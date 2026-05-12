@@ -235,7 +235,7 @@ else:
         st.write("Visualisez l'évolution précise du solde pour comprendre où se situe la faille.")
 
         all_accs = sorted(history["Account"].unique())
-        sel_acc = st.selectbox("Choisir un compte", all_accs)
+        sel_acc = st.selectbox("Choisir un compte", all_accs, format_func=shared_logic.resolve_owner_display)
 
         relevant_assets = sorted(history[history["Account"] == sel_acc]["Asset"].unique())
         sel_asset = st.selectbox("Choisir un actif", relevant_assets)

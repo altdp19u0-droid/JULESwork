@@ -296,6 +296,9 @@ with tab_accounts:
     # Use the new deduplicated display list logic
     accounts = shared_logic.get_owner_display_list(journal)
 
+    if not journal.empty:
+        journal["Account"] = journal["Account"].apply(shared_logic.resolve_owner_display)
+
     if journal.empty:
         st.info("Aucune transaction dans le journal de cette année. Utilisation des comptes propriétaires connus.")
 
@@ -930,7 +933,9 @@ with tab_bilan:
             pdf.ln()
             pdf.set_font(main_font, '', 10)
             for _, r in local_pos.iterrows():
-                pdf.cell(w_p[0], 8, pdf_safe_str(r["Account"], use_uni)[:45], border=1)
+                # Standardize Account name for PDF
+                disp_acc = shared_logic.resolve_owner_display(r["Account"])
+                pdf.cell(w_p[0], 8, pdf_safe_str(disp_acc, use_uni)[:45], border=1)
                 pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"], use_uni), border=1)
                 pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
                 if has_val:
@@ -997,7 +1002,8 @@ with tab_bilan:
 
                 # Calcul de la hauteur maximale nécessaire pour la ligne
                 # On vérifie Account et Type qui sont les plus susceptibles de déborder
-                txt_acc = pdf_safe_str(r.get("Account", "Manual"), use_uni)
+                disp_acc = shared_logic.resolve_owner_display(r.get("Account", "Manual"))
+                txt_acc = pdf_safe_str(disp_acc, use_uni)
                 txt_type = pdf_safe_str(r.get("Type", ""), use_uni)
 
                 y_start = pdf.get_y()

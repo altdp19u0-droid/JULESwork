@@ -71,17 +71,27 @@ def save_position_labels(labels_dict):
         json.dump({str(k).lower(): v for k, v in labels_dict.items()}, f, indent=4)
 
 def apply_position_labels(df):
-    """Associe les labels aux adresses de contrepartie."""
+    """Associe les labels aux adresses de contrepartie selon le standard 'Identifier (Name)'."""
     if df.empty: return df
+    df = df.copy()
+    # Labels from positions
     labels = load_position_labels()
+    # Labels from circuits
     ext_data = shared_logic.load_external_circuits()
     circ_labels = ext_data.get("labels", {})
+    # Labels from owners
     owners_map = shared_logic.load_owner_accounts()
+
     combined = {**circ_labels, **owners_map, **labels}
+
     def format_cp(cp):
         r = shared_logic.resolve_raw_addr(cp)
-        return f"{combined[r]} ({r})" if r in combined else cp
+        if r in combined:
+             return shared_logic.format_owner_display(r, combined[r])
+        return shared_logic.standardize_address_string(cp)
+
     df["Counterparty"] = df["Counterparty"].apply(format_cp)
+    df["Account"] = df["Account"].apply(lambda x: shared_logic.standardize_address_string(x))
     return df
 
 # --- Engine ---
@@ -108,7 +118,8 @@ def merge_raw_data(year):
             except: pass
 
     # 2. Blockchain
-    for f_p in shared_logic.get_all_raw_files(year):
+    from shared_logic import get_latest_raw_files
+    for f_p in get_latest_raw_files(year):
         fn = os.path.basename(f_p)
         src = shared_logic.extract_source_from_filename(fn); shared_logic.auto_register_owner(src)
         if os.path.getsize(f_p) == 0: continue
@@ -118,31 +129,38 @@ def merge_raw_data(year):
             df_raw.columns = [c.strip() for c in df_raw.columns]
             h_map = {c.lower(): c for c in df_raw.columns}
 
+            # Priority: use V4 columns if present, fallback to legacy
             for _, r in df_raw.iterrows():
-                # Mandatory fields extraction
-                dt_val = r.get(h_map.get("date")) or r.get("Date")
+                dt_val = r.get("Date") or r.get(h_map.get("date"))
                 if pd.isna(dt_val) or str(dt_val).lower() in ["nan", "none", ""]: continue
 
-                acc = str(r.get(h_map.get("account"), src)).lower()
+                acc = str(r.get("Account") or r.get(h_map.get("account"), src)).lower()
+                tx_h = str(r.get("Tx_Hash") or r.get("Tx Hash") or r.get(h_map.get("tx hash"), ""))
+                asset = str(r.get("Asset") or r.get(h_map.get("asset")) or r.get(h_map.get("tokenSymbol")) or r.get(h_map.get("chain"), "ETH")).upper()
+                amt = float(r.get("Amount") or r.get(h_map.get("amount")) or r.get(h_map.get("value eth")) or r.get(h_map.get("value")) or r.get(h_map.get("quantity"), 0))
 
-                if fn.startswith("raw_transactions_"):
-                    fa = shared_logic.resolve_raw_addr(r.get(h_map.get("from"), ""))
-                    cp = str(r.get(h_map.get("counterparty"), ""))
-                    if not cp or cp == "nan": cp = r.get(h_map.get("to"), "") if fa == acc else r.get(h_map.get("from"), "")
-                    amt, asset = float(r.get(h_map.get("value eth"), 0)), str(r.get(h_map.get("chain"), "ETH"))
-                    if fa == acc: amt = -amt
-                    st_ = "Spam" if (shared_logic.resolve_raw_addr(cp) in sl or asset.lower() in sl) else "A vérifier"
-                    rows.append({"Date": dt_val, "Account": acc, "Counterparty": cp, "Asset": asset, "Amount": amt, "Value ($)": float(r.get(h_map.get("value ($)")) or 0), "Network": asset, "Tx Hash": str(r.get(h_map.get("tx hash"), "")), "Source Type": "Native", "Category": "A vérifier", "Status": st_, "Imposable": shared_logic.is_imposable_robust(r.get("Imposable", False))})
-                elif fn.startswith("raw_token_transfers_"):
-                    fa = shared_logic.resolve_raw_addr(r.get(h_map.get("from"), ""))
-                    cp = str(r.get(h_map.get("counterparty"), ""))
-                    if not cp or cp == "nan": cp = str(r.get(h_map.get("to"), "")) if fa == acc else str(r.get(h_map.get("from"), ""))
-                    amt, asset = float(r.get(h_map.get("value"), 0)), str(r.get(h_map.get("token"), ""))
-                    if fa == acc: amt = -amt
-                    st_ = "Spam" if (shared_logic.resolve_raw_addr(cp) in sl or asset.lower() in sl) else "A vérifier"
-                    rows.append({"Date": dt_val, "Account": acc, "Counterparty": cp, "Asset": asset, "Amount": amt, "Value ($)": float(r.get(h_map.get("value ($)")) or 0), "Network": str(r.get(h_map.get("chain"), "")), "Tx Hash": str(r.get(h_map.get("tx hash"), "")), "Source Type": "Token", "Category": "A vérifier", "Status": st_, "Imposable": shared_logic.is_imposable_robust(r.get("Imposable", False))})
-                elif fn.startswith("raw_portfolio_"):
-                    rows.append({"Date": datetime(year, 12, 31), "Account": acc, "Counterparty": "Blockchain Snapshot", "Asset": str(r.get(h_map.get("asset"), "UNKNOWN")), "Amount": float(r.get(h_map.get("quantity"), 0)), "Value ($)": float(r.get(h_map.get("value ($)")) or 0), "Network": str(r.get(h_map.get("chain"), "")), "Tx Hash": f"PORT-{src}-{r.get(h_map.get('asset'))}", "Source Type": "Portfolio", "Category": "Inventaire", "Status": "Valide", "Imposable": False})
+                if fn.startswith("raw_portfolio_"):
+                    rows.append({"Date": datetime(year, 12, 31), "Account": acc, "Counterparty": "Blockchain Snapshot", "Asset": asset, "Amount": amt, "Value ($)": float(r.get("Value ($)") or r.get(h_map.get("value ($)")) or 0), "Network": str(r.get("Chain") or r.get(h_map.get("chain"), "")), "Tx Hash": f"PORT-{src}-{asset}", "Source Type": "Portfolio", "Category": "Inventaire", "Status": "Valide", "Imposable": False})
+                    continue
+
+                fa = shared_logic.resolve_raw_addr(r.get("From") or r.get(h_map.get("from"), ""))
+                cp = str(r.get("Counterparty") or r.get(h_map.get("counterparty"), ""))
+                if not cp or cp == "nan":
+                    cp = r.get("To") or r.get(h_map.get("to"), "") if fa == acc else r.get("From") or r.get(h_map.get("from"), "")
+
+                # If we are in a non-V4 file, sign might not be handled yet
+                if "Amount" not in df_raw.columns and fa == acc:
+                    amt = -amt
+
+                st_ = "Spam" if (shared_logic.resolve_raw_addr(cp) in sl or asset.lower() in sl) else "A vérifier"
+
+                rows.append({
+                    "Date": dt_val, "Account": acc, "Counterparty": cp, "Asset": asset, "Amount": amt,
+                    "Value ($)": float(r.get("Value ($)") or r.get(h_map.get("value ($)")) or 0),
+                    "Network": str(r.get("Chain") or r.get(h_map.get("chain"), asset)),
+                    "Tx Hash": tx_h, "Source Type": str(r.get("Type") or "Blockchain"),
+                    "Category": "A vérifier", "Status": st_, "Imposable": shared_logic.is_imposable_robust(r.get("Imposable", False))
+                })
         except: pass
 
     dff = ensure_columns(pd.DataFrame(rows))

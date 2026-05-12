@@ -16,6 +16,14 @@ st.title("🚜 Importeur Spécialisé Neverless")
 EXPORT_BASE_DIR = "sanctuarisation"
 
 
+# RAW V4 Standard columns
+RAW_V4_COLUMNS = [
+    "Date", "Chain", "Tx_Hash", "Type", "Method", "Account",
+    "From", "To", "From_Label", "To_Label", "Counterparty",
+    "Asset", "Amount", "Fee_Asset", "Fee_Amount",
+    "Source_Way", "Audit_Status", "Fee_Audit_Alert", "Source_Exchange_Rate"
+]
+
 # --- Logic: Neverless Expansion ---
 def process_neverless_csv(df):
     new_rows = []
@@ -106,20 +114,25 @@ def process_neverless_csv(df):
                 cp = desc_raw
 
             new_rows.append({
-                "Date": dt,
+                "Date": dt.isoformat(),
                 "Chain": "Neverless",
-                "Token": str(asset_sent), # Préservation nuance
-                "Token ID": "",
                 "Tx Hash": f"OUT-{base_hash}",
+                "Type": "CEX_Mvt",
+                "Method": tx_type,
+                "Account": account,
                 "From": account,
                 "To": row.get("Blockchain address") or "Neverless_Internal",
-                "Value": amt_sent, # Positif en brut, app2 gère le signe
-                "Value ($)": val_usd,
-                "Rate ($)": price_sent,
-                "Account": account,
+                "From_Label": "",
+                "To_Label": "",
                 "Counterparty": cp,
-                "Category": cat,
-                "Imposable": is_imp
+                "Asset": str(asset_sent),
+                "Amount": -amt_sent,
+                "Fee_Asset": "",
+                "Fee_Amount": 0.0,
+                "Source_Way": "Way_3",
+                "Audit_Status": "RAW",
+                "Fee_Audit_Alert": "",
+                "Source_Exchange_Rate": price_sent
             })
 
         # 2. Gestion du flux "ENTRANT" (RECEIVED)
@@ -151,20 +164,25 @@ def process_neverless_csv(df):
             if "banq_" in desc: cp = desc_raw
 
             new_rows.append({
-                "Date": dt,
+                "Date": dt.isoformat(),
                 "Chain": "Neverless",
-                "Token": str(asset_rec), # Préservation nuance
-                "Token ID": "",
                 "Tx Hash": f"IN-{base_hash}",
+                "Type": "CEX_Mvt",
+                "Method": tx_type,
+                "Account": account,
                 "From": "Neverless_Internal",
                 "To": account,
-                "Value": amt_rec,
-                "Value ($)": val_usd,
-                "Rate ($)": price_rec,
-                "Account": account,
+                "From_Label": "",
+                "To_Label": "",
                 "Counterparty": cp,
-                "Category": cat,
-                "Imposable": False
+                "Asset": str(asset_rec),
+                "Amount": amt_rec,
+                "Fee_Asset": "",
+                "Fee_Amount": 0.0,
+                "Source_Way": "Way_3",
+                "Audit_Status": "RAW",
+                "Fee_Audit_Alert": "",
+                "Source_Exchange_Rate": price_rec
             })
 
         # 3. Gestion des FRAIS (FEES)
@@ -175,25 +193,30 @@ def process_neverless_csv(df):
             val_usd_fee = fee_amt * price_fee
 
             new_rows.append({
-                "Date": dt,
+                "Date": dt.isoformat(),
                 "Chain": "Neverless",
-                "Token": fee_asset,
-                "Token ID": "",
                 "Tx Hash": f"FEE-{base_hash}",
-                "From": account,
-                "To": "Fees",
-                "Value": fee_amt,
-                "Value ($)": val_usd_fee,
-                "Rate ($)": price_fee,
+                "Type": "CEX_Mvt",
+                "Method": "Fee",
                 "Account": account,
+                "From": account,
+                "To": "Neverless_Fees",
+                "From_Label": "",
+                "To_Label": "",
                 "Counterparty": "Neverless_Fees",
-                "Category": "Frais",
-                "Imposable": False
+                "Asset": fee_asset,
+                "Amount": -fee_amt,
+                "Fee_Asset": fee_asset,
+                "Fee_Amount": fee_amt,
+                "Source_Way": "Way_3",
+                "Audit_Status": "RAW",
+                "Fee_Audit_Alert": "",
+                "Source_Exchange_Rate": price_fee
             })
 
         progress_bar.progress((i + 1) / total_rows)
 
-    return pd.DataFrame(new_rows)
+    return pd.DataFrame(new_rows, columns=RAW_V4_COLUMNS)
 
 # --- Main App ---
 with st.sidebar:
@@ -234,10 +257,8 @@ if uploaded_file:
         edited_df = st.data_editor(
             st.session_state.nvl_final,
             column_config={
-                "Imposable": st.column_config.CheckboxColumn("Taxable (Imp.)", help="Coché par défaut pour les sorties Fiat EUR liées à une vente."),
-                "Value ($)": st.column_config.NumberColumn(format="%.2f", disabled=True),
-                "Value": st.column_config.NumberColumn(format="%.8f", disabled=True),
-                "Rate ($)": st.column_config.NumberColumn(format="%.4f", disabled=True),
+                "Amount": st.column_config.NumberColumn(format="%.8f", disabled=True),
+                "Source_Exchange_Rate": st.column_config.NumberColumn(format="%.4f", disabled=True),
                 "Date": st.column_config.DatetimeColumn(disabled=True),
             },
             width='stretch',

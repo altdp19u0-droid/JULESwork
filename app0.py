@@ -176,18 +176,20 @@ def fragment_fiat():
     f_date = c1.date_input("Date du virement", default_date, key="fiat_date_input")
 
     # Prop B: Dropdown with free text fallback
-    known_accs = get_known_accounts()
-    options_acc = ["(Nouveau / Autre...)"] + known_accs
+    known_displays = shared_logic.get_owner_display_list()
+    options_acc = ["(Nouveau / Autre...)"] + known_displays
 
     sel_label = c2.selectbox("Compte Bancaire (Connu)", options_acc, key="sel_fiat_label")
     if sel_label == "(Nouveau / Autre...)":
-        f_label = c2.text_input("Saisie nouveau compte", placeholder="ex: Compte Courant Bourso", key="fiat_label_input")
+        f_label_raw = c2.text_input("Saisie nouveau compte", placeholder="ex: Compte Courant Bourso", key="fiat_label_input")
+        f_label = shared_logic.standardize_address_string(f_label_raw)
     else:
         f_label = sel_label
 
     sel_plat = c3.selectbox("Plateforme / Contrepartie (Connue)", options_acc, key="sel_fiat_plat")
     if sel_plat == "(Nouveau / Autre...)":
-        f_plat = c3.text_input("Saisie nouvelle plateforme", placeholder="ex: Binance, Kraken", key="fiat_plat_input")
+        f_plat_raw = c3.text_input("Saisie nouvelle plateforme", placeholder="ex: Binance, Kraken", key="fiat_plat_input")
+        f_plat = shared_logic.standardize_address_string(f_plat_raw)
     else:
         f_plat = sel_plat
 
@@ -199,8 +201,9 @@ def fragment_fiat():
     f_type = c5.selectbox("Nature du flux", [
         "Achat (Virement vers Crypto)",
         "Vente (Retour vers Banque)",
-        "(Virement vers )",
-        "(Retrait de)"
+        "Virement interne (Fiat)",
+        "Dépôt",
+        "Retrait"
     ], key="fiat_type_input", on_change=on_fiat_type_change)
     f_asset = c6.text_input("Asset concerné (Optionnel)", placeholder="ex: EUR, USDT, BTC", key="fiat_asset_input")
 
@@ -209,7 +212,7 @@ def fragment_fiat():
 
     f_addr_sel = c_addr_f.selectbox("Compte / Adresse (Connu)", options_acc, key="sel_fiat_addr")
     f_addr_new = c_addr_f.text_input("Saisie nouveau compte/adresse", placeholder="0x... ou label", key="fiat_addr_input")
-    f_addr = f_addr_new if f_addr_sel == "(Nouveau / Autre...)" else f_addr_sel
+    f_addr = shared_logic.standardize_address_string(f_addr_new if f_addr_sel == "(Nouveau / Autre...)" else f_addr_sel)
 
     f_qty = c_qty_f.number_input("Quantité Asset", min_value=0.0, format="%.8f", key="fiat_qty_input")
 
@@ -344,11 +347,11 @@ def fragment_pos():
     p_date = c1.date_input("Date d'ouverture/maj", default_date_pos, key="pos_date_input")
     p_type = c2.selectbox("Type de position", ["Staking", "Vault (Compound/Aave)", "Lending", "CEX Balance", "Autre"], key="pos_type_input")
 
-    known_accs = get_known_accounts()
-    options_acc = ["(Nouveau / Autre...)"] + known_accs
+    known_displays = shared_logic.get_owner_display_list()
+    options_acc = ["(Nouveau / Autre...)"] + known_displays
     p_plat_sel = c3.selectbox("Plateforme / Protocole (Connu)", options_acc, key="sel_pos_plat")
     p_plat_new = c3.text_input("Saisie nouveau label", placeholder="ex: Lido, Binance Earn", key="input_pos_plat_new")
-    p_plat = p_plat_new if p_plat_sel == "(Nouveau / Autre...)" else p_plat_sel
+    p_plat = shared_logic.standardize_address_string(p_plat_new if p_plat_sel == "(Nouveau / Autre...)" else p_plat_sel)
 
     c4, c5, c_dir = st.columns([1, 1, 1])
     p_asset = c4.text_input("Asset", placeholder="ex: stETH, USDC", key="pos_asset_input")
@@ -358,7 +361,7 @@ def fragment_pos():
     c_addr, c_hash_p = st.columns(2)
     p_addr_sel = c_addr.selectbox("Compte / Adresse (Connu)", options_acc, key="sel_pos_addr")
     p_addr_new = c_addr.text_input("Saisie nouveau compte/adresse", placeholder="0x... ou label", key="input_pos_addr_new")
-    p_addr = p_addr_new if p_addr_sel == "(Nouveau / Autre...)" else p_addr_sel
+    p_addr = shared_logic.standardize_address_string(p_addr_new if p_addr_sel == "(Nouveau / Autre...)" else p_addr_sel)
 
     p_hash = c_hash_p.text_input("Tx Hash (Blockchain)", placeholder="0x...", key="pos_hash_input")
 
@@ -485,12 +488,12 @@ def fragment_swaps():
         st.write("**🔁 Swap Crypto-to-Crypto**")
         s_date = st.date_input("Date du swap", default_date, key="swap_date_input")
 
-        known_accs = get_known_accounts()
-        options_acc = ["(Nouveau / Autre...)"] + known_accs
+        known_displays = shared_logic.get_owner_display_list()
+        options_acc = ["(Nouveau / Autre...)"] + known_displays
 
         s_acc_sel = st.selectbox("Compte (Connu)", options_acc, key="sel_swap_acc")
         s_acc_new = st.text_input("Saisie nouveau compte", placeholder="ex: Binance, Wallet A", key="input_swap_acc_new")
-        s_acc = s_acc_new if s_acc_sel == "(Nouveau / Autre...)" else s_acc_sel
+        s_acc = shared_logic.standardize_address_string(s_acc_new if s_acc_sel == "(Nouveau / Autre...)" else s_acc_sel)
 
         c_s1, c_s2 = st.columns(2)
         s_asset_out = c_s1.text_input("Asset Vendu", placeholder="ex: BTC", key="swap_asset_out_input")
@@ -517,17 +520,17 @@ def fragment_swaps():
         t_asset = st.text_input("Asset", placeholder="ex: ETH", key="trans_asset_input")
         t_qty = st.number_input("Quantité", min_value=0.0, format="%.8f", key="trans_qty_input")
 
-        known_accs = get_known_accounts()
-        options_acc = ["(Nouveau / Autre...)"] + known_accs
+        known_displays = shared_logic.get_owner_display_list()
+        options_acc = ["(Nouveau / Autre...)"] + known_displays
 
         c_t1, c_t2 = st.columns(2)
         t_src_sel = c_t1.selectbox("Compte Source (Connu)", options_acc, key="sel_trans_src")
         t_src_new = c_t1.text_input("Saisie nouveau source", placeholder="ex: Wallet A", key="input_trans_src_new")
-        t_acc_src = t_src_new if t_src_sel == "(Nouveau / Autre...)" else t_src_sel
+        t_acc_src = shared_logic.standardize_address_string(t_src_new if t_src_sel == "(Nouveau / Autre...)" else t_src_sel)
 
         t_dst_sel = c_t2.selectbox("Compte Destination (Connu)", options_acc, key="sel_trans_dst")
         t_dst_new = c_t2.text_input("Saisie nouveau dest.", placeholder="ex: Wallet B", key="input_trans_dst_new")
-        t_acc_dst = t_dst_new if t_dst_sel == "(Nouveau / Autre...)" else t_dst_sel
+        t_acc_dst = shared_logic.standardize_address_string(t_dst_new if t_dst_sel == "(Nouveau / Autre...)" else t_dst_sel)
         t_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...", key="trans_hash_input")
         t_imp = st.checkbox("Imposable", value=False, key="trans_imp_input")
 

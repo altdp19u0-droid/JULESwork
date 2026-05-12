@@ -140,10 +140,6 @@ def load_and_merge(files):
             # Add metadata
             temp_df["_source_file"] = os.path.basename(f_path)
 
-            # Standardization
-            if "Date" in temp_df.columns:
-                temp_df["Date"] = pd.to_datetime(temp_df["Date"], utc=True, errors="coerce")
-
             # Resolve Account for raw files
             if "Account" not in temp_df.columns:
                 from shared_logic import extract_source_from_filename
@@ -152,10 +148,10 @@ def load_and_merge(files):
             # Resolve Counterparty for raw files
             if "Counterparty" not in temp_df.columns:
                 if "From" in temp_df.columns and "To" in temp_df.columns:
-                    acc_col = temp_df["Account"].astype(str).str.lower()
                     def get_cp_fast(row):
                         f_addr = resolve_raw_addr(str(row.get("From", "")))
-                        return str(row.get("To", "")) if f_addr == str(row.get("Account", "")).lower() else str(row.get("From", ""))
+                        acc_id = resolve_raw_addr(str(row.get("Account", "")))
+                        return str(row.get("To", "")) if f_addr == acc_id else str(row.get("From", ""))
                     temp_df["Counterparty"] = temp_df.apply(get_cp_fast, axis=1)
                 else:
                     temp_df["Counterparty"] = "n/a"
@@ -168,6 +164,14 @@ def load_and_merge(files):
                 "Value ETH": "Amount"
             }
             temp_df = temp_df.rename(columns={k: v for k, v in rename_map.items() if k in temp_df.columns and v not in temp_df.columns})
+
+            # UNIFICATION CASE
+            from shared_logic import standardize_df_addresses
+            temp_df = standardize_df_addresses(temp_df)
+
+            # Standardization
+            if "Date" in temp_df.columns:
+                temp_df["Date"] = pd.to_datetime(temp_df["Date"], utc=True, errors="coerce")
 
             all_dfs.append(temp_df)
         except: continue
@@ -258,7 +262,12 @@ with tab_list:
         if df[col].dtype == object:
             df[col] = df[col].fillna("").astype(str)
 
-    st.data_editor(df, width='stretch', disabled=True, key="cons_editor")
+    # Resolve display names in the consultation table
+    df_disp = df.copy()
+    if "Account" in df_disp.columns:
+        df_disp["Account"] = df_disp["Account"].apply(resolve_raw_addr).apply(shared_logic.resolve_owner_display)
+
+    st.data_editor(df_disp, width='stretch', disabled=True, key="cons_editor_v6")
 
     st.download_button(
         "📥 Exporter cette vue en CSV",
@@ -326,7 +335,9 @@ with tab_vgp:
 
                 # Total par compte
                 st.write("🔍 **Détail par Compte et Asset**")
-                st.dataframe(res_df, width='stretch')
+                res_df_disp = res_df.copy()
+                res_df_disp["Account"] = res_df_disp["Account"].apply(shared_logic.resolve_owner_display)
+                st.dataframe(res_df_disp, width='stretch')
 
                 st.divider()
                 col_v1, col_v2 = st.columns(2)
@@ -338,6 +349,7 @@ with tab_vgp:
                 # 2. Total par Compte
                 st.write("📊 **Répartition par Compte**")
                 by_acc = res_df.groupby("Account")["Valeur (EUR)"].sum().reset_index()
+                by_acc["Account"] = by_acc["Account"].apply(shared_logic.resolve_owner_display)
                 st.dataframe(by_acc, width='stretch')
 
                 # Export results
@@ -392,7 +404,8 @@ with tab_vgp:
                     pdf.set_font(main_font, '', 10)
                     use_uni = (main_font == "DejaVu")
                     for _, row in data_df.iterrows():
-                        acc = pdf_safe_str(row["Account"], use_uni)[:40]
+                        disp_acc = shared_logic.resolve_owner_display(row["Account"])
+                        acc = pdf_safe_str(disp_acc, use_uni)[:40]
                         asset = pdf_safe_str(row["Asset"], use_uni)
                         pdf.cell(col_widths[0], 10, acc, border=1)
                         pdf.cell(col_widths[1], 10, asset, border=1)

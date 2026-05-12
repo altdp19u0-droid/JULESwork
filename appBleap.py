@@ -20,7 +20,7 @@ RAW_V4_COLUMNS = [
     "Date", "Chain", "Tx_Hash", "Type", "Method", "Account",
     "From", "To", "From_Label", "To_Label", "Counterparty",
     "Asset", "Amount", "Fee_Asset", "Fee_Amount",
-    "Source_Way", "Audit_Status", "Fee_Audit_Alert"
+    "Source_Way", "Audit_Status", "Fee_Audit_Alert", "Source_Exchange_Rate"
 ]
 
 # --- Processing Engine ---
@@ -96,7 +96,8 @@ def process_bleap_csv(df):
             "Fee_Amount": fees,
             "Source_Way": "Way_3",
             "Audit_Status": "RAW",
-            "Fee_Audit_Alert": ""
+            "Fee_Audit_Alert": "",
+            "Source_Exchange_Rate": 0.0
         })
 
         progress_bar.progress((i + 1) / total_rows)

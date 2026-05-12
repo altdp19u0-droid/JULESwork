@@ -27,34 +27,56 @@ def clean_session_state(preserve_keys=[]):
             del st.session_state[k]
 
 def resolve_raw_addr(addr_str):
+    """
+    Extracts the pure technical identifier (hex address or label) from a display string.
+    Supports: '0x123... (Name)', 'Name (0x123...)', 'Name (Label)', '0x123...', 'Label'
+    """
     s = str(addr_str).strip().lower()
+
+    # 1. Search for a hex address anywhere (strongest identifier)
+    import re
+    match = re.search(r'0x[a-f0-9]{40,}', s)
+    if match:
+        return match.group(0)
+
+    # 2. If no hex, handle parentheses 'Identifier (Name)' or 'Name (Identifier)'
     if "(" in s and ")" in s:
-        return s.split("(")[-1].split(")")[0].strip()
-    parts = s.split()
-    for p in parts:
-        if p.startswith("0x") and len(p) >= 40: return p
+        # We assume the first part is the identifier if it's not a hex address
+        return s.split("(")[0].strip()
+
     return s
 
 def standardize_address_string(addr_str):
     """
-    Returns the string as-is if it's a label, but forces lowercase
-    if it's a raw 0x hex address (or contains one in parens).
+    Enforces the 'Identifier (Name)' standard.
+    - If 0x address is found: '0x... (Name)'
+    - If no 0x but name exists: 'Identifier (Name)'
+    - Always lowercases hex addresses.
     """
     if not addr_str: return ""
-    s = str(addr_str).strip()
+    raw = resolve_raw_addr(addr_str)
 
-    # Check for raw 0x
-    if s.lower().startswith("0x"):
-        return s.lower()
+    # Get friendly name if known
+    owners_map = load_owner_accounts()
+    name = owners_map.get(raw, "")
 
-    # Check for Label (0x...)
-    if "(" in s and ")" in s:
-        prefix = s.split("(")[0].strip()
-        addr_part = s.split("(")[1].split(")")[0].strip().lower()
-        if addr_part.startswith("0x"):
-            return f"{prefix} ({addr_part})"
+    # If not in owners, check if it was already formatted and preserve that name
+    if not name and "(" in str(addr_str):
+        import re
+        # Try to extract name from 'Identifier (Name)' or 'Name (Identifier)'
+        # If Identifier was 0x..., name is in ()
+        if str(addr_str).strip().lower().startswith("0x"):
+            m = re.search(r'\((.*?)\)', str(addr_str))
+            if m: name = m.group(1)
+        else:
+            # If Identifier was Label, name might be before ()
+            name = str(addr_str).split("(")[0].strip()
+            # But wait, resolve_raw_addr would have returned that as 'raw'.
+            # If addr_str was 'Name (0x...)', raw is 0x..., name is 'Name'
+            if "0x" in str(addr_str).lower():
+                 name = str(addr_str).split("(")[0].strip()
 
-    return s
+    return format_owner_display(raw, name)
 
 def standardize_df_addresses(df):
     """Applies unification in lowercase for technical addresses in a DataFrame."""
@@ -67,9 +89,8 @@ def standardize_df_addresses(df):
 
 def format_owner_display(identifier, name):
     """
-    Standardized display for owner accounts:
-    - Address-based: '0x123... (Name)' or '0x123...' if no name.
-    - Label-based: 'Name (Label)' or 'Label' if no name.
+    Standardized display for owner accounts: 'Identifier (Name)'
+    Absolute standard: Primary technical ID followed by friendly label in parentheses.
     """
     ident = str(identifier).strip()
     nm = str(name).strip() if name and str(name).lower() != "nan" else ""
@@ -77,11 +98,7 @@ def format_owner_display(identifier, name):
     if not nm or nm == ident:
         return ident
 
-    if ident.lower().startswith("0x"):
-        return f"{ident} ({nm})"
-    else:
-        # For non-blockchain addresses, we prioritize Name and show Label in parens
-        return f"{nm} ({ident})"
+    return f"{ident} ({nm})"
 
 def resolve_owner_display(identifier):
     """
@@ -718,18 +735,21 @@ def get_owner_addresses(journal_df=None):
 def get_owner_display_list(journal_df=None):
     """
     Returns a deduplicated list of formatted owner strings for UI selection.
-    Correctly merges Address and Labels if they are mapped in owner_accounts.json.
+    Guarantees that each unique identity (linked by owner_accounts.json) appears only once.
+    Priority is given to Hex addresses as the primary identifier.
     """
     owners_map = load_owner_accounts() # addr -> label
     # Reverse map: label -> addr
     label_to_addr = {str(v).lower(): k for k, v in owners_map.items() if str(v).lower() != "nan"}
 
-    # Collect all seen identifiers
-    all_ids = set(owners_map.keys())
-    if journal_df is not None and "Account" in journal_df.columns:
-        all_ids.update([str(a).strip() for a in journal_df["Account"].dropna().unique()])
+    # 1. Collect all identifiers from all sources
+    all_raw_ids = set(owners_map.keys())
+    # Add labels that are values in the map (to handle if they appear in journals)
+    all_raw_ids.update([str(v).strip() for v in owners_map.values() if str(v).lower() != "nan"])
 
-    # Discovery from disk
+    if journal_df is not None and "Account" in journal_df.columns:
+        all_raw_ids.update([str(a).strip() for a in journal_df["Account"].dropna().unique()])
+
     if os.path.exists(EXPORT_BASE_DIR):
         years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
         for y in years:
@@ -738,38 +758,42 @@ def get_owner_display_list(journal_df=None):
                 try:
                     df = pd_read_csv_safe(p)
                     if "Account" in df.columns:
-                        all_ids.update([str(a).strip() for a in df["Account"].dropna().unique()])
+                        all_raw_ids.update([str(a).strip() for a in df["Account"].dropna().unique()])
                 except: pass
 
-    # Grouping by normalized identity
-    identities = {} # normalized_key -> {"ident": original_id, "name": name}
+    # 2. Unify identifiers into identities
+    # identity_registry: normalized_primary_key -> {"ident": best_technical_id, "name": friendly_label}
+    identity_registry = {}
 
-    for raw_id in all_ids:
+    for raw_id in all_raw_ids:
         if not raw_id: continue
         low_id = raw_id.lower()
 
-        # Resolve identity to hex if possible
+        # Determine the primary key for this identity
         if low_id.startswith("0x"):
-            norm_key = low_id
+            prim_key = low_id
         elif low_id in label_to_addr:
-            norm_key = label_to_addr[low_id]
+            prim_key = label_to_addr[low_id]
         else:
-            norm_key = low_id # Label-only identity
+            prim_key = low_id # Orphan label
 
-        name = owners_map.get(norm_key, "")
+        name = owners_map.get(prim_key, "")
+        if not name and prim_key in label_to_addr: # Should not happen with current logic but for safety
+             name = prim_key
 
-        if norm_key not in identities:
-            identities[norm_key] = {"ident": raw_id, "name": name}
+        if prim_key not in identity_registry:
+            identity_registry[prim_key] = {"ident": raw_id, "name": name}
         else:
-            # If we found a hex identifier for a known identity, favor it as primary ident
-            if raw_id.lower().startswith("0x") and not identities[norm_key]["ident"].lower().startswith("0x"):
-                identities[norm_key]["ident"] = raw_id
-            # Preserve name
-            if not identities[norm_key]["name"] and name:
-                identities[norm_key]["name"] = name
+            # Upgrade primary ident if we find a hex for a label-only entry
+            if raw_id.lower().startswith("0x") and not identity_registry[prim_key]["ident"].lower().startswith("0x"):
+                identity_registry[prim_key]["ident"] = raw_id
+            # Ensure name is captured
+            if not identity_registry[prim_key]["name"] and name:
+                identity_registry[prim_key]["name"] = name
 
+    # 3. Final formatting
     results = []
-    for k, data in identities.items():
+    for k, data in identity_registry.items():
         results.append(format_owner_display(data["ident"], data["name"]))
 
     return sorted(list(set(results)))
