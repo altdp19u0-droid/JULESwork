@@ -22,13 +22,18 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 - **VOIE 1 (Blockscout Deep Scan) :** Priorité sémantique (extraction des étiquettes From_Label/To_Label et types de processus).
 - **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2 via Etherscan/BscScan).
 - **VOIE 3 (Imports CEX/Offline) :** Intégration automatique des fichiers `raw_*.csv` locaux (ex: Neverless, Bleap).
-- **FUSION INTELLIGENTE :** Dédoublonnage par le triplet `(Tx_Hash, Asset, Account)`. La fusion doit préserver les labels de la Voie 1 et injecter les frais/méthodes de la Voie 2.
+- **FUSION INTELLIGENTE :** Dédoublonnage scrupuleux par le quadruplet **`(Tx_Hash, Asset, Account, Chain)`**. La fusion doit préserver les labels de la Voie 1 et injecter les frais/méthodes de la Voie 2.
 - **NOMMAGE CONSOLIDÉ :** Le fichier final doit impérativement porter le suffixe `_consolidated_` (ex: `raw_transactions_consolidated_*.csv`) pour indiquer le traitement multivoie.
-- **UI RÉCOLTE :** L'interface doit obligatoirement afficher trois tableaux distincts en conclusion de récolte par compte, même s'ils sont vides : **Portfolio**, **Transactions** et **Tokens**. Un message d'état doit confirmer l'accessibilité de Blockscout et Etherscan.
+- **UI RÉCOLTE :**
+    - **Structure :** L'interface doit obligatoirement afficher trois tableaux distincts : **Portfolio**, **Transactions** (Natives/Internes) et **Tokens** (ERC-20/CEX).
+    - **Intégrité :** Chaque tableau doit impérativement afficher les 19 colonnes du standard RAW V4. La colonne `Asset` (nom de l'actif) doit être visible et renseignée pour tous les transferts.
+    - **Diagnostic :** Confirmer l'accessibilité de Blockscout et Etherscan avec distinction claire entre succès, vide et erreur.
 - **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `resolve_owner_display` pour discriminer et unifier les identités. Le standard absolu est le format : **`Identifiant_Technique (Nom_Amical)`**. La suite doit impérativement dédoublonner les listes via `get_owner_display_list` pour qu'une même identité (liée par `owner_accounts.json`) n'apparaisse qu'une seule fois dans les menus et rapports. Un suivi incrémental des comptes collectés doit rester visible.
 - **GESTION DES CLÉS API :**
     - **Clé Universelle (V2 Unifiée) :** Permettre la saisie d'une clé API unique s'appliquant à tous les réseaux.
-    - **Support Etherscan V2 :** Utiliser systématiquement l'endpoint `https://api.etherscan.io/v2/api` avec le paramètre `chainid` pour les réseaux compatibles (Ethereum, Base, Arbitrum, BSC, etc.). Cela permet une récolte multi-chaîne avec une seule clé V2.
+    - **Support Etherscan V2 & Smart Fallback :**
+        - **Endpoint Unifié :** Utiliser `https://api.etherscan.io/v2/api` avec `chainid`.
+        - **Smart Fallback :** Si l'API V2 renvoie une erreur "Free API access not supported", le moteur doit automatiquement basculer sur l'endpoint V1 spécifique au réseau (ex: `api.basescan.org`) pour garantir la récolte.
     - **Temporisation FREE Plan :** Appliquer une pause de **400ms** minimum entre chaque appel API et gérer le retry automatique de **5s** en cas de "Rate Limit" pour respecter strictement les quotas des comptes gratuits (5 calls/sec).
     - **Diagnostic Explicite :** Capturer et afficher le message d'erreur brut de l'API (ex: "Invalid API Key") au lieu d'un message générique.
 
@@ -46,7 +51,9 @@ Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce sc
 ## III. PHASE 2 : QUALIFICATION & NETTOYAGE (app2.py)
 C'est l'étape critique de transformation des données brutes en journal comptable.
 
-1. **Agrégation Exhaustive :** Doit traiter chaque ligne des fichiers bruts sans exception. Utilise des fallbacks (ex: Date 31/12 pour inventaires si absent).
+1. **Agrégation Exhaustive & Fidelity Engine :**
+    - Doit traiter chaque ligne des fichiers bruts sans exception. Utilise des fallbacks (ex: Date 31/12 pour inventaires si absent).
+    - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP) déjà présentes dans le journal qualifié.
 2. **Gestion des Doublons Suspects :**
     - Détection fine par trio (Montant/Asset/Compte) à date identique.
     - **Interface :** Expander de revue dédié et **surlignage rouge** des lignes suspectes dans le tableau.
@@ -62,7 +69,10 @@ C'est l'étape critique de transformation des données brutes en journal comptab
 ## IV. PHASE 3 : AUDIT, VGP & FISCALITÉ
 Utilisation des données nettoyées pour le reporting final.
 
-1. **VGP Cumulative (app2VGP) :** Calcul factuel par sommation des soldes (Comptes, Positions, Créances). Correction de prix directe via `st.data_editor` avec mise à jour simultanée du cache global et annuel.
+1. **VGP Cumulative (app2VGP) :**
+    - **Modèle Comptable Factuel :** Calcul par sommation stricte des soldes (Comptes + Positions + Créances).
+    - **Interdiction :** Les méthodes par "Wealth-Change" ou "Ajustements globaux" sont strictement interdites pour garantir l'auditabilité.
+    - **Correction :** Correction de prix directe via `st.data_editor` avec mise à jour simultanée du cache global et annuel.
 2. **Bilan Fiscal (app3) :**
     - **Sécurité Fiscale (Lock) :** Blocage automatique de la génération de rapport si `appDiagCoh.py` détecte des ruptures de stock (soldes négatifs) sur des cessions.
     - **Calcul Art. 150 VH bis :** Application stricte, ratio d'abattement plafonné à 1.0, exclusion des VGP non positives.
@@ -77,7 +87,8 @@ Utilisation des données nettoyées pour le reporting final.
 - **Navigation Hub (main.py) :** Orchestre l'accès aux modules et protège l'état via les clés `_hub_`.
 - **Réactivité :** Appel systématique à `st.rerun()` après chaque modification de données.
 - **Système Opérationnel :** Message de succès `✅ Système Opérationnel` permanent en sidebar.
-- **Intégrité des Données :**
+- **Intégrité des Données & Type Safety :**
+    - **Conversion Numérique Forcée :** Appliquer systématiquement `pd.to_numeric(..., errors='coerce').fillna(0.0)` sur les colonnes `Amount`, `Value ($)` et `VGP (EUR)` pour éviter les crashs de type Float/String dans Streamlit.
     - **Dates :** Exclusion automatique de toute transaction sans date valide (NaT, None).
     - **Imports :** Mapping CSV insensible à la casse et sans espaces superflus (`strip`).
     - **Indexation :** `get_known_accounts` doit agréger les noms de `owner_accounts.json`, `position_labels.json` et des journaux.

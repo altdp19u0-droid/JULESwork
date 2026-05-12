@@ -134,56 +134,66 @@ RAW_V4_COLUMNS = [
 # --- Way 2 API Helper ---
 def fetch_etherscan_way2(chain_id, api_host, addr, api_key, year, max_items, native):
     """
-    Fetches transactions using Etherscan API V2 unified endpoint or legacy V1.
-    Supports chainid parameter for multi-chain harvesting with a single key.
+    Fetches transactions using Etherscan API V2 unified endpoint with Smart Fallback to V1.
     Returns: (items_list, success_status)
-    success_status can be: True (Data found), "empty" (Connected, no data), False or String (Error message)
     """
     items = []
     if not api_key: return [], "empty"
 
     final_status = "empty"
-    endpoints = [
-        ("txlist", "Native"), ("tokentx", "Tokens"),
-        ("txlistinternal", "Internal")
-    ]
+    endpoints = [("txlist", "Native"), ("tokentx", "Tokens"), ("txlistinternal", "Internal")]
 
-    # Etherscan V2 Unified URL if chain_id is available, otherwise fallback to legacy host
-    is_v2_branded = any(x in api_host for x in ["etherscan", "arbiscan", "basescan", "polygonscan", "bscscan"])
-    base_url = "https://api.etherscan.io/v2/api" if (is_v2_branded and chain_id) else f"https://{api_host}/api"
+    # 1. Configuration des endpoints (V2 par défaut si possible)
+    v2_url = "https://api.etherscan.io/v2/api"
+    v1_url = f"https://{api_host}/api"
+
+    # On tente la V2 si c'est un explorateur compatible
+    is_v2_branded = any(x in api_host for x in ["etherscan", "arbiscan", "basescan", "polygonscan", "bscscan", "optimistic"])
+    use_v2 = (is_v2_branded and chain_id)
+
+    current_base_url = v2_url if use_v2 else v1_url
 
     for action, label in endpoints:
-        # FREE Plan compliance: 300ms-400ms pause between calls to respect 5 calls/sec
         time.sleep(0.4)
-
         start_block = 0
-        for loop in range(10): # Max 100,000 txs per type
+        for loop in range(10):
             params = {
                 "module": "account", "action": action, "address": addr,
                 "startblock": start_block, "endblock": 99999999,
                 "offset": 10000, "sort": "asc", "apikey": api_key
             }
-            if "etherscan.io/v2" in base_url: params["chainid"] = chain_id
+            if current_base_url == v2_url: params["chainid"] = chain_id
 
             try:
-                res = requests.get(base_url, params=params, timeout=25).json()
+                res = requests.get(current_base_url, params=params, timeout=25).json()
                 res_status = str(res.get("status"))
                 res_result = res.get("result")
 
-                # Handling status "0" (often empty or error)
                 if res_status == "0":
                     msg = str(res_result).lower()
+
+                    # --- SMART FALLBACK V2 -> V1 ---
+                    if current_base_url == v2_url and ("free api access is not supported" in msg or "not supported for this chain" in msg):
+                        st.toast(f"🔄 Basculement V2 -> V1 pour {api_host}...")
+                        current_base_url = v1_url
+                        # On réinitialise les paramètres pour la V1 (pas de chainid)
+                        params.pop("chainid", None)
+                        # On relance l'appel immédiatement
+                        res = requests.get(current_base_url, params=params, timeout=25).json()
+                        res_status = str(res.get("status"))
+                        res_result = res.get("result")
+                        msg = str(res_result).lower()
+
                     if any(x in msg for x in ["no transactions found", "no records found", "no internal transactions found", "no matching entries"]):
-                        break # Next endpoint
+                        break
                     elif any(x in msg for x in ["rate limit", "max rate", "fast for us"]):
-                        st.toast(f"⚠️ {api_host} : Rate limit (5/sec), pause 5s...")
+                        st.toast(f"⚠️ {api_host} : Rate limit, pause 5s...")
                         time.sleep(5)
-                        # Retry once
-                        res = requests.get(base_url, params=params, timeout=25).json()
+                        res = requests.get(current_base_url, params=params, timeout=25).json()
                         if str(res.get("status")) != "0": res_result = res.get("result")
-                        else: break # Still failing, skip
+                        else: break
                     else:
-                        return items, str(res_result) # Hard Error Message
+                        return items, str(res_result)
 
                 if not isinstance(res_result, list) or not res_result:
                     break
@@ -196,18 +206,15 @@ def fetch_etherscan_way2(chain_id, api_host, addr, api_key, year, max_items, nat
                         dt = datetime.fromtimestamp(ts, tz=tz.tzutc())
                         if dt.year == year:
                             items.append((t, label, dt))
-                        elif dt.year > year:
-                             pass
                     except: continue
 
-                # Pagination
                 last_block = int(res_result[-1].get('blockNumber', 0))
                 if last_block <= start_block: break
                 start_block = last_block + 1
                 if len(res_result) < 10000: break
                 time.sleep(0.4)
             except Exception as e:
-                return items, f"Erreur connexion: {str(e)}"
+                return items, f"Erreur: {str(e)}"
 
     return items[:max_items], final_status
 
@@ -334,34 +341,40 @@ if display_registry:
             else:
                 st.info("💡 Cliquez sur 'Lancer la Récolte' pour interroger les APIs Blockscout et Etherscan pour ce compte.")
 
+            # 1. PORTFOLIO
             st.markdown("#### 📦 Portfolio")
             df_p = data.get("portfolio", pd.DataFrame(columns=RAW_V4_COLUMNS))
-            st.dataframe(df_p, width='stretch', key=f"df_p_v13_{addr}")
+            # Ensure columns order and presence
+            df_p = df_p.reindex(columns=RAW_V4_COLUMNS).fillna("")
+            st.dataframe(df_p, width='stretch', key=f"df_p_v14_{addr}")
 
-            # Splitting Transactions vs Tokens logic
+            # 2. TRANSACTIONS
             df_t_all = data.get("transactions", pd.DataFrame(columns=RAW_V4_COLUMNS))
+            # Critical: preserve all columns for filters and export
+            df_t_all = df_t_all.reindex(columns=RAW_V4_COLUMNS).fillna("")
+
             df_native = pd.DataFrame(columns=RAW_V4_COLUMNS)
             df_tokens = pd.DataFrame(columns=RAW_V4_COLUMNS)
 
             if not df_t_all.empty:
-                mask_native = df_t_all["Type"].astype(str).str.lower().str.contains("native|internal") & \
-                             ~df_t_all["Type"].astype(str).str.lower().str.contains("token")
+                # Identification robuste des types
+                t_low = df_t_all["Type"].astype(str).str.lower()
+                mask_native = t_low.str.contains("native|internal") & ~t_low.str.contains("token")
                 df_native = df_t_all[mask_native].copy()
 
-                mask_token = df_t_all["Type"].astype(str).str.lower().str.contains("token|cex|mvt")
-                df_tokens = df_t_all[mask_token].copy()
-
-                mask_other = ~(df_t_all.index.isin(df_native.index)) & ~(df_t_all.index.isin(df_tokens.index))
-                if mask_other.any(): df_tokens = pd.concat([df_tokens, df_t_all[mask_other]])
+                # Le reste va dans Tokens (Token, CEX_Mvt, etc.)
+                df_tokens = df_t_all[~mask_native].copy()
 
             st.markdown(f"#### 📝 Transactions ({len(df_native)})")
             st.caption("Mouvements natifs (ETH, POL, BNB...) et transactions internes.")
-            st.dataframe(df_native, width='stretch', key=f"df_native_v13_{addr}")
+            st.dataframe(df_native, width='stretch', key=f"df_native_v14_{addr}")
 
+            # 3. TOKENS
             st.markdown(f"#### 🪙 Tokens ({len(df_tokens)})")
             st.caption("Transferts d'actifs ERC-20, Stables et mouvements de plateformes.")
-            if df_tokens.empty and not df_t_all.empty: st.info("Aucun transfert de token détecté.")
-            st.dataframe(df_tokens, width='stretch', key=f"df_tokens_v13_{addr}")
+            if df_tokens.empty and not df_t_all.empty:
+                 st.info("Aucun transfert de token détecté dans ce journal.")
+            st.dataframe(df_tokens, width='stretch', key=f"df_tokens_v14_{addr}")
 
 if harvest_btn:
     raw_addr = sl.resolve_raw_addr(address)

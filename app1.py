@@ -51,7 +51,7 @@ import shared_logic as sl
 uploaded_file = st.file_uploader("Choisir un fichier CSV", type="csv")
 
 if uploaded_file:
-    df_raw = pd_read_csv_safe(uploaded_file)
+    df_raw = sl.pd_read_csv_safe(uploaded_file)
     st.subheader("👀 Aperçu du fichier importé")
     st.dataframe(df_raw.head(10), width='stretch')
 
