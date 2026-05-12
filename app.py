@@ -112,7 +112,7 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    show_status()
+    sl.show_status()
 
 # --- RAW V4 Standard (19 colonnes) ---
 RAW_V4_COLUMNS = [
@@ -124,42 +124,69 @@ RAW_V4_COLUMNS = [
 
 # --- Way 2 API Helper ---
 def fetch_etherscan_way2(api_host, addr, api_key, year, max_items, native):
+    """
+    Fetches transactions from Etherscan-like APIs.
+    Returns: (items_list, success_status)
+    success_status can be: True (Data found), "empty" (Connected, no data), False (Error/Invalid Key)
+    """
     items = []
-    if not api_key: return [], False # On garde list vide si pas de clé
+    if not api_key: return [], "empty"
 
-    success = False
+    final_status = "empty"
     endpoints = [
         ("txlist", "Native"), ("tokentx", "Tokens"),
         ("txlistinternal", "Internal")
     ]
 
     for action, label in endpoints:
+        # Rate limit protection between endpoints
+        if label != "Native": time.sleep(1.1)
+
         start_block = 0
         for loop in range(10): # Max 100,000 txs per type
             url = f"https://{api_host}/api?module=account&action={action}&address={addr}&startblock={start_block}&endblock=99999999&offset=10000&sort=asc&apikey={api_key}"
             try:
-                res = requests.get(url, timeout=20).json()
-                results = res.get("result", [])
-                if str(res.get("status")) != "1" or not isinstance(results, list) or not results:
+                res = requests.get(url, timeout=25).json()
+                res_status = str(res.get("status"))
+                res_result = res.get("result")
+
+                if res_status == "0":
+                    msg = str(res_result).lower()
+                    if any(x in msg for x in ["no transactions found", "no records found", "no internal transactions found", "no matching entries"]):
+                        break # Next endpoint
+                    elif "rate limit" in msg or "max rate" in msg:
+                        st.toast(f"⚠️ Rate limit sur {api_host}, attente 5s...")
+                        time.sleep(5)
+                        continue
+                    else:
+                        return items, False # Actual API Error
+
+                if not isinstance(res_result, list) or not res_result:
                     break
 
-                if results: success = True
-                for t in results:
-                    dt = datetime.fromtimestamp(int(t['timeStamp']), tz=tz.tzutc())
-                    if dt.year == year:
-                        items.append((t, label, dt))
-                    elif dt.year > year:
-                         break
+                final_status = True
+                for t in res_result:
+                    try:
+                        ts = int(t.get('timeStamp') or 0)
+                        if not ts: continue
+                        dt = datetime.fromtimestamp(ts, tz=tz.tzutc())
+                        if dt.year == year:
+                            items.append((t, label, dt))
+                        elif dt.year > year:
+                             pass
+                    except: continue
 
                 # Pagination
-                last_block = int(results[-1].get('blockNumber', 0))
+                if not res_result: break
+                last_block = int(res_result[-1].get('blockNumber', 0))
                 if last_block <= start_block: break
                 start_block = last_block + 1
-                if len(results) < 10000: break
-                time.sleep(0.2)
-            except: break
+                if len(res_result) < 10000: break
+                time.sleep(1.1) # Rate limit between pages
+            except:
+                return items, False # Connection Error
 
-    return items[:max_items], success
+    return items[:max_items], final_status
 
 # --- Shared Logic ---
 def call_api(url, params=None):
@@ -183,7 +210,6 @@ def fetch_blockscout_v2(api_v2, addr, max_items, year, endpoint):
         if not data or "items" not in data: break
 
         for item in data["items"]:
-            # Détection de la date (flexible V2)
             ts_str = item.get("timestamp") or item.get("block_timestamp")
             if not ts_str: continue
             dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
@@ -221,7 +247,6 @@ def fetch_blockscout_v1_fallback(api_v1, addr, action, max_items, year):
     return items[:max_items]
 
 def extract_value(v):
-    # Blockscout V2 peut renvoyer {'value': '123'} ou '123'
     if isinstance(v, dict):
         return v.get("total") or v.get("value") or "0"
     return str(v or "0")
@@ -238,25 +263,19 @@ def format_addr(addr_obj):
 def fetch_portfolio_v2(api_v2, addr):
     url = f"{api_v2}/addresses/{addr}/token-balances"
     data = call_api(url)
-    return data # Can be None if failure
+    return data
 
 # --- Main App Logic ---
 harvest_btn = st.button("🚀 Lancer la Récolte Totale (Step 1 : Brutes)", width='stretch')
 
-# Liste des Comptes Collectés (Visible au-dessus de la récolte)
 if st.session_state.harvested_accounts:
     st.subheader("🏦 Suivi de la Récolte Session")
-
     acc_data = []
     for a, v in st.session_state.harvested_accounts.items():
         disp = sl.resolve_owner_display(a)
         acc_data.append({"Compte": disp, "Txs": v["tx"], "Actifs": v["portfolio"]})
+    st.dataframe(pd.DataFrame(acc_data), hide_index=True, width='stretch')
 
-    acc_df = pd.DataFrame(acc_data)
-    st.dataframe(acc_df, hide_index=True, width='stretch')
-
-# Affichage des 3 Tableaux Obligatoires (Par compte récolté)
-# On inclut l'adresse actuellement saisie dès qu'elle est présente
 active_addr = address.lower().strip() if address.strip() else None
 
 display_registry = st.session_state.account_data_registry.copy()
@@ -264,7 +283,7 @@ if active_addr and active_addr not in display_registry:
     display_registry[active_addr] = {
         "portfolio": pd.DataFrame(columns=RAW_V4_COLUMNS),
         "transactions": pd.DataFrame(columns=RAW_V4_COLUMNS),
-        "status": {"blockscout": None, "etherscan": None}
+        "status": {"blockscout": {}, "etherscan": {}}
     }
 
 if display_registry:
@@ -275,50 +294,48 @@ if display_registry:
         is_active = (addr == active_addr)
         disp_name = sl.resolve_owner_display(addr)
         with st.expander(f"👤 Compte : {disp_name} {'(Actif)' if is_active else ''}", expanded=is_active):
-            # Message d'état des APIs
             api_status = data.get("status", {})
-            if any(v is not None for v in api_status.values()):
+            bs_map = api_status.get("blockscout") or {}
+            eth_map = api_status.get("etherscan") or {}
+
+            if bs_map or eth_map:
                 c1, c2 = st.columns(2)
-                bs_st = api_status.get("blockscout")
-                eth_st = api_status.get("etherscan")
+                bs_errors = [c for c, v in bs_map.items() if v is False]
+                if bs_errors: c1.error(f"❌ Blockscout : Erreur sur {', '.join(bs_errors)}")
+                elif any(v is True for v in bs_map.values()): c1.success("✅ Blockscout : Connecté")
+                elif bs_map: c1.warning("ℹ️ Blockscout : Connecté (Vide)")
 
-                if bs_st is True: c1.success("✅ Blockscout : Connecté")
-                elif bs_st is False: c1.error("❌ Blockscout : Erreur d'accès / Serveur injoignable")
-                elif bs_st == "empty": c1.warning("ℹ️ Blockscout : Connecté (Mais aucun actif trouvé)")
-
-                if eth_st is True: c2.success("✅ Etherscan/API : Connecté")
-                elif eth_st is False: c2.error("❌ Etherscan/API : Erreur d'accès ou Clé invalide")
-                elif eth_st == "empty": c2.warning("ℹ️ Etherscan/API : Connecté (Mais aucun mouvement trouvé)")
+                eth_errors = [c for c, v in eth_map.items() if v is False]
+                eth_success = [c for c, v in eth_map.items() if v is True]
+                if eth_errors: c2.error(f"❌ API Scans : Erreur sur {', '.join(eth_errors)} (Clé invalide ?)")
+                elif eth_success: c2.success("✅ API Scans : Connecté")
+                elif eth_map: c2.warning("ℹ️ API Scans : Connecté (Vide)")
             else:
                 st.info("💡 Cliquez sur 'Lancer la Récolte' pour interroger les APIs Blockscout et Etherscan pour ce compte.")
 
-            # 1. TABLEAU PORTFOLIO
             st.markdown("#### 📦 Portfolio")
             df_p = data.get("portfolio", pd.DataFrame(columns=RAW_V4_COLUMNS))
-            st.dataframe(df_p, width='stretch', key=f"df_p_{addr}")
-            if df_p.empty and api_status.get("blockscout") is None:
-                st.caption("En attente de récolte...")
+            st.dataframe(df_p, width='stretch', key=f"df_p_v11_{addr}")
 
-            # 2. TABLEAU TRANSACTIONS
-            st.markdown("#### 📝 Transactions")
-            df_t = data.get("transactions", pd.DataFrame(columns=RAW_V4_COLUMNS))
+            st.markdown("#### 📝 Transactions (Natives & Internes)")
+            df_t_all = data.get("transactions", pd.DataFrame(columns=RAW_V4_COLUMNS))
             df_native = pd.DataFrame(columns=RAW_V4_COLUMNS)
-            if not df_t.empty:
-                df_t["Type_UI"] = df_t["Type"].astype(str).str.lower().str.replace("s", "")
-                mask_native = df_t["Type_UI"].isin(["native", "internal", "native/internal"])
-                df_native = df_t[mask_native].drop(columns=["Type_UI"], errors="ignore")
+            if not df_t_all.empty:
+                mask_native = df_t_all["Type"].astype(str).str.lower().str.contains("native|internal") & \
+                             ~df_t_all["Type"].astype(str).str.lower().str.contains("token")
+                df_native = df_t_all[mask_native].copy()
+            st.dataframe(df_native, width='stretch', key=f"df_native_v11_{addr}")
 
-            st.dataframe(df_native, width='stretch', key=f"df_n_{addr}")
-
-            # 3. TABLEAU TOKENS
-            st.markdown("#### 🪙 Tokens")
+            st.markdown("#### 🪙 Tokens (ERC-20 & CEX)")
             df_tokens = pd.DataFrame(columns=RAW_V4_COLUMNS)
-            if not df_t.empty:
-                # Type_UI already created above if not empty
-                mask_token = df_t["Type_UI"].isin(["token", "cex_mvt"])
-                df_tokens = df_t[mask_token].drop(columns=["Type_UI"], errors="ignore")
+            if not df_t_all.empty:
+                mask_token = df_t_all["Type"].astype(str).str.lower().str.contains("token|cex|mvt")
+                df_tokens = df_t_all[mask_token].copy()
+                mask_other = ~(df_t_all.index.isin(df_native.index)) & ~(df_t_all.index.isin(df_tokens.index))
+                if mask_other.any(): df_tokens = pd.concat([df_tokens, df_t_all[mask_other]])
 
-            st.dataframe(df_tokens, width='stretch', key=f"df_t_{addr}")
+            if df_tokens.empty and not df_t_all.empty: st.caption("ℹ️ Aucun transfert de token détecté.")
+            st.dataframe(df_tokens, width='stretch', key=f"df_tokens_v11_{addr}")
 
 if harvest_btn:
     raw_addr = sl.resolve_raw_addr(address)
@@ -329,24 +346,24 @@ if harvest_btn:
         st.info(f"🔍 Analyse de l'adresse : {addr_c}")
 
         global_raw_txs = []
-        bs_status_final = False # False=Error, True=Success, "empty"=Vide
-        eth_status_final = bool(not any(api_keys.values())) # True si pas de clés (pas d'erreur)
+        bs_chains_status = {}
+        eth_chains_status = {}
 
-        # 1. Harvest Portfolio (ÉTAT ACTUEL - VOIE 1)
+        # 1. Portfolio
         st.subheader("📦 Portfolio (État Actuel - Blockscout)")
         portfolio_all = []
         for chain in chains:
             v2 = CHAIN_APIS[chain]["v2"]
+            bs_chains_status[chain] = "empty"
             try:
                 balances = fetch_portfolio_v2(v2, addr_c)
                 if balances is not None:
-                    if bs_status_final is False: bs_status_final = "empty"
                     if isinstance(balances, dict) and "items" in balances: balances = balances["items"]
                     if balances:
-                        bs_status_final = True
+                        bs_chains_status[chain] = True
                         for b in balances:
                             token = b.get("token", {})
-                            asset_sym = token.get("symbol", "NATIVE" if not token else "TOKEN")
+                            asset_sym = str(token.get("symbol", "NATIVE" if not token else "TOKEN")).upper().strip()
                             qty = float(b.get("value", 0)) / (10**int(token.get("decimals", 18) or 18))
                             portfolio_all.append({
                                 "Date": datetime(target_year, 12, 31).isoformat(),
@@ -355,233 +372,162 @@ if harvest_btn:
                                 "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "",
                                 "Counterparty": "Blockchain Snapshot", "Asset": asset_sym, "Amount": qty,
                                 "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1",
-                                "Audit_Status": "RAW", "Fee_Audit_Alert": ""
+                                "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
                             })
-                else:
-                    # technical error for this chain
-                    pass
-            except: pass
+            except: bs_chains_status[chain] = False
 
         st.session_state.portfolio = pd.DataFrame(portfolio_all, columns=RAW_V4_COLUMNS)
 
-        # 2. MULTI-WAY HARVEST
+        # 2. Transactions
         st.subheader("📝 Récolte Multivoie (Journal Brut)")
         pbar = st.progress(0)
 
         for idx, chain in enumerate(chains):
             st.write(f"🌐 Analyse de **{chain}**...")
-
-            # Real-time feedback containers for current chain
             c_fb1, c_fb2 = st.columns(2)
-            fb_native = c_fb1.empty()
-            fb_tokens = c_fb2.empty()
-
-            chain_txs = []
-            chain_toks = []
+            fb_native, fb_tokens = c_fb1.empty(), c_fb2.empty()
+            chain_txs, chain_toks = [], []
 
             v2, v1 = CHAIN_APIS[chain]["v2"], CHAIN_APIS[chain]["v1"]
             api_host, native = CHAIN_APIS[chain]["api_host"], CHAIN_APIS[chain]["native"]
             api_key = api_keys.get(chain)
+            eth_chains_status[chain] = "empty" if not api_key else None
 
-            # --- VOIE 1 : BLOCKSCOUT ---
-            # Native
+            # --- VOIE 1 ---
             raw_v1_txs = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "transactions")
             if not raw_v1_txs: raw_v1_txs = fetch_blockscout_v1_fallback(v1, addr_c, "txlist", max_txs, target_year)
             for t in raw_v1_txs:
-                if "timestamp" in t: # V2
-                    dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
-                    val = float(t.get("value", 0)) / 1e18
-                    f_raw, t_raw = t.get("from", {}).get("hash", "").lower(), t.get("to", {}).get("hash", "").lower()
-                    f_l, t_l = t.get("from", {}).get("name", ""), t.get("to", {}).get("name", "")
-                    tx_h = t.get("hash")
-                    gas_u, gas_p = int(t.get("gas_used", 0)), int(t.get("gas_price", 0))
-                    meth = t.get("method", "")
-                else: # V1
-                    dt = datetime.fromtimestamp(int(t.get("timeStamp", 0)), tz=tz.tzutc())
-                    val = float(t.get("value", 0)) / 1e18
-                    f_raw, t_raw = t.get("from", "").lower(), t.get("to", "").lower()
-                    f_l, t_l = "", ""
-                    tx_h = t.get("hash")
-                    gas_u, gas_p = int(t.get("gasUsed", 0)), int(t.get("gasPrice", 0))
-                    meth = ""
+                try:
+                    if "timestamp" in t:
+                        dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
+                        val = float(t.get("value", 0)) / 1e18
+                        f_obj, t_obj = t.get("from") or {}, t.get("to") or {}
+                        f_raw = str(f_obj.get("hash") if isinstance(f_obj, dict) else f_obj).lower().strip()
+                        t_raw = str(t_obj.get("hash") if isinstance(t_obj, dict) else t_obj).lower().strip()
+                        f_l = f_obj.get("name", "") if isinstance(f_obj, dict) else ""
+                        t_l = t_obj.get("name", "") if isinstance(t_obj, dict) else ""
+                        tx_h = str(t.get("hash")).lower().strip()
+                        gas_u, gas_p, meth = int(t.get("gas_used") or 0), int(t.get("gas_price") or 0), t.get("method", "")
+                    else:
+                        dt = datetime.fromtimestamp(int(t.get("timeStamp", 0)), tz=tz.tzutc())
+                        val = float(t.get("value", 0)) / 1e18
+                        f_raw, t_raw = str(t.get("from", "")).lower().strip(), str(t.get("to", "")).lower().strip()
+                        f_l, t_l, tx_h, meth = "", "", str(t.get("hash")).lower().strip(), ""
+                        gas_u, gas_p = int(t.get("gasUsed", 0)), int(t.get("gasPrice", 0))
 
-                fee = (gas_u * gas_p) / 1e18
-                v4_tx = {
-                    "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native",
-                    "Method": meth, "Account": addr_c, "From": f_raw, "To": t_raw,
-                    "From_Label": f_l, "To_Label": t_l,
-                    "Counterparty": t_raw if f_raw == addr_c else f_raw,
-                    "Asset": native, "Amount": val if t_raw == addr_c else -val,
-                    "Fee_Asset": native, "Fee_Amount": fee if f_raw == addr_c else 0.0,
-                    "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
-                }
-                global_raw_txs.append(v4_tx)
-                chain_txs.append(v4_tx)
-
+                    fee = (gas_u * gas_p) / 1e18
+                    v4_tx = {
+                        "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native",
+                        "Method": meth, "Account": addr_c, "From": f_raw, "To": t_raw,
+                        "From_Label": f_l, "To_Label": t_l,
+                        "Counterparty": t_raw if f_raw == addr_c else f_raw,
+                        "Asset": native.upper().strip(), "Amount": val if t_raw == addr_c else -val,
+                        "Fee_Asset": native.upper().strip(), "Fee_Amount": fee if f_raw == addr_c else 0.0,
+                        "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
+                    }
+                    global_raw_txs.append(v4_tx); chain_txs.append(v4_tx)
+                except: continue
             fb_native.caption(f"✅ {len(chain_txs)} Transactions Natives")
 
-            # Tokens
             raw_v1_toks = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "token-transfers")
             if not raw_v1_toks: raw_v1_toks = fetch_blockscout_v1_fallback(v1, addr_c, "tokentx", max_txs, target_year)
             for t in raw_v1_toks:
-                if "token" in t: # V2
-                    dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
-                    tok = t.get("token", {})
-                    asset = tok.get("symbol", "TOKEN")
-                    dec = int(tok.get("decimals") or 18)
-                    val = float(extract_value(t.get("total") or t.get("value", "0"))) / (10**dec)
-                    f_raw, t_raw = t.get("from", {}).get("hash", "").lower(), t.get("to", {}).get("hash", "").lower()
-                    f_l, t_l = t.get("from", {}).get("name", ""), t.get("to", {}).get("name", "")
-                    tx_h = t.get("tx_hash") or t.get("hash")
-                else: # V1
-                    dt = datetime.fromtimestamp(int(t.get("timeStamp", 0)), tz=tz.tzutc())
-                    asset = t.get("tokenSymbol", "TOKEN")
-                    val = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal") or 18))
-                    f_raw, t_raw = t.get("from", "").lower(), t.get("to", "").lower()
-                    f_l, t_l = "", ""
-                    tx_h = t.get("hash")
+                try:
+                    if "token" in t:
+                        dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
+                        tok = t.get("token") or {}
+                        asset = str(tok.get("symbol", "TOKEN")).upper().strip()
+                        dec = int(tok.get("decimals") or 18)
+                        val = float(extract_value(t.get("total") or t.get("value", "0"))) / (10**dec)
+                        f_obj, t_obj = t.get("from") or {}, t.get("to") or {}
+                        f_raw = str(f_obj.get("hash") if isinstance(f_obj, dict) else f_obj).lower().strip()
+                        t_raw = str(t_obj.get("hash") if isinstance(t_obj, dict) else t_obj).lower().strip()
+                        f_l, t_l = (f_obj.get("name", "") if isinstance(f_obj, dict) else ""), (t_obj.get("name", "") if isinstance(t_obj, dict) else "")
+                        tx_h = str(t.get("tx_hash") or t.get("hash")).lower().strip()
+                    else:
+                        dt = datetime.fromtimestamp(int(t.get("timeStamp", 0)), tz=tz.tzutc())
+                        asset = str(t.get("tokenSymbol", "TOKEN")).upper().strip()
+                        val = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal") or 18))
+                        f_raw, t_raw = str(t.get("from", "")).lower().strip(), str(t.get("to", "")).lower().strip()
+                        f_l, t_l, tx_h = "", "", str(t.get("hash")).lower().strip()
 
-                v4_tok = {
-                    "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Token",
-                    "Method": "", "Account": addr_c, "From": f_raw, "To": t_raw,
-                    "From_Label": f_l, "To_Label": t_l,
-                    "Counterparty": t_raw if f_raw == addr_c else f_raw,
-                    "Asset": asset, "Amount": val if t_raw == addr_c else -val,
-                    "Fee_Asset": "", "Fee_Amount": 0.0,
-                    "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
-                }
-                global_raw_txs.append(v4_tok)
-                chain_toks.append(v4_tok)
-
+                    v4_tok = {
+                        "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Token",
+                        "Method": "", "Account": addr_c, "From": f_raw, "To": t_raw,
+                        "From_Label": f_l, "To_Label": t_l,
+                        "Counterparty": t_raw if f_raw == addr_c else f_raw,
+                        "Asset": asset, "Amount": val if t_raw == addr_c else -val,
+                        "Fee_Asset": "", "Fee_Amount": 0.0,
+                        "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
+                    }
+                    global_raw_txs.append(v4_tok); chain_toks.append(v4_tok)
+                except: continue
             fb_tokens.caption(f"✅ {len(chain_toks)} Transferts de Tokens")
 
-            # --- VOIE 2 : API SCANS ---
+            # --- VOIE 2 ---
             if api_key:
                 st.write(f"🔎 Scan Way_2 pour **{chain}**...")
-                items_v2, way2_success = fetch_etherscan_way2(api_host, addr_c, api_key, target_year, max_txs, native)
-                if way2_success:
-                    if eth_status_final in [False, True]: eth_status_final = True
-                    else: eth_status_final = True # Prioritize Success
-                elif items_v2 == [] and way2_success is False:
-                    # Error or no results? fetch_etherscan_way2 returns False if not status 1
-                    pass
-
+                items_v2, way2_res = fetch_etherscan_way2(api_host, addr_c, api_key, target_year, max_txs, native)
+                eth_chains_status[chain] = way2_res
                 if items_v2:
-                    if eth_status_final is False: eth_status_final = True
                     for t, label, dt in items_v2:
-                        tx_h = t.get("hash")
-                        f_r, t_r = t.get("from", "").lower(), t.get("to", "").lower()
+                        tx_h = str(t.get("hash")).lower().strip()
+                        f_r, t_r = str(t.get("from", "")).lower().strip(), str(t.get("to", "")).lower().strip()
                         amt = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal", 18) or 18))
                         fee_v2 = (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 1e18
-                        asset_v2 = t.get("tokenSymbol") or native
+                        asset_v2 = str(t.get("tokenSymbol") or native).upper().strip()
                         global_raw_txs.append({
                             "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": label,
                             "Method": t.get("functionName", ""), "Account": addr_c, "From": f_r, "To": t_r,
-                            "From_Label": "", "To_Label": "",
-                            "Counterparty": t_r if f_r == addr_c else f_r,
+                            "From_Label": "", "To_Label": "", "Counterparty": t_r if f_r == addr_c else f_r,
                             "Asset": asset_v2, "Amount": amt if t_r == addr_c else -amt,
-                            "Fee_Asset": native if f_r == addr_c else "",
+                            "Fee_Asset": native.upper().strip() if f_r == addr_c else "",
                             "Fee_Amount": fee_v2 if f_r == addr_c else 0.0,
                             "Source_Way": "Way_2", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
                         })
             pbar.progress((idx + 1) / len(chains))
 
-        # --- VOIE 3 : IMPORTS ---
-        st.write("📂 Détection imports RAW (Voie 3)...")
+        # --- VOIE 3 & FUSION ---
         y_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
         if os.path.exists(y_dir):
             for f in os.listdir(y_dir):
                 if f.startswith("raw_") and f.endswith(".csv") and "portfolio" not in f:
                     try:
-                        df_way3 = pd.read_csv(os.path.join(y_dir, f))
-                        for _, r in df_way3.iterrows():
+                        df_w3 = pd.read_csv(os.path.join(y_dir, f))
+                        for _, r in df_w3.iterrows():
                             d_v = r.to_dict(); d_v["Source_Way"] = "Way_3"; global_raw_txs.append(d_v)
                     except: pass
 
-        # --- FUSION & DÉDOUBLONNAGE ---
         df_merged = pd.DataFrame(global_raw_txs, columns=RAW_V4_COLUMNS)
         if not df_merged.empty:
             df_merged["Date"] = pd.to_datetime(df_merged["Date"], utc=True, errors="coerce")
             df_merged = df_merged.dropna(subset=["Date", "Tx_Hash"])
             def consolidate_group(group):
-                w1 = group[group["Source_Way"] == "Way_1"]
-                w2 = group[group["Source_Way"] == "Way_2"]
-                w3 = group[group["Source_Way"] == "Way_3"]
-
-                # Base choice: Way 3 > Way 1 > Way 2
-                if not w3.empty: res = w3.iloc[0].copy()
-                elif not w1.empty: res = w1.iloc[0].copy()
-                else: res = w2.iloc[0].copy()
-
-                if not w1.empty:
-                    res["From_Label"] = w1.iloc[0].get("From_Label", "")
-                    res["To_Label"] = w1.iloc[0].get("To_Label", "")
-                if not w2.empty:
-                    res["Fee_Amount"] = w2.iloc[0].get("Fee_Amount", 0.0)
-                    res["Method"] = w2.iloc[0].get("Method", "")
-
-                # Consolidate Source_Way string
-                ways = sorted(group["Source_Way"].unique())
-                res["Source_Way"] = "+".join(ways).replace("Way_", "")
-                if not res["Source_Way"].startswith("Way_"):
-                    res["Source_Way"] = "Way_" + res["Source_Way"]
-
+                w3, w1, w2 = group[group["Source_Way"] == "Way_3"], group[group["Source_Way"] == "Way_1"], group[group["Source_Way"] == "Way_2"]
+                res = w3.iloc[0].copy() if not w3.empty else w1.iloc[0].copy() if not w1.empty else w2.iloc[0].copy()
+                if not w1.empty: res["From_Label"], res["To_Label"] = w1.iloc[0].get("From_Label", ""), w1.iloc[0].get("To_Label", "")
+                if not w2.empty: res["Fee_Amount"], res["Method"] = w2.iloc[0].get("Fee_Amount", 0.0), w2.iloc[0].get("Method", "")
+                res["Source_Way"] = "Way_" + "+".join(sorted(group["Source_Way"].unique())).replace("Way_", "")
                 return res
-
             df_final = df_merged.groupby(["Tx_Hash", "Asset", "Account", "Chain"]).apply(consolidate_group).reset_index(drop=True)
             st.session_state.transactions = df_final.sort_values("Date", ascending=False)
-
-            # Met à jour le suivi
-            if addr_c not in st.session_state.harvested_accounts: st.session_state.harvested_accounts[addr_c] = {"tx":0, "portfolio":0}
-            st.session_state.harvested_accounts[addr_c]["tx"] = len(st.session_state.transactions)
-            st.session_state.harvested_accounts[addr_c]["portfolio"] = len(st.session_state.portfolio)
-
-            # Enregistrement dans le registre par compte pour affichage permanent
             st.session_state.account_data_registry[addr_c] = {
-                "portfolio": st.session_state.portfolio.copy(),
-                "transactions": st.session_state.transactions.copy(),
-                "status": {"blockscout": bs_status_final, "etherscan": eth_status_final}
+                "portfolio": st.session_state.portfolio.copy(), "transactions": st.session_state.transactions.copy(),
+                "status": {"blockscout": bs_chains_status, "etherscan": eth_chains_status}
             }
-
-            # Summary stats
-            ways_count = df_merged["Source_Way"].value_counts().to_dict()
-            st.success("✅ Récolte Multivoie terminée.")
-            st.info(f"📊 **Statistiques de Récolte :** Way_1: {ways_count.get('Way_1', 0)} | Way_2: {ways_count.get('Way_2', 0)} | Way_3: {ways_count.get('Way_3', 0)}")
-
+            if addr_c not in st.session_state.harvested_accounts: st.session_state.harvested_accounts[addr_c] = {"tx":0, "portfolio":0}
+            st.session_state.harvested_accounts[addr_c].update({"tx": len(df_final), "portfolio": len(st.session_state.portfolio)})
         st.rerun()
 
-# --- Sanctuarisation ---
-# Affichage permanent si données présentes (pour éviter la disparition après récolte)
-has_data = not st.session_state.transactions.empty or not st.session_state.portfolio.empty
-
-if has_data:
-    st.divider()
-    st.subheader("💾 Étape Finale : Sanctuariser")
-
+if has_data := (not st.session_state.transactions.empty or not st.session_state.portfolio.empty):
+    st.divider(); st.subheader("💾 Étape Finale : Sanctuariser")
     raw_addr_final = sl.resolve_raw_addr(address)
-    addr_short = raw_addr_final[:10] if raw_addr_final else "Unknown"
+    if st.button(f"Enregistrer les fichiers bruts pour {raw_addr_final[:10]}... ({target_year})", width='stretch'):
+        year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year)); os.makedirs(year_dir, exist_ok=True)
+        prefix = f"{raw_addr_final.lower().strip()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        df_p_s, df_t_s = sl.standardize_df_addresses(st.session_state.portfolio), sl.standardize_df_addresses(st.session_state.transactions)
+        if not df_p_s.empty: df_p_s.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False, encoding="utf-8-sig")
+        if not df_t_s.empty: df_t_s.to_csv(os.path.join(year_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False, encoding="utf-8-sig")
+        st.balloons(); st.success(f"📂 Fichiers enregistrés dans : {year_dir}")
 
-    if st.button(f"Enregistrer les fichiers bruts pour {addr_short}... ({target_year})", width='stretch'):
-        year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
-        os.makedirs(year_dir, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        # Standardize addresses to lowercase hex before sanctuarization
-        addr_standardized = raw_addr_final.lower().strip()
-        prefix = f"{addr_standardized}_{ts}"
-
-        df_port = sl.standardize_df_addresses(st.session_state.portfolio)
-        df_tx = sl.standardize_df_addresses(st.session_state.transactions)
-
-        if not df_port.empty:
-            df_port.to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False, encoding="utf-8-sig")
-
-        if not df_tx.empty:
-            # Enregistrement du journal consolidé (Toutes voies confondues)
-            df_tx.to_csv(os.path.join(year_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False, encoding="utf-8-sig")
-
-        st.balloons()
-        st.success(f"📂 Fichiers enregistrés dans : {year_dir}")
-
-st.sidebar.divider()
-st.sidebar.caption("Harvest Sanctuarisation v7.0")
+st.sidebar.divider(); st.sidebar.caption("Harvest Sanctuarisation v7.0")

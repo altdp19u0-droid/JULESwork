@@ -1290,8 +1290,10 @@ if __name__ == "__main__":
     else:
         st.warning("⚠️ Dossier `sanctuarisation` non détecté.")
 
-    known_accs = get_known_accounts()
-    st.write(f"Nombre de comptes connus indexés : `{len(known_accs)}`")
+    # Use the standardized display list logic
+    owner_displays = get_owner_display_list()
+    st.write(f"Nombre d'identités propriétaires uniques : `{len(owner_displays)}`")
 
-    if st.checkbox("Voir la liste des comptes"):
-        st.write(known_accs)
+    if st.checkbox("Voir la liste ordonnée des comptes"):
+        for disp in owner_displays:
+            st.markdown(f"- {disp}")
