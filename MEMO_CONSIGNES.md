@@ -25,7 +25,7 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 - **FUSION INTELLIGENTE :** Dédoublonnage par le triplet `(Tx_Hash, Asset, Account)`. La fusion doit préserver les labels de la Voie 1 et injecter les frais/méthodes de la Voie 2.
 - **NOMMAGE CONSOLIDÉ :** Le fichier final doit impérativement porter le suffixe `_consolidated_` (ex: `raw_transactions_consolidated_*.csv`) pour indiquer le traitement multivoie.
 - **UI RÉCOLTE :** L'interface doit obligatoirement afficher trois tableaux distincts en conclusion de récolte par compte, même s'ils sont vides : **Portfolio**, **Transactions** et **Tokens**. Un message d'état doit confirmer l'accessibilité de Blockscout et Etherscan.
-- **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `format_owner_display` : "Adresse (Nom)" si les deux existent, "Adresse" si seul l'hex est connu, ou "Nom (Label)" pour les comptes sans adresse blockchain. Un suivi incrémental des comptes collectés (avec nombre de txs) doit être visible.
+- **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `format_owner_display` pour discriminer et unifier les identités. Un compte avec hex + label doit être fusionné en : **`Adresse (Nom)`**. Un compte label + nom doit être : **`Nom (Label)`**. La suite doit dédoublonner les listes pour qu'une même identité n'apparaisse qu'une fois. Un suivi incrémental des comptes collectés doit être visible.
 - **CLÉ UNIVERSELLE :** Permettre la saisie d'une clé API unique en UI s'appliquant à tous les réseaux par défaut.
 
 ### 2. Standard de Données Cible (SCHEMA RAW V4)

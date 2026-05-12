@@ -293,13 +293,8 @@ with tab_accounts:
             except: pass
     pos_df = pd.concat(manual_all) if manual_all else pd.DataFrame()
 
-    # Consolidate all account IDs (hex or label) from journal and registered owners
-    all_acc_ids = set(owners_map.keys())
-    if not journal.empty:
-        all_acc_ids.update(journal['Account'].dropna().unique())
-
-    # Format for display
-    accounts = sorted([shared_logic.format_owner_display(a, owners_map.get(a)) for a in all_acc_ids])
+    # Use the new deduplicated display list logic
+    accounts = shared_logic.get_owner_display_list(journal)
 
     if journal.empty:
         st.info("Aucune transaction dans le journal de cette année. Utilisation des comptes propriétaires connus.")

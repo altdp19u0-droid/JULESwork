@@ -199,7 +199,8 @@ with st.sidebar:
     st.divider(); st.header("📊 Filtres")
     if "journal_qualifie" in st.session_state and not st.session_state.journal_qualifie.empty:
         df_f = st.session_state.journal_qualifie
-        fa, fac = st.multiselect("Asset", options=shared_logic.get_safe_opts(df_f, "Asset")), st.multiselect("Account", options=shared_logic.get_owner_addresses(df_f))
+        fa = st.multiselect("Asset", options=shared_logic.get_safe_opts(df_f, "Asset"))
+        fac = st.multiselect("Account", options=shared_logic.get_owner_display_list(df_f))
         fst, fct = st.multiselect("Statut", options=shared_logic.get_safe_opts(df_f, "Status")), st.multiselect("Catégorie", options=shared_logic.get_safe_opts(df_f, "Category"))
         if st.button("⚡ Appliquer"): st.rerun()
 
@@ -250,7 +251,7 @@ with st.sidebar:
             if st.button("💾 Sauver Liste Propriétaires", key="btn_save_om_sidebar"):
                 shared_logic.save_owner_accounts({str(r["Address/Hash"]).lower(): r["Nom/Label"] for _, r in ed_om.iterrows()}); st.rerun()
 
-            sa_om = st.selectbox("Gérer un compte", options=[""]+sorted(list(om.keys())), format_func=lambda x: shared_logic.format_owner_display(x, om[x]) if x else "Sélectionner...", key="sel_om_mgr")
+            sa_om = st.selectbox("Gérer un compte", options=[""]+sorted(list(om.keys())), format_func=lambda x: shared_logic.resolve_owner_display(x) if x else "Sélectionner...", key="sel_om_mgr")
             if sa_om:
                 ml_om = st.text_input("Nouveau Nom", value=om[sa_om], key="mod_lbl_acc_om")
                 if st.button("💾 Appliquer modification", key="btn_mod_om_sidebar"):
@@ -320,7 +321,7 @@ with t_q:
 
         dfd = st.session_state.journal_qualifie.copy()
         if fa: dfd = dfd[dfd["Asset"].isin(fa)]
-        if fac: dfd = dfd[dfd["Account"].isin(fac)]
+        if fac: dfd = shared_logic.filter_df_by_owner_display(dfd, fac)
         if fst: dfd = dfd[dfd["Status"].isin(fst)]
         if fct: dfd = dfd[dfd["Category"].isin(fct)]
         dfd = dfd.reset_index(drop=True)

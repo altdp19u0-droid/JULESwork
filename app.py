@@ -235,12 +235,10 @@ harvest_btn = st.button("🚀 Lancer la Récolte Totale (Step 1 : Brutes)", widt
 # Liste des Comptes Collectés (Visible au-dessus de la récolte)
 if st.session_state.harvested_accounts:
     st.subheader("🏦 Suivi de la Récolte Session")
-    from shared_logic import load_owner_accounts, format_owner_display
-    owners_map = load_owner_accounts()
 
     acc_data = []
     for a, v in st.session_state.harvested_accounts.items():
-        disp = format_owner_display(a, owners_map.get(a))
+        disp = shared_logic.resolve_owner_display(a)
         acc_data.append({"Compte": disp, "Txs": v["tx"], "Actifs": v["portfolio"]})
 
     acc_df = pd.DataFrame(acc_data)
@@ -262,12 +260,9 @@ if display_registry:
     st.divider()
     st.header("📋 Tableaux de Collecte par Compte")
 
-    from shared_logic import load_owner_accounts, format_owner_display
-    owners_map = load_owner_accounts()
-
     for addr, data in display_registry.items():
         is_active = (addr == active_addr)
-        disp_name = format_owner_display(addr, owners_map.get(addr))
+        disp_name = shared_logic.resolve_owner_display(addr)
         with st.expander(f"👤 Compte : {disp_name} {'(Actif)' if is_active else ''}", expanded=is_active):
             # Message d'état des APIs
             api_status = data.get("status", {})
@@ -530,6 +525,8 @@ if harvest_btn:
 
 # --- Sanctuarisation ---
 # Affichage permanent si données présentes (pour éviter la disparition après récolte)
+has_data = not st.session_state.transactions.empty or not st.session_state.portfolio.empty
+
 if has_data:
     st.divider()
     st.subheader("💾 Étape Finale : Sanctuariser")

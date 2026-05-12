@@ -72,16 +72,36 @@ def format_owner_display(identifier, name):
     - Label-based: 'Name (Label)' or 'Label' if no name.
     """
     ident = str(identifier).strip()
-    nm = str(name).strip() if name else ""
+    nm = str(name).strip() if name and str(name).lower() != "nan" else ""
 
-    if not nm or nm.lower() == "nan" or nm == ident:
+    if not nm or nm == ident:
         return ident
 
     if ident.lower().startswith("0x"):
         return f"{ident} ({nm})"
     else:
-        # For non-blockchain addresses, we prioritize the Name
+        # For non-blockchain addresses, we prioritize Name and show Label in parens
         return f"{nm} ({ident})"
+
+def resolve_owner_display(identifier):
+    """
+    Resolves any identifier (hex or label) to its standardized owner display string.
+    Uses owner_accounts.json for mapping.
+    """
+    owners_map = load_owner_accounts()
+    low_id = str(identifier).lower().strip()
+
+    # 1. Check if it's a known address
+    if low_id in owners_map:
+        return format_owner_display(identifier, owners_map[low_id])
+
+    # 2. Check if it's a known label
+    label_to_addr = {str(v).lower(): k for k, v in owners_map.items() if str(v).lower() != "nan"}
+    if low_id in label_to_addr:
+        addr = label_to_addr[low_id]
+        return format_owner_display(addr, owners_map[addr])
+
+    return identifier # Fallback if unknown
 
 def pd_read_csv_safe(path):
     try: return pd.read_csv(path, encoding="utf-8-sig")
@@ -685,34 +705,103 @@ def auto_register_owner(addr_str):
 
 def get_owner_addresses(journal_df=None):
     """
-    Extracts all raw addresses identified as 'owners'.
-    Combines verified owners from mapping file and auto-detected ones from journals (disk + memory).
+    Extracts unique owner addresses (lower hex) from mappings and journals.
     """
-    # 1. Verified Owners (Fixed)
     owners_map = load_owner_accounts()
     owners = set(owners_map.keys())
-
-    # 2. Discovery from memory
     if journal_df is not None and "Account" in journal_df.columns:
         for a in journal_df["Account"].dropna().unique():
-            resolved = resolve_raw_addr(a)
-            # resolve_raw_addr already handles .lower()
-            if resolved.startswith("0x"): owners.add(resolved)
+            r = resolve_raw_addr(a)
+            if r.startswith("0x"): owners.add(r)
+    return owners
 
-    # 3. Auto-Discovery from Journals on disk
+def get_owner_display_list(journal_df=None):
+    """
+    Returns a deduplicated list of formatted owner strings for UI selection.
+    Correctly merges Address and Labels if they are mapped in owner_accounts.json.
+    """
+    owners_map = load_owner_accounts() # addr -> label
+    # Reverse map: label -> addr
+    label_to_addr = {str(v).lower(): k for k, v in owners_map.items() if str(v).lower() != "nan"}
+
+    # Collect all seen identifiers
+    all_ids = set(owners_map.keys())
+    if journal_df is not None and "Account" in journal_df.columns:
+        all_ids.update([str(a).strip() for a in journal_df["Account"].dropna().unique()])
+
+    # Discovery from disk
     if os.path.exists(EXPORT_BASE_DIR):
         years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
         for y in years:
-            path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
-            if os.path.exists(path):
+            p = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
+            if os.path.exists(p):
                 try:
-                    df = pd_read_csv_safe(path)
+                    df = pd_read_csv_safe(p)
                     if "Account" in df.columns:
-                        for a in df["Account"].dropna().unique():
-                            resolved = resolve_raw_addr(a)
-                            if resolved.startswith("0x"): owners.add(resolved)
+                        all_ids.update([str(a).strip() for a in df["Account"].dropna().unique()])
                 except: pass
-    return owners
+
+    # Grouping by normalized identity
+    identities = {} # normalized_key -> {"ident": original_id, "name": name}
+
+    for raw_id in all_ids:
+        if not raw_id: continue
+        low_id = raw_id.lower()
+
+        # Resolve identity to hex if possible
+        if low_id.startswith("0x"):
+            norm_key = low_id
+        elif low_id in label_to_addr:
+            norm_key = label_to_addr[low_id]
+        else:
+            norm_key = low_id # Label-only identity
+
+        name = owners_map.get(norm_key, "")
+
+        if norm_key not in identities:
+            identities[norm_key] = {"ident": raw_id, "name": name}
+        else:
+            # If we found a hex identifier for a known identity, favor it as primary ident
+            if raw_id.lower().startswith("0x") and not identities[norm_key]["ident"].lower().startswith("0x"):
+                identities[norm_key]["ident"] = raw_id
+            # Preserve name
+            if not identities[norm_key]["name"] and name:
+                identities[norm_key]["name"] = name
+
+    results = []
+    for k, data in identities.items():
+        results.append(format_owner_display(data["ident"], data["name"]))
+
+    return sorted(list(set(results)))
+
+def filter_df_by_owner_display(df, selected_displays):
+    """Filters a DataFrame where 'Account' matches any selected formatted owner display."""
+    if not selected_displays: return df
+
+    owners_map = load_owner_accounts()
+    label_to_addr = {str(v).lower(): k for k, v in owners_map.items() if str(v).lower() != "nan"}
+
+    # Map of all allowed raw identifiers
+    allowed_ids = set()
+    for disp in selected_displays:
+        # Extract components from 'Address (Name)' or 'Name (Label)'
+        if " (" in disp and disp.endswith(")"):
+            p1 = disp.split(" (")[0].lower()
+            p2 = disp.split(" (")[1][:-1].lower()
+            allowed_ids.add(p1)
+            allowed_ids.add(p2)
+        else:
+            allowed_ids.add(disp.lower())
+
+    def row_matches(acc):
+        a = str(acc).lower().strip()
+        if a in allowed_ids: return True
+        # Check mapping links
+        if a in owners_map and owners_map[a].lower() in allowed_ids: return True
+        if a in label_to_addr and label_to_addr[a].lower() in allowed_ids: return True
+        return False
+
+    return df[df["Account"].apply(row_matches)]
 
 def get_external_circuits_discovery(journal_df=None):
     """

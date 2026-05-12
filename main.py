@@ -293,15 +293,11 @@ def get_discovered_accounts():
 with st.sidebar:
     st.divider()
     st.subheader("🏦 Comptes Propriétaires")
-    from shared_logic import load_owner_accounts, format_owner_display
-    owners_map = load_owner_accounts()
 
-    discovered_accs = get_discovered_accounts()
-    if discovered_accs:
-        for acc in discovered_accs:
-            # discovered_accs includes both hex and labels from get_known_accounts
-            # If it's a hex addr, format it. If it's already a label, format_owner_display handles it too.
-            disp = format_owner_display(acc, owners_map.get(acc))
+    # Use the new deduplicated list logic
+    owner_displays = shared_logic.get_owner_display_list()
+    if owner_displays:
+        for disp in owner_displays:
             st.sidebar.caption(f"• {disp}")
     else:
         st.sidebar.info("Aucun compte détecté.")
