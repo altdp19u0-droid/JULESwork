@@ -1,8 +1,7 @@
-  Stopping...
 
 Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
 
-2026-05-14 06:47:44.709 Uvicorn server started on 0.0.0.0:8501
+2026-05-14 07:23:53.628 Uvicorn server started on 0.0.0.0:8501
 
   You can now view your Streamlit app in your browser.
 

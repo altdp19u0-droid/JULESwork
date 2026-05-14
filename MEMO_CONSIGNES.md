@@ -31,9 +31,10 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 - **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `resolve_owner_display` pour discriminer et unifier les identités. Le standard absolu est le format : **`Identifiant_Technique (Nom_Amical)`**. La suite doit impérativement dédoublonner les listes via `get_owner_display_list` pour qu'une même identité (liée par `owner_accounts.json`) n'apparaisse qu'une seule fois dans les menus et rapports. Un suivi incrémental des comptes collectés doit rester visible.
 - **GESTION DES CLÉS API :**
     - **Clé Universelle (V2 Unifiée) :** Permettre la saisie d'une clé API unique s'appliquant à tous les réseaux.
-    - **Support Etherscan V2 & Smart Fallback :**
+    - **Support Etherscan V2, Routescan & Smart Fallback :**
         - **Endpoint Unifié :** Utiliser `https://api.etherscan.io/v2/api` avec `chainid`.
-        - **Forçage V2 & Smart Fallback :** Le moteur doit prioriser l'endpoint unifié V2. En cas de rejet par la chaîne ou de limitation du plan gratuit ("Free API access not supported", "Invalid chainid"), basculer automatiquement sur l'endpoint V1 spécifique, **SAUF pour Basescan** (interdiction du fallback V1 polluant car l'endpoint est fermé par le fournisseur).
+        - **Forçage V2 & Smart Fallback :** Le moteur doit utiliser exclusivement l'endpoint unifié V2 ("Pure V2"). Le repli vers la V1 est désactivé pour tous les réseaux pour éviter les erreurs de dépréciation. En cas de restriction du plan gratuit sur L2, le système bascule automatiquement sur l'API **Routescan** (pour Base, Arbitrum, Optimism).
+        - **Transparence Technique :** En cas d'échec, le message d'erreur brut de l'API doit être affiché pour faciliter le diagnostic.
     - **Temporisation FREE Plan :** Appliquer une pause de **400ms** minimum entre chaque appel API et gérer le retry automatique de **5s** en cas de "Rate Limit" pour respecter strictement les quotas des comptes gratuits (5 calls/sec).
     - **Diagnostic Explicite :** Capturer et afficher le message d'erreur brut de l'API (ex: "Invalid API Key") au lieu d'un message générique.
 

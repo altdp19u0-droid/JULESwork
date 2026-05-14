@@ -42,14 +42,16 @@ CHAIN_APIS = {
         "v2": "https://arbitrum.blockscout.com/api/v2",
         "api_host": "api.arbiscan.io",
         "chain_id": 42161,
-        "native": "ETH"
+        "native": "ETH",
+        "alt_api": "https://api.routescan.io/v2/network/mainnet/evm/42161/etherscan/api"
     },
     "Base": {
         "v1": "https://base.blockscout.com/api",
         "v2": "https://base.blockscout.com/api/v2",
         "api_host": "api.basescan.org",
         "chain_id": 8453,
-        "native": "ETH"
+        "native": "ETH",
+        "alt_api": "https://api.routescan.io/v2/network/mainnet/evm/8453/etherscan/api"
     },
     "Polygon": {
         "v1": "https://polygon.blockscout.com/api",
@@ -63,7 +65,8 @@ CHAIN_APIS = {
         "v2": "https://optimism.blockscout.com/api/v2",
         "api_host": "api-optimistic.etherscan.io",
         "chain_id": 10,
-        "native": "ETH"
+        "native": "ETH",
+        "alt_api": "https://api.routescan.io/v2/network/mainnet/evm/10/etherscan/api"
     },
     "BSC": {
         "v1": "https://api.bscscan.com/api",
@@ -107,7 +110,7 @@ with st.sidebar:
     # Universal Key Input (V2 support)
     universal_key = st.text_input("Clé API Unique (Etherscan V2)", type="password", help="Cette clé sera utilisée pour tous les réseaux compatibles V2 si aucune clé spécifique n'est trouvée.")
 
-    st.warning("💡 **Etherscan V2** : Avec une clé V2, la 'Clé Unique' permet de récolter Ethereum, Arbitrum, Base, Polygon et BSC sans créer de comptes séparés sur chaque explorateur.")
+    st.warning("💡 **Etherscan V2 Pure** : Le moteur utilise exclusivement l'API V2. Le repli vers la V1 est désactivé pour tous les réseaux.")
 
     api_keys_loaded = load_api_keys()
     # Merge: Specific keys from file take priority over universal key
@@ -137,35 +140,33 @@ RAW_V4_COLUMNS = [
 ]
 
 # --- Way 2 API Helper ---
-def fetch_etherscan_way2(chain_id, api_host, addr, api_key, year, max_items, native):
+def fetch_etherscan_way2(chain_id, api_host, addr, api_key, year, max_items, native, alt_api=None):
     """
-    Fetches transactions using Etherscan API V2 unified endpoint with Smart Fallback to V1.
+    Fetches transactions using Etherscan API V2 unified endpoint.
+    FALLBACK V1 is DISABLED for all networks.
     Returns: (items_list, success_status)
     """
     items = []
-    if not api_key: return [], "empty"
+    if not api_key and not alt_api: return [], "empty"
 
     final_status = "empty"
     endpoints = [("txlist", "Native"), ("tokentx", "Tokens"), ("txlistinternal", "Internal")]
 
-    # FORCING V2: On utilise systématiquement l'endpoint unifié si une clé est présente et chain_id connu
     v2_url = "https://api.etherscan.io/v2/api"
-    v1_url = f"https://{api_host}/api"
 
     for action, label in endpoints:
         time.sleep(0.4)
         start_block = 0
-        # On réinitialise l'url courante pour chaque type de récolte (Native/Tokens/Internal)
-        # car un basculement V2->V1 peut être nécessaire pour l'un mais pas l'autre (rare mais possible)
-        current_base_url = v2_url if chain_id else v1_url
+        current_base_url = v2_url
+        current_api_key = api_key
 
         for loop in range(10):
             params = {
                 "module": "account", "action": action, "address": addr,
                 "startblock": start_block, "endblock": 99999999,
-                "offset": 10000, "sort": "asc", "apikey": api_key
+                "offset": 10000, "sort": "asc", "apikey": current_api_key
             }
-            if current_base_url == v2_url: params["chainid"] = chain_id
+            if chain_id: params["chainid"] = chain_id
 
             try:
                 res = requests.get(current_base_url, params=params, timeout=25).json()
@@ -175,15 +176,13 @@ def fetch_etherscan_way2(chain_id, api_host, addr, api_key, year, max_items, nat
                 if res_status == "0":
                     msg = str(res_result).lower()
 
-                    # --- SMART FALLBACK V2 -> V1 ---
-                    # Si l'API V2 rejette la chaîne ou l'accès free
-                    if current_base_url == v2_url and ("free api access is not supported" in msg or "not supported for this chain" in msg or "invalid chainid" in msg):
-                        # SECURITE : Si c'est Basescan, on interdit le fallback V1 car il est fermé et renvoie une erreur polluante
-                        if "basescan" in api_host:
-                            return items, "Access blocked (V2 restricted / V1 deprecated)"
+                    # --- SMART FALLBACK V2 -> ALT (Routescan) IF V2 IS RESTRICTED ---
+                    is_restricted = any(x in msg for x in ["restricted", "plan", "not supported", "invalid chainid", "deprecated"])
 
-                        st.toast(f"🔄 Basculement V2 -> V1 pour {api_host}...")
-                        current_base_url = v1_url
+                    if is_restricted and alt_api:
+                        st.toast(f"🔄 Basculement Etherscan V2 -> Routescan pour {api_host}...")
+                        current_base_url = alt_api
+                        params["apikey"] = ""
                         params.pop("chainid", None)
                         res = requests.get(current_base_url, params=params, timeout=25).json()
                         res_status = str(res.get("status"))
@@ -199,7 +198,7 @@ def fetch_etherscan_way2(chain_id, api_host, addr, api_key, year, max_items, nat
                         if str(res.get("status")) != "0": res_result = res.get("result")
                         else: break
                     else:
-                        # Erreur réelle (ex: API key invalide)
+                        # RETURN RAW ERROR FOR DIAGNOSTIC
                         return items, str(res_result)
 
                 if not isinstance(res_result, list) or not res_result:
@@ -438,7 +437,8 @@ if harvest_btn:
             api_host, native = CHAIN_APIS[chain]["api_host"], CHAIN_APIS[chain]["native"]
             api_key = api_keys.get(chain)
             cid = CHAIN_APIS[chain].get("chain_id")
-            eth_chains_status[chain] = "empty" if not api_key else None
+            alt_api = CHAIN_APIS[chain].get("alt_api")
+            eth_chains_status[chain] = "empty" if (not api_key and not alt_api) else None
 
             # --- VOIE 1 ---
             # 1a. Transactions Natives
@@ -475,7 +475,7 @@ if harvest_btn:
                 except: continue
             fb_native.caption(f"✅ {len(chain_txs)} Transactions Natives")
 
-            # 1b. Transactions Internes (Nouveau: capture les flux ETH via bridge/swap)
+            # 1b. Transactions Internes
             raw_v1_int = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "internal-transactions")
             if not raw_v1_int: raw_v1_int = fetch_blockscout_v1_fallback(v1, addr_c, "txlistinternal", max_txs, target_year)
             for t in raw_v1_int:
@@ -538,10 +538,10 @@ if harvest_btn:
                 except: continue
             fb_tokens.caption(f"✅ {len(chain_toks)} Transferts de Tokens")
 
-            # --- VOIE 2 ---
-            if api_key:
-                st.write(f"🔎 Scan Way_2 pour **{chain}**...")
-                items_v2, way2_res = fetch_etherscan_way2(cid, api_host, addr_c, api_key, target_year, max_txs, native)
+            # --- VOIE 2 (PURE V2) ---
+            if api_key or alt_api:
+                st.write(f"🔎 Scan Way_2 (Pure V2) pour **{chain}**...")
+                items_v2, way2_res = fetch_etherscan_way2(cid, api_host, addr_c, api_key, target_year, max_txs, native, alt_api)
                 eth_chains_status[chain] = way2_res
                 if items_v2:
                     for t, label, dt in items_v2:
@@ -582,7 +582,7 @@ if harvest_btn:
                 if not w2.empty: res["Fee_Amount"], res["Method"] = w2.iloc[0].get("Fee_Amount", 0.0), w2.iloc[0].get("Method", "")
                 res["Source_Way"] = "Way_" + "+".join(sorted(group["Source_Way"].unique())).replace("Way_", "")
                 return res
-            df_final = df_merged.groupby(["Tx_Hash", "Asset", "Account", "Chain"]).apply(consolidate_group).reset_index(drop=True)
+            df_final = df_merged.groupby(["Tx_Hash", "Asset", "Account", "Chain"], as_index=False).apply(consolidate_group).reset_index(drop=True)
             st.session_state.transactions = df_final.sort_values("Date", ascending=False)
             st.session_state.account_data_registry[addr_c] = {
                 "portfolio": st.session_state.portfolio.copy(), "transactions": st.session_state.transactions.copy(),
