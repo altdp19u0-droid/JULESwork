@@ -11,13 +11,11 @@ import shared_logic as sl
 
 # --- Configuration & Initialization ---
 if "is_hub" not in st.session_state:
-    st.set_page_config(page_title="Jules Crypto Harvest Pro - Sanctuarisation V7.7", layout="wide")
+    st.set_page_config(page_title="Jules Crypto Harvest Pro - Sanctuarisation V7.8", layout="wide")
 
 st.title("🚜 Sanctuarisation des Données Blockchain (Harvest Pure)")
 
 # Configuration des Réseaux - ARCHITECTURE REST ETHERSCAN V2
-# Une seule clé fonctionne sur les domaines correspondants.
-# Format : https://api.<chain>scan.io/api/v2/...
 CHAIN_APIS = {
     "Ethereum": {
         "bs_v2": "https://eth.blockscout.com/api/v2",
@@ -99,36 +97,21 @@ def call_api(url, params=None):
     return None
 
 def fetch_etherscan_v2_rest(domain, addr, api_key, year, max_items, native):
-    """
-    Fetches transactions using the Etherscan V2 RESTful endpoints.
-    Structure: /api/v2/accounts/{address}/transactions
-    """
     items = []
     if not api_key: return [], "No API Key"
-
-    # Endpoints map for REST V2
-    endpoints = [
-        ("transactions", "Native"),
-        ("erc20-transfers", "Tokens"),
-        ("internal-transactions", "Internal")
-    ]
+    endpoints = [("transactions", "Native"), ("erc20-transfers", "Tokens"), ("internal-transactions", "Internal")]
     final_status = "empty"
-
     for path, label in endpoints:
         time.sleep(0.4)
         url = f"{domain}/api/v2/accounts/{addr}/{path}"
         params = {"apikey": api_key, "page": 1, "offset": 100}
-
         try:
             res = call_api(url, params)
             if not res: continue
-
-            # API V2 might use 'items' in the response for REST paths
             data_list = res.get("items") or res.get("result")
             if not isinstance(data_list, list):
                 if res.get("status") == "0" and label == "Native": final_status = res.get("result")
                 continue
-
             final_status = True
             for t in data_list:
                 try:
@@ -137,7 +120,6 @@ def fetch_etherscan_v2_rest(domain, addr, api_key, year, max_items, native):
                     if dt.year == year: items.append((t, label, dt))
                 except: continue
         except Exception as e: return items, f"Error: {str(e)}"
-
     return items[:max_items], final_status
 
 def fetch_blockscout_v2(api_v2, addr, max_items, year, endpoint):
@@ -158,7 +140,7 @@ def fetch_blockscout_v2(api_v2, addr, max_items, year, endpoint):
     return items[:max_items]
 
 # --- Harvest Loop ---
-harvest_btn = st.button("🚀 Lancer la Récolte Totale (Etherscan REST V2)", width='stretch')
+harvest_btn = st.button("🚀 Lancer la Récolte Totale (Step 1 : Brutes)", width='stretch')
 
 if "harvest_data" not in st.session_state: st.session_state.harvest_data = {}
 
@@ -176,12 +158,11 @@ if harvest_btn:
         chains_status[chain] = {"bs": "pending", "eth": "pending"}
         c1, c2 = st.columns(2); f1, f2 = c1.empty(), c2.empty()
 
-        # 1. Blockscout
+        # 1. Blockscout (Transactions)
         try:
             bs_nat = fetch_blockscout_v2(cfg["bs_v2"], addr_c, max_txs, target_year, "transactions")
             bs_int = fetch_blockscout_v2(cfg["bs_v2"], addr_c, max_txs, target_year, "internal-transactions")
             bs_tok = fetch_blockscout_v2(cfg["bs_v2"], addr_c, max_txs, target_year, "token-transfers")
-
             for t in (bs_nat + bs_int):
                 dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
                 tx_h, f_r, t_r = str(t.get("hash") or t.get("tx_hash")).lower().strip(), str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()
@@ -197,7 +178,7 @@ if harvest_btn:
             chains_status[chain]["bs"] = True; f1.caption(f"✅ Way_1 (BS) : {len(bs_nat)+len(bs_int)+len(bs_tok)} lignes")
         except: chains_status[chain]["bs"] = False; f1.error("❌ Way_1 : Échec")
 
-        # 2. Etherscan REST V2
+        # 2. Etherscan REST V2 (Transactions)
         if v2_api_key:
             res_v2, stat_v2 = fetch_etherscan_v2_rest(cfg["eth_domain"], addr_c, v2_api_key, target_year, max_txs, native)
             chains_status[chain]["eth"] = stat_v2
@@ -210,18 +191,28 @@ if harvest_btn:
                 f2.caption(f"✅ Way_2 (V2 REST) : {len(res_v2)} lignes")
             else: f2.caption(f"ℹ️ Way_2 : {stat_v2}")
 
-        # 3. Portfolio BS
+        # 3. Portfolio Collection (Blockscout + Etherscan fallback)
         try:
-            p_data = call_api(f"{cfg['bs_v2']}/addresses/{addr_c}/token-balances")
-            if p_data and "items" in p_data:
-                for b in p_data["items"]:
+            # 3a. Native Balance (Blockscout)
+            addr_data = call_api(f"{cfg['bs_v2']}/addresses/{addr_c}")
+            if addr_data and "coin_balance" in addr_data:
+                nat_bal = float(addr_data["coin_balance"]) / 1e18
+                if nat_bal > 0:
+                    all_port.append({"Date": datetime(target_year,12,31).isoformat(), "Chain": chain, "Tx_Hash": f"PORT-{addr_c}-{native}-{chain}", "Type": "Portfolio", "Method": "Snapshot", "Account": addr_c, "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "", "Counterparty": "Snapshot", "Asset": native, "Amount": nat_bal, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
+
+            # 3b. Token Balances (Blockscout)
+            p_tokens = call_api(f"{cfg['bs_v2']}/addresses/{addr_c}/token-balances")
+            if p_tokens and isinstance(p_tokens, list):
+                for b in p_tokens:
                     tok = b.get("token") or {}
-                    sym, dec = str(tok.get("symbol", native)).upper().strip(), int(tok.get("decimals", 18) or 18)
-                    all_port.append({"Date": datetime(target_year,12,31).isoformat(), "Chain": chain, "Tx_Hash": f"PORT-{addr_c}-{sym}-{chain}", "Type": "Portfolio", "Method": "Snapshot", "Account": addr_c, "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "", "Counterparty": "Snapshot", "Asset": sym, "Amount": float(b.get("value",0))/(10**dec), "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
+                    sym, dec = str(tok.get("symbol", "TOKEN")).upper().strip(), int(tok.get("decimals", 18) or 18)
+                    qty = float(b.get("value", 0)) / (10**dec)
+                    if qty > 0:
+                        all_port.append({"Date": datetime(target_year,12,31).isoformat(), "Chain": chain, "Tx_Hash": f"PORT-{addr_c}-{sym}-{chain}", "Type": "Portfolio", "Method": "Snapshot", "Account": addr_c, "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "", "Counterparty": "Snapshot", "Asset": sym, "Amount": qty, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
         except: pass
         pbar.progress((idx + 1) / len(chains_to_scan))
 
-    # 4. Consolidation
+    # 4. Consolidation & Final Registry
     df_m = pd.DataFrame(all_txs, columns=RAW_V4_COLUMNS)
     if not df_m.empty:
         df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True, errors="coerce")
@@ -263,8 +254,8 @@ if st.session_state.harvest_data:
             if st.button(f"💾 Sanctuariser {addr[:10]}...", key=f"s_{addr}"):
                 y_dir = os.path.join(EXPORT_BASE_DIR, str(target_year)); os.makedirs(y_dir, exist_ok=True)
                 prefix = f"{addr}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                data["port"].to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False)
-                df_t.to_csv(os.path.join(year_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False)
+                if not data["port"].empty: data["port"].to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False)
+                if not df_t.empty: df_t.to_csv(os.path.join(year_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False)
                 st.success("Enregistré.")
 
-st.sidebar.caption("Harvest Etherscan REST V2 v7.7")
+st.sidebar.caption("Harvest v7.8 - Full Set")
