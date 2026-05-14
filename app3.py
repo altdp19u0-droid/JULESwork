@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-import shared_logic
+import shared_logic as sl
 from fpdf import FPDF
 from io import BytesIO, StringIO
 import json
@@ -23,7 +23,8 @@ POSITIONS_FILE = "position_labels.json"
 
 # --- Helpers ---
 def load_eoy_prices(year):
-    path = shared_logic.get_file_path(year, 'prices')
+    path = sl.get_file_path(year, 'prices')
+    path = sl.get_file_path(year, 'prices')
     if path and os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -32,7 +33,7 @@ def load_eoy_prices(year):
     return {}
 
 def save_eoy_prices(year, prices_dict):
-    path = shared_logic.get_file_path(year, 'prices')
+    path = sl.get_file_path(year, 'prices')
     if path:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
@@ -58,13 +59,13 @@ def apply_position_labels(df):
     if df.empty: return df
 
     labels = load_position_labels()
-    circ_labels = shared_logic.load_external_circuits().get("labels", {})
+    circ_labels = sl.load_external_circuits().get("labels", {})
     combined = {**circ_labels, **labels}
 
     if not combined: return df
 
     def format_cp(cp_str):
-        raw = shared_logic.resolve_raw_addr(cp_str)
+        raw = sl.resolve_raw_addr(cp_str)
         if raw in combined:
             return f"{combined[raw]} ({raw})"
         return cp_str
@@ -104,9 +105,9 @@ def pdf_safe_str(val, use_unicode=True):
 
 def load_data(year):
     paths = {
-        'journal': shared_logic.get_file_path(year, 'qualified'),
-        'fiat': shared_logic.get_file_path(year, 'fiat'),
-        'positions': shared_logic.get_file_path(year, 'positions')
+        'journal': sl.get_file_path(year, 'qualified'),
+        'fiat': sl.get_file_path(year, 'fiat'),
+        'positions': sl.get_file_path(year, 'positions')
     }
 
     # Track load time for freshness
@@ -115,9 +116,9 @@ def load_data(year):
     data = {}
     for key, path in paths.items():
         if os.path.exists(path) and os.path.getsize(path) > 0:
-            df = shared_logic.pd_read_csv_safe(path)
+            df = sl.pd_read_csv_safe(path)
             # UNIFICATION
-            df = shared_logic.standardize_df_addresses(df)
+            df = sl.standardize_df_addresses(df)
             # Standardisation Date
             if 'Date' in df.columns:
                 df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
@@ -130,7 +131,7 @@ def load_data(year):
 
             if key == 'journal':
                 # --- DOUBLE VÉRIFICATION SPAM À L'OUVERTURE ---
-                leaked_indices = shared_logic.validate_spam_exclusion(df)
+                leaked_indices = sl.validate_spam_exclusion(df)
                 if leaked_indices:
                     df.loc[leaked_indices, "Status"] = "Spam"
                     # Only show toast/message once for the whole dataset
@@ -173,15 +174,17 @@ with st.sidebar:
             st.info(f"{len(pkl_files)} fichiers de cache supprimés.")
 
     # Unified Hub Year
-    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
-    target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
+    if "_hub_target_year" not in st.session_state:
+        st.session_state["_hub_target_year"] = datetime.now().year
+
+    target_year = st.number_input("Année fiscale", min_value=2015, max_value=2030, key="_hub_target_year")
 
     # Year switch detection
     if "last_target_year" not in st.session_state:
         st.session_state.last_target_year = target_year
 
     if target_year != st.session_state.get("last_target_year"):
-        shared_logic.clean_session_state(preserve_keys=["last_target_year"])
+        sl.clean_session_state(preserve_keys=["last_target_year"])
         st.session_state.last_target_year = target_year
         st.cache_data.clear()
         st.rerun()
@@ -204,10 +207,10 @@ with st.sidebar:
         st.rerun()
 
     # Data Freshness Warning
-    qual_path = shared_logic.get_file_path(target_year, 'qualified')
+    qual_path = sl.get_file_path(target_year, 'qualified')
     if os.path.exists(qual_path):
         last_load = st.session_state.get("last_app3_sync_time", 0)
-        if shared_logic.check_file_freshness(qual_path, last_load):
+        if sl.check_file_freshness(qual_path, last_load):
             st.warning("⚠️ Données qualifiées mises à jour. Veuillez 'Recharger'.")
 
     if st.button("🧮 Recalculer tout (Session)", key="btn_recalc_all"):
@@ -215,7 +218,7 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    shared_logic.show_status()
+    sl.show_status()
 
 data = load_data(target_year)
 
@@ -277,7 +280,7 @@ with tab_accounts:
     journal = data['journal']
 
     # Proactive discovery: load from owners file
-    owners_map = shared_logic.load_owner_accounts()
+    owners_map = sl.load_owner_accounts()
 
     # Initialize variables to avoid NameError in downstream tabs/PDF generation
     accounts = []
@@ -290,16 +293,16 @@ with tab_accounts:
         p_path = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
         if os.path.exists(p_path):
             try:
-                tmp_m = shared_logic.pd_read_csv_safe(p_path)
+                tmp_m = sl.pd_read_csv_safe(p_path)
                 manual_all.append(tmp_m)
             except: pass
     pos_df = pd.concat(manual_all) if manual_all else pd.DataFrame()
 
     # Use the new deduplicated display list logic
-    accounts = shared_logic.get_owner_display_list(journal)
+    accounts = sl.get_owner_display_list(journal)
 
     if not journal.empty:
-        journal["Account"] = journal["Account"].apply(shared_logic.resolve_owner_display)
+        journal["Account"] = journal["Account"].apply(sl.resolve_owner_display)
 
     if journal.empty:
         st.info("Aucune transaction dans le journal de cette année. Utilisation des comptes propriétaires connus.")
@@ -315,9 +318,9 @@ with tab_accounts:
         # Use the same logic as VGP calculation but for the previous year-end
         journals_prev = []
         for y_p in range(2020, target_year):
-            path_p = shared_logic.get_file_path(y_p, 'qualified')
+            path_p = sl.get_file_path(y_p, 'qualified')
             if os.path.exists(path_p):
-                try: journals_prev.append(shared_logic.pd_read_csv_safe(path_p))
+                try: journals_prev.append(sl.pd_read_csv_safe(path_p))
                 except: pass
 
         if journals_prev:
@@ -360,13 +363,13 @@ with tab_accounts:
 
     # Check for missing inventory N-1
     prev_year = target_year - 1
-    inv_path = shared_logic.get_file_path(prev_year, 'inventory_eoy')
+    inv_path = sl.get_file_path(prev_year, 'inventory_eoy')
     if not os.path.exists(inv_path) and not force_full and target_year > 2020:
         st.error(f"🚨 **Inventaire manquant :** Le fichier `inventory_EOY_{prev_year}.csv` est introuvable.")
         st.warning("Veuillez soit générer l'inventaire N-1 dans l'app2VGP, soit cocher 'Recalculer tout l'historique'.")
 
     eoy_date = datetime(target_year, 12, 31)
-    full_snapshot, _ = shared_logic.get_portfolio_snapshot(target_year, eoy_date, force_full_history=force_full, start_recalc_year=start_year)
+    full_snapshot, _ = sl.get_portfolio_snapshot(target_year, eoy_date, force_full_history=force_full, start_recalc_year=start_year)
 
     df_manual_snap = pd.DataFrame()
     if full_snapshot.empty:
@@ -399,7 +402,7 @@ with tab_accounts:
             # Wallets
             if not derived_local.empty:
                 unique_assets = set(derived_local["Asset"].unique())
-                prices = {a: shared_logic.get_price_eur(a, eoy_date) for a in unique_assets}
+                prices = {a: sl.get_price_eur(a, eoy_date) for a in unique_assets}
                 derived_local["Prix (EUR)"] = derived_local["Asset"].map(prices)
                 derived_local["Valeur (EUR)"] = derived_local["Amount"] * derived_local["Prix (EUR)"]
                 st.session_state.local_valued = derived_local
@@ -407,7 +410,7 @@ with tab_accounts:
             # Protocoles
             if not df_protocols.empty:
                 unique_assets_proto = set(df_protocols["Asset"].unique())
-                prices_proto = {a: shared_logic.get_price_eur(a, eoy_date) for a in unique_assets_proto}
+                prices_proto = {a: sl.get_price_eur(a, eoy_date) for a in unique_assets_proto}
                 df_protocols["Prix (EUR)"] = df_protocols["Asset"].map(prices_proto)
                 df_protocols["Valeur (EUR)"] = df_protocols["Amount"] * df_protocols["Prix (EUR)"]
                 st.session_state.proto_valued = df_protocols
@@ -415,7 +418,7 @@ with tab_accounts:
             # Positions Manuelles
             if not df_manual_snap.empty:
                 unique_assets_man = set(df_manual_snap["Asset"].unique())
-                prices_man = {a: shared_logic.get_price_eur(a, eoy_date) for a in unique_assets_man}
+                prices_man = {a: sl.get_price_eur(a, eoy_date) for a in unique_assets_man}
                 df_manual_snap["Prix (EUR)"] = df_manual_snap["Asset"].map(prices_man)
                 df_manual_snap["Valeur (EUR)"] = df_manual_snap["Amount"] * df_manual_snap["Prix (EUR)"]
                 st.session_state.manual_pos_valued = df_manual_snap
@@ -767,7 +770,7 @@ with tab_bilan:
 
         if os.path.exists(eoy_path):
             try:
-                df_inv = shared_logic.pd_read_csv_safe(eoy_path)
+                df_inv = sl.pd_read_csv_safe(eoy_path)
                 df_inv["Valeur (EUR)"] = pd.to_numeric(df_inv["Valeur (EUR)"], errors="coerce").fillna(0.0)
                 vgp_end = df_inv["Valeur (EUR)"].sum()
                 st.info(f"✅ VGP basée sur l'inventaire sanctuarisé au 31/12/{target_year}.")
@@ -784,7 +787,7 @@ with tab_bilan:
                     # Use the settings from tab_accounts if available or defaults
                     ff = st.session_state.get("force_full_app3", False)
                     sy = st.session_state.get("start_year_app3", 2020)
-                    _, vgp_val = shared_logic.get_portfolio_snapshot(target_year, eoy_date, force_full_history=ff, start_recalc_year=sy)
+                    _, vgp_val = sl.get_portfolio_snapshot(target_year, eoy_date, force_full_history=ff, start_recalc_year=sy)
                     st.session_state[f"vgp_eoy_{target_year}"] = vgp_val
                     st.success(f"VGP calculée : {vgp_val:,.2f} €")
                     st.rerun()
@@ -838,10 +841,10 @@ with tab_bilan:
             # Aggregation logic (same as VGP/Portfolio but row-based)
             all_txs = []
             for y in range(2020, target_year + 1):
-                path_j = shared_logic.get_file_path(y, 'qualified')
+                path_j = sl.get_file_path(y, 'qualified')
                 if os.path.exists(path_j):
                     try:
-                        df_y = shared_logic.pd_read_csv_safe(path_j)
+                        df_y = sl.pd_read_csv_safe(path_j)
                         # Standard exclusion filter
                         if 'Status' in df_y.columns:
                             df_y = df_y[df_y['Status'] != 'Spam']
@@ -936,7 +939,7 @@ with tab_bilan:
             pdf.set_font(main_font, '', 10)
             for _, r in local_pos.iterrows():
                 # Standardize Account name for PDF
-                disp_acc = shared_logic.resolve_owner_display(r["Account"])
+                disp_acc = sl.resolve_owner_display(r["Account"])
                 pdf.cell(w_p[0], 8, pdf_safe_str(disp_acc, use_uni)[:45], border=1)
                 pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"], use_uni), border=1)
                 pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
@@ -1004,7 +1007,7 @@ with tab_bilan:
 
                 # Calcul de la hauteur maximale nécessaire pour la ligne
                 # On vérifie Account et Type qui sont les plus susceptibles de déborder
-                disp_acc = shared_logic.resolve_owner_display(r.get("Account", "Manual"))
+                disp_acc = sl.resolve_owner_display(r.get("Account", "Manual"))
                 txt_acc = pdf_safe_str(disp_acc, use_uni)
                 txt_type = pdf_safe_str(r.get("Type", ""), use_uni)
 

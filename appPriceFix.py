@@ -6,12 +6,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import unicodedata
-from shared_logic import (
-    get_price_eur, validate_spam_exclusion,
-    load_spam_list, pd_read_csv_safe,
-    load_price_cache, save_price_cache,
-    show_status
-)
+import shared_logic as sl
 
 # --- Configuration ---
 if "is_hub" not in st.session_state:
@@ -44,31 +39,31 @@ with st.sidebar:
             q_path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
             if os.path.exists(q_path):
                 try:
-                    df_q = pd_read_csv_safe(q_path)
-                    leaked = validate_spam_exclusion(df_q)
+                    df_q = sl.pd_read_csv_safe(q_path)
+                    leaked = sl.validate_spam_exclusion(df_q)
                     if leaked: total_leaked += len(leaked)
                 except: pass
         if total_leaked > 0:
             st.sidebar.warning(f"🛡️ {total_leaked} lignes suspectes détectées via Blacklist. Elles seront ignorées du scan.")
 
     st.divider()
-    show_status()
+    sl.show_status()
 
 # --- Scanner ---
 def scan_needed_prices(target_years, exclude_spams=True):
     all_needed = [] # List of dicts: {'Year', 'Asset', 'Date', 'Type'}
-    spam_list = load_spam_list() if exclude_spams else set()
+    spam_list = sl.load_spam_list() if exclude_spams else set()
 
     for y in target_years:
         y_int = int(y)
         # 1. Cession dates
         qual_path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
         if os.path.exists(qual_path):
-            df = pd_read_csv_safe(qual_path)
+            df = sl.pd_read_csv_safe(qual_path)
             if not df.empty:
                 # --- DOUBLE VÉRIFICATION SPAM PENDANT LE SCAN ---
                 if exclude_spams:
-                    leaked = validate_spam_exclusion(df)
+                    leaked = sl.validate_spam_exclusion(df)
                     if leaked: df.loc[leaked, "Status"] = "Spam"
                     if "Status" in df.columns:
                         df = df[df["Status"] != "Spam"]
@@ -93,10 +88,10 @@ def scan_needed_prices(target_years, exclude_spams=True):
         qual_path = os.path.join(y_dir, f"qualified_journal_{y}.csv")
         assets_from_qual = set()
         if os.path.exists(qual_path):
-            df_q = pd_read_csv_safe(qual_path)
+            df_q = sl.pd_read_csv_safe(qual_path)
             if not df_q.empty:
                 if exclude_spams:
-                    leaked = validate_spam_exclusion(df_q)
+                    leaked = sl.validate_spam_exclusion(df_q)
                     if leaked: df_q.loc[leaked, "Status"] = "Spam"
                     if "Status" in df_q.columns:
                         df_q = df_q[df_q["Status"] != "Spam"]
@@ -109,7 +104,7 @@ def scan_needed_prices(target_years, exclude_spams=True):
         for f in os.listdir(y_dir):
             if f.endswith(".csv") and not f.startswith("qualified_"):
                 try:
-                    tmp = pd_read_csv_safe(os.path.join(y_dir, f))
+                    tmp = sl.pd_read_csv_safe(os.path.join(y_dir, f))
                     found = set()
                     if "Asset" in tmp.columns: found.update(tmp["Asset"].dropna().unique())
                     if "Token" in tmp.columns: found.update(tmp["Token"].dropna().unique())
@@ -152,7 +147,7 @@ Vous devez soit obtenir le prix via le bouton **Collecte Automatique**, soit le 
 if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)", width='stretch'):
     with st.spinner("Analyse des fichiers sanctuarisés..."):
         df_needed = scan_needed_prices(target_years=selected_years, exclude_spams=exclude_spam)
-        cache = load_price_cache() # Use centralized logic
+        cache = sl.load_price_cache() # Use centralized logic
 
         results = []
         for _, row in df_needed.iterrows():
@@ -235,13 +230,13 @@ if "price_explorer_df" in st.session_state:
             st.success("Aucun prix manquant à collecter.")
         else:
             pbar = st.progress(0)
-            cache = load_price_cache()
+            cache = sl.load_price_cache()
             updated_count = 0
             fail_count = 0
 
             for idx, (i, row) in enumerate(to_fetch.iterrows()):
                 dt_obj = datetime.combine(row["Date"], datetime.min.time())
-                new_price = get_price_eur(row["Asset"], dt_obj)
+                new_price = sl.get_price_eur(row["Asset"], dt_obj)
 
                 if new_price > 0:
                     ed_prices.at[i, "Prix (EUR)"] = new_price
@@ -261,7 +256,7 @@ if "price_explorer_df" in st.session_state:
             st.rerun()
 
     if col_btn2.button("🛡️ Sanctuariser (Global & Annuel)", width='stretch'):
-        cache = load_price_cache()
+        cache = sl.load_price_cache()
         annual_updates = {} # {year: {key: val}}
 
         count = 0
@@ -282,7 +277,7 @@ if "price_explorer_df" in st.session_state:
                 count += 1
 
         # Save Global
-        save_price_cache(cache)
+        sl.save_price_cache(cache)
 
         # Save Annuals
         for y, prices in annual_updates.items():

@@ -10,7 +10,7 @@ import tempfile
 import unicodedata
 import traceback
 from datetime import datetime, time as dt_time
-from shared_logic import resolve_raw_addr, get_portfolio_snapshot, get_price_eur, show_status, pd_read_csv_safe
+import shared_logic as sl
 
 # --- Configuration ---
 if "is_hub" not in st.session_state:

@@ -33,7 +33,7 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
     - **Clé Universelle (V2 Unifiée) :** Permettre la saisie d'une clé API unique s'appliquant à tous les réseaux.
     - **Support Etherscan V2 & Smart Fallback :**
         - **Endpoint Unifié :** Utiliser `https://api.etherscan.io/v2/api` avec `chainid`.
-        - **Forçage V2 & Smart Fallback :** Le moteur doit prioriser l'endpoint unifié V2. En cas de rejet par la chaîne ou de limitation du plan gratuit ("Free API access not supported", "Invalid chainid"), basculer automatiquement sur l'endpoint V1 spécifique.
+        - **Forçage V2 & Smart Fallback :** Le moteur doit prioriser l'endpoint unifié V2. En cas de rejet par la chaîne ou de limitation du plan gratuit ("Free API access not supported", "Invalid chainid"), basculer automatiquement sur l'endpoint V1 spécifique, **SAUF pour Basescan** (interdiction du fallback V1 polluant car l'endpoint est fermé par le fournisseur).
     - **Temporisation FREE Plan :** Appliquer une pause de **400ms** minimum entre chaque appel API et gérer le retry automatique de **5s** en cas de "Rate Limit" pour respecter strictement les quotas des comptes gratuits (5 calls/sec).
     - **Diagnostic Explicite :** Capturer et afficher le message d'erreur brut de l'API (ex: "Invalid API Key") au lieu d'un message générique.
 
@@ -85,6 +85,7 @@ Utilisation des données nettoyées pour le reporting final.
 ## V. STANDARDS TECHNIQUES & UI (TOUTES APPS)
 - **Largeur Plein Écran :** Utilisation systématique de `layout="wide"`.
 - **Indépendance des Modules :** Chaque module `app*.py` doit pouvoir être exécuté seul (`streamlit run app*.py`). La configuration `st.set_page_config` doit être conditionnée à l'absence de la clé `is_hub` dans le `session_state` pour éviter les collisions lors de l'exécution via le Hub.
+- **Intégrité des Widgets :** Pour éviter les conflits de `Session State`, les widgets utilisant des clés globales (ex: `_hub_target_year`) ne doivent pas définir de paramètre `value` ou `index` si la clé existe déjà en session.
 - **Navigation Hub (main.py) :** Orchestre l'accès aux modules et protège l'état via les clés `_hub_`.
 - **Réactivité :** Appel systématique à `st.rerun()` après chaque modification de données.
 - **Système Opérationnel :** Message de succès `✅ Système Opérationnel` permanent en sidebar.

@@ -49,7 +49,7 @@ def ensure_columns(df):
 
     # 3. Robust Imposable detection
     if "Imposable" in df_copy.columns:
-        df_copy["Imposable"] = df_copy["Imposable"].apply(shared_logic.is_imposable_robust)
+        df_copy["Imposable"] = df_copy["Imposable"].apply(sl.is_imposable_robust)
 
     # 4. Strict Date Cleaning
     if "Date" in df_copy.columns:
@@ -144,7 +144,7 @@ def merge_raw_data(year):
                     rows.append({"Date": datetime(year, 12, 31), "Account": acc, "Counterparty": "Blockchain Snapshot", "Asset": asset, "Amount": amt, "Value ($)": float(r.get("Value ($)") or r.get(h_map.get("value ($)")) or 0), "Network": str(r.get("Chain") or r.get(h_map.get("chain"), "")), "Tx Hash": f"PORT-{src}-{asset}", "Source Type": "Portfolio", "Category": "Inventaire", "Status": "Valide", "Imposable": False})
                     continue
 
-                fa = shared_logic.resolve_raw_addr(r.get("From") or r.get(h_map.get("from"), ""))
+                fa = sl.resolve_raw_addr(r.get("From") or r.get(h_map.get("from"), ""))
                 cp = str(r.get("Counterparty") or r.get(h_map.get("counterparty"), ""))
                 if not cp or cp == "nan":
                     cp = r.get("To") or r.get(h_map.get("to"), "") if fa == acc else r.get("From") or r.get(h_map.get("from"), "")
@@ -215,8 +215,10 @@ def sync_data(year):
 with st.sidebar:
     st.header("⚙️ Paramètres app2")
     # Unified Hub Year
-    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
-    target_year = st.number_input("Année fiscale", 2015, 2030, st.session_state["_hub_target_year"], key="_hub_target_year")
+    if "_hub_target_year" not in st.session_state:
+        st.session_state["_hub_target_year"] = datetime.now().year
+
+    target_year = st.number_input("Année fiscale", 2015, 2030, key="_hub_target_year")
     if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
         sl.clean_session_state(preserve_keys=["last_year"])
         st.cache_data.clear(); sync_data(target_year); st.session_state.last_year = target_year

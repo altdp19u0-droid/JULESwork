@@ -94,8 +94,10 @@ if "fiat_journal" not in st.session_state:
 with st.sidebar:
     st.header("⚙️ Paramètres")
     # Unified Hub Year
-    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
-    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
+    if "_hub_target_year" not in st.session_state:
+        st.session_state["_hub_target_year"] = datetime.now().year
+
+    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, key="_hub_target_year")
 
     if target_year != st.session_state.get("current_year"):
         # _hub_ keys (including _hub_target_year) are auto-preserved by clean_session_state
@@ -149,7 +151,7 @@ def fragment_fiat():
         st.session_state.fiat_qty_input = float(row["Quantité"])
         st.session_state.fiat_imp_checkbox = bool(row["Imposable"])
 
-        known_displays = shared_logic.get_owner_display_list()
+        known_displays = sl.get_owner_display_list()
         st.session_state.sel_fiat_label = row["Compte/Label"] if row["Compte/Label"] in known_displays else "(Nouveau / Autre...)"
         if row["Compte/Label"] not in known_displays: st.session_state.fiat_label_input = row["Compte/Label"]
 

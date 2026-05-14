@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 import requests
 from datetime import datetime
-from shared_logic import get_fiat_rate, get_price_eur, show_status, load_owner_accounts, resolve_raw_addr
+import shared_logic as sl
 import time
 import json
 import io
@@ -30,7 +30,7 @@ RAW_V4_COLUMNS = [
 def process_neverless_csv(df):
     new_rows = []
 
-    owners_map = load_owner_accounts() # {addr_low: label}
+    owners_map = sl.load_owner_accounts() # {addr_low: label}
 
     # Detect IDs that are "Auto-conversion"
     # To mark corresponding legs as Achat/Vente by default.
@@ -93,7 +93,7 @@ def process_neverless_csv(df):
             else:
                 bc_addr_raw = str(bc_addr_raw).strip()
 
-            bc_addr = resolve_raw_addr(bc_addr_raw).lower() if bc_addr_raw else ""
+            bc_addr = sl.resolve_raw_addr(bc_addr_raw).lower() if bc_addr_raw else ""
 
             if tx_type == "Withdrawal":
                 # A. Bank Withdrawal (Crypto -> Fiat)
@@ -224,13 +224,15 @@ def process_neverless_csv(df):
 with st.sidebar:
     st.header("⚙️ Paramètres")
     # Unified Hub Year
-    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
-    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
+    if "_hub_target_year" not in st.session_state:
+        st.session_state["_hub_target_year"] = datetime.now().year
+
+    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, key="_hub_target_year")
     st.divider()
     st.info("💡 Ce module transforme les lignes mixtes de Neverless en écritures comptables simples (In/Out/Fees) tout en préservant les prix USD natifs.")
 
     st.divider()
-    show_status()
+    sl.show_status()
 
 uploaded_file = st.file_uploader("📂 Déposez votre export CSV Neverless", type="csv")
 

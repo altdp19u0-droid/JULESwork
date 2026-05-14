@@ -119,8 +119,10 @@ with st.sidebar:
     st.header("⚙️ Contrôle")
 
     # Unified Hub Year
-    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
-    target_year = st.number_input("Année focus (Filtre visuel)", 2015, 2030, st.session_state["_hub_target_year"], key="_hub_target_year")
+    if "_hub_target_year" not in st.session_state:
+        st.session_state["_hub_target_year"] = datetime.now().year
+
+    target_year = st.number_input("Année focus (Filtre visuel)", 2015, 2030, key="_hub_target_year")
 
     # Year switch detection
     if "last_diag_year" not in st.session_state:

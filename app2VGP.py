@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import unicodedata
-import shared_logic
+import shared_logic as sl
 from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
     validate_spam_exclusion, load_spam_list, get_file_path,
@@ -41,8 +41,10 @@ def load_position_labels():
 with st.sidebar:
     st.header("⚙️ Paramètres")
     # Unified Hub Year
-    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
-    target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
+    if "_hub_target_year" not in st.session_state:
+        st.session_state["_hub_target_year"] = datetime.now().year
+
+    target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, key="_hub_target_year")
 
     # Year switch detection
     if "last_vgp_year" not in st.session_state:
@@ -51,7 +53,7 @@ with st.sidebar:
     if target_year != st.session_state.get("last_vgp_year"):
         # Hub keys are auto-preserved by clean_session_state
         import shared_logic
-        shared_logic.clean_session_state(preserve_keys=["last_vgp_year"])
+        sl.clean_session_state(preserve_keys=["last_vgp_year"])
         st.session_state.last_vgp_year = target_year
         st.cache_data.clear()
         st.rerun()
@@ -210,7 +212,7 @@ else:
             edit_df[c] = edit_df[c].fillna("").astype(str)
 
         # Display standardized account names
-        edit_df["Account"] = edit_df["Account"].apply(shared_logic.resolve_owner_display)
+        edit_df["Account"] = edit_df["Account"].apply(sl.resolve_owner_display)
 
         edited_cessions = st.data_editor(
             edit_df,
@@ -253,7 +255,7 @@ else:
                 def map_loc_display(loc):
                     if loc.startswith("Account: "):
                         addr = loc.replace("Account: ", "")
-                        return f"Compte: {shared_logic.resolve_owner_display(addr)}"
+                        return f"Compte: {sl.resolve_owner_display(addr)}"
                     return loc
                 snapshot_df["Emplacement"] = snapshot_df["Location"].apply(map_loc_display)
 
@@ -308,7 +310,7 @@ else:
                 col_save_audit1, col_save_audit2 = st.columns(2)
 
                 if col_save_audit1.button("💾 Enregistrer ces prix dans le cache"):
-                    cache = shared_logic.load_price_cache()
+                    cache = sl.load_price_cache()
                     d_str = selected_date.strftime("%d-%m-%Y")
 
                     # On identifie les prix modifiés par rapport au cache actuel
@@ -320,7 +322,7 @@ else:
                             cache[f"{a_clean}_{d_str}"] = p_val
                             count += 1
 
-                    shared_logic.save_price_cache(cache)
+                    sl.save_price_cache(cache)
 
                     # Sanctuarisation annuelle automatique pour pérennité
                     y = str(selected_date.year)

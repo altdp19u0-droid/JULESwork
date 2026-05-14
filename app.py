@@ -94,9 +94,11 @@ with st.sidebar:
     chains = st.multiselect("Chaînes à sonder", list(CHAIN_APIS.keys()), default=["Ethereum", "Polygon", "Arbitrum", "Base", "Optimism"])
 
     st.divider()
-    # Unified Hub Year
-    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
-    target_year = st.number_input("Année à sanctuariser", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
+    # Unified Hub Year (State-first pattern to avoid widget conflict)
+    if "_hub_target_year" not in st.session_state:
+        st.session_state["_hub_target_year"] = datetime.now().year
+
+    target_year = st.number_input("Année à sanctuariser", min_value=2015, max_value=2030, key="_hub_target_year")
     max_txs = st.number_input("Max transactions par chaîne", min_value=10, max_value=50000, value=2000, step=100, key="app_max_txs")
 
     st.divider()
@@ -176,6 +178,10 @@ def fetch_etherscan_way2(chain_id, api_host, addr, api_key, year, max_items, nat
                     # --- SMART FALLBACK V2 -> V1 ---
                     # Si l'API V2 rejette la chaîne ou l'accès free
                     if current_base_url == v2_url and ("free api access is not supported" in msg or "not supported for this chain" in msg or "invalid chainid" in msg):
+                        # SECURITE : Si c'est Basescan, on interdit le fallback V1 car il est fermé et renvoie une erreur polluante
+                        if "basescan" in api_host:
+                            return items, "Access blocked (V2 restricted / V1 deprecated)"
+
                         st.toast(f"🔄 Basculement V2 -> V1 pour {api_host}...")
                         current_base_url = v1_url
                         params.pop("chainid", None)
@@ -435,6 +441,7 @@ if harvest_btn:
             eth_chains_status[chain] = "empty" if not api_key else None
 
             # --- VOIE 1 ---
+            # 1a. Transactions Natives
             raw_v1_txs = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "transactions")
             if not raw_v1_txs: raw_v1_txs = fetch_blockscout_v1_fallback(v1, addr_c, "txlist", max_txs, target_year)
             for t in raw_v1_txs:
@@ -468,6 +475,36 @@ if harvest_btn:
                 except: continue
             fb_native.caption(f"✅ {len(chain_txs)} Transactions Natives")
 
+            # 1b. Transactions Internes (Nouveau: capture les flux ETH via bridge/swap)
+            raw_v1_int = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "internal-transactions")
+            if not raw_v1_int: raw_v1_int = fetch_blockscout_v1_fallback(v1, addr_c, "txlistinternal", max_txs, target_year)
+            for t in raw_v1_int:
+                try:
+                    if "timestamp" in t:
+                        dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
+                        val = float(t.get("value", 0)) / 1e18
+                        f_obj, t_obj = t.get("from") or {}, t.get("to") or {}
+                        f_raw = str(f_obj.get("hash") if isinstance(f_obj, dict) else f_obj).lower().strip()
+                        t_raw = str(t_obj.get("hash") if isinstance(t_obj, dict) else t_obj).lower().strip()
+                        tx_h = str(t.get("hash") or t.get("tx_hash")).lower().strip()
+                    else:
+                        dt = datetime.fromtimestamp(int(t.get("timeStamp", 0)), tz=tz.tzutc())
+                        val = float(t.get("value", 0)) / 1e18
+                        f_raw, t_raw = str(t.get("from", "")).lower().strip(), str(t.get("to", "")).lower().strip()
+                        tx_h = str(t.get("hash")).lower().strip()
+
+                    v4_int = {
+                        "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Internal",
+                        "Method": "Internal", "Account": addr_c, "From": f_raw, "To": t_raw,
+                        "From_Label": "", "To_Label": "", "Counterparty": t_raw if f_raw == addr_c else f_raw,
+                        "Asset": native.upper().strip(), "Amount": val if t_raw == addr_c else -val,
+                        "Fee_Asset": native.upper().strip(), "Fee_Amount": 0.0,
+                        "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0
+                    }
+                    global_raw_txs.append(v4_int)
+                except: continue
+
+            # 1c. Token Transfers
             raw_v1_toks = fetch_blockscout_v2(v2, addr_c, max_txs, target_year, "token-transfers")
             if not raw_v1_toks: raw_v1_toks = fetch_blockscout_v1_fallback(v1, addr_c, "tokentx", max_txs, target_year)
             for t in raw_v1_toks:
