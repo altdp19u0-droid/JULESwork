@@ -31,9 +31,10 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 - **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `resolve_owner_display` pour discriminer et unifier les identités. Le standard absolu est le format : **`Identifiant_Technique (Nom_Amical)`**. La suite doit impérativement dédoublonner les listes via `get_owner_display_list` pour qu'une même identité (liée par `owner_accounts.json`) n'apparaisse qu'une seule fois dans les menus et rapports. Un suivi incrémental des comptes collectés doit rester visible.
 - **GESTION DES CLÉS API :**
     - **Clé Universelle (V2 Unifiée) :** Permettre la saisie d'une clé API unique s'appliquant à tous les réseaux.
-    - **Support Etherscan V2 Multi-Domaine & Fidelity Engine :**
-        - **Architecture Multi-Domaine :** Pour garantir la compatibilité avec les clés gratuites sur tous les réseaux, utiliser les domaines spécifiques (ex: `api.basescan.org`, `api.arbiscan.io`) au lieu de l'endpoint unifié. Une seule clé Etherscan V2 permet d'interroger tous ces domaines.
-        - **Désactivation Fallback V1 :** Le repli vers la V1 est strictement désactivé pour tous les réseaux pour éviter les erreurs de dépréciation (notamment sur Base).
+    - **Standard Etherscan V2 REST :**
+        - **Endpoints RESTful :** Utiliser exclusivement la nouvelle structure REST V2 : `https://api.<chain>scan.<tld>/api/v2/accounts/{address}/transactions` (et `/erc20-transfers`, `/internal-transactions`).
+        - **Paramètres :** Ne plus utiliser `module` ou `action` (V1). Utiliser uniquement `apikey`, `page`, et `offset`.
+        - **Désactivation Fallback V1 :** Le repli vers la V1 est strictement interdit pour éviter les erreurs de dépréciation.
         - **Fidelity Consolidation :** La fusion multivoie (Way 1/2/3) doit utiliser un quadruplet étendu `(Tx_Hash, Asset, Chain, Amount, From, To)` combiné à un index d'occurrence (`cumcount` par hash/asset/chain/amount/from/to) pour préserver chaque mouvement distinct d'une transaction complexe (ex: swap avec plusieurs legs). L'index d'occurrence doit être calculé *avant* la fusion pour permettre l'alignement des données entre les différentes Voies.
         - **Transparence Technique :** Afficher les volumes collectés par "Way" et les messages d'erreur bruts des APIs.
     - **Temporisation FREE Plan :** Appliquer une pause de **400ms** minimum entre chaque appel API et gérer le retry automatique de **5s** en cas de "Rate Limit" pour respecter strictement les quotas des comptes gratuits (5 calls/sec).
