@@ -75,10 +75,10 @@ def standardize_address_string(addr_str):
     Enforces the 'Identifier (Name)' standard.
     - If 0x address is found: '0x... (Name)'
     - If no 0x but name exists: 'Identifier (Name)'
-    - Always lowercases hex addresses.
+    - Always lowercases hex addresses and labels.
     """
     if not addr_str: return ""
-    raw = resolve_raw_addr(addr_str)
+    raw = resolve_raw_addr(addr_str).lower()
 
     # Get friendly name if known
     owners_map = load_owner_accounts()
@@ -106,7 +106,7 @@ def standardize_df_addresses(df):
     """Applies unification in lowercase for technical addresses in a DataFrame."""
     if df.empty: return df
     df = df.copy()
-    for col in ["Account", "Counterparty"]:
+    for col in ["Account", "Counterparty", "From", "To"]:
         if col in df.columns:
             df[col] = df[col].apply(standardize_address_string)
     return df
@@ -420,6 +420,7 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
              pass
 
     # 2. Load journals from start_scan_year to target_year_val
+    processed_current_year_df = False
     for y in range(start_scan_year, target_year_val + 1):
         if y == target_year_val and isinstance(journal_or_year, pd.DataFrame):
             if journal_or_year.empty or "Date" not in journal_or_year.columns:
@@ -428,8 +429,13 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
             # UNIFICATION CASE (Lowering 0x addresses)
             df_y = standardize_df_addresses(df_y)
             df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
+
+            # --- ZÉRO SPAM ---
+            df_y = apply_spam_filter(df_y, drop=True)
+
             journals_to_process.append(df_y[df_y["Date"] <= target_date])
-        else:
+            processed_current_year_df = True
+        elif not (y == target_year_val and processed_current_year_df):
             path_j = os.path.join(EXPORT_BASE_DIR, str(y), f"qualified_journal_{y}.csv")
             if os.path.exists(path_j):
                 try:
@@ -439,10 +445,8 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
                         df_y = standardize_df_addresses(df_y)
                         df_y["Date"] = pd.to_datetime(df_y["Date"], utc=True, errors="coerce")
 
-                        # --- ABSOLUTE SPAM EXCLUSION (Recursive) ---
-                        leaked = validate_spam_exclusion(df_y)
-                        if leaked:
-                            df_y.loc[leaked, "Status"] = "Spam"
+                        # --- ZÉRO SPAM ---
+                        df_y = apply_spam_filter(df_y, drop=True)
 
                         journals_to_process.append(df_y[df_y["Date"] <= target_date])
                 except: pass
@@ -483,7 +487,7 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
     owned_names = set(df_j["Account"].dropna().unique()) if not df_j.empty else set()
     owned_addrs = set()
     for n in owned_names:
-        res = resolve_raw_addr(n)
+        res = resolve_raw_addr(n).lower()
         if res.startswith("0x"): owned_addrs.add(res)
 
     # --- A. OWNED ACCOUNTS ---
@@ -495,7 +499,7 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
         if not df_s.empty and all(c in df_s.columns for c in ["Location", "Amount"]):
             mask_w = df_s["Location"].str.startswith("Account:", na=False)
             start_wallets_df = df_s[mask_w].copy()
-            start_wallets_df["Account"] = start_wallets_df["Location"].str.replace("Account: ", "")
+            start_wallets_df["Account"] = start_wallets_df["Location"].str.replace("Account: ", "").apply(standardize_address_string)
             start_wallets = start_wallets_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
     if not df_j.empty or not start_wallets.empty:
@@ -604,7 +608,7 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
         if not df_s.empty and all(c in df_s.columns for c in ["Location", "Amount"]):
             mask_m = df_s["Location"].str.startswith("Manual Position:", na=False)
             start_manual_df = df_s[mask_m].copy()
-            start_manual_df["Account"] = start_manual_df["Location"].str.replace("Manual Position: ", "")
+            start_manual_df["Account"] = start_manual_df["Location"].str.replace("Manual Position: ", "").apply(standardize_address_string)
             start_manual = start_manual_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
     if not df_m.empty or not start_manual.empty:
@@ -634,7 +638,8 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
             ]).reset_index()
 
         merged_m = pd.merge(m_pre, m_ytd, on=["Account", "Asset"], how="outer").fillna(0.0)
-        merged_m = merged_m.rename(columns={"Quantité": "Reported"})
+        # Use existing 'Amount' as 'Reported' for manual positions
+        merged_m = merged_m.rename(columns={"Amount": "Reported"})
         merged_m["Final_Bal"] = merged_m["Reported"] + merged_m["In"] + merged_m["Out"]
         for _, r in merged_m.iterrows():
             if abs(r["Final_Bal"]) > 1e-8:
@@ -792,6 +797,8 @@ def get_owner_display_list(journal_df=None):
             if os.path.exists(p):
                 try:
                     df = pd_read_csv_safe(p)
+                    # --- ZÉRO SPAM ---
+                    df = apply_spam_filter(df, drop=True)
                     if "Account" in df.columns:
                         all_raw_ids.update([str(a).strip() for a in df["Account"].dropna().unique()])
                 except: pass
@@ -1034,32 +1041,62 @@ def save_valid_assets(assets_set):
     with open(VALID_ASSETS_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(list(assets_set)), f, indent=4)
 
-def validate_spam_exclusion(df):
+def apply_spam_filter(df, drop=True):
     """
-    Checks if any row in the dataframe matches the global spam blacklist
-    but hasn't been marked as 'Spam' status.
-    Returns: List of leaked indices.
+    Centralized spam filter. Identifies spams using the global blacklist.
+    - Matches on 'Asset' (normalized) and 'Counterparty' (resolved address).
+    - In 'Qualified' mode: looks at 'Status' column.
+    - In 'Raw' mode: looks at 'Audit_Status' column.
+    - WHITELIST PROTECTION: Whitelisted assets are NEVER considered spam.
+    If drop=True: returns a dataframe EXCLUDING spams.
+    If drop=False: returns the dataframe with 'Status' or 'Audit_Status' updated to 'Spam'.
     """
-    if df.empty or "Status" not in df.columns: return []
+    if df is None or df.empty: return df
 
     spam_list = load_spam_list()
-    if not spam_list: return []
+    valid_assets = load_valid_assets()
+    if not spam_list: return df
 
-    # Prepare search terms (all lowercase)
-    def is_leaked_spam(row):
-        if str(row.get("Status")) == "Spam": return False
+    df = df.copy()
 
-        # Check Counterparty address
+    # 1. Identify Target Column
+    status_col = "Status" if "Status" in df.columns else "Audit_Status" if "Audit_Status" in df.columns else None
+
+    def check_row_spam(row):
+        # 0. WHITELIST PROTECTION: Never spam if whitelisted
+        asset_raw = str(row.get("Asset", "")).upper().strip()
+        if asset_raw in valid_assets: return False
+
+        # 1. Check current status if exists
+        if status_col and str(row.get(status_col)) == "Spam": return True
+
+        # 2. Check Counterparty address
         cp_raw = resolve_raw_addr(row.get("Counterparty", ""))
         if cp_raw.lower() in spam_list: return True
 
-        # Check Asset name
-        asset = str(row.get("Asset", "")).lower().strip()
-        if asset in spam_list: return True
+        # 3. Check Asset name
+        asset_low = str(row.get("Asset", "")).lower().strip()
+        if asset_low in spam_list: return True
 
         return False
 
-    leaked_mask = df.apply(is_leaked_spam, axis=1)
+    is_spam_mask = df.apply(check_row_spam, axis=1)
+
+    if drop:
+        return df[~is_spam_mask].reset_index(drop=True)
+    else:
+        if status_col:
+            df.loc[is_spam_mask, status_col] = "Spam"
+        return df
+
+def validate_spam_exclusion(df):
+    """Legacy wrapper: returns indices of leaked spams."""
+    if df is None or df.empty: return []
+    filtered = apply_spam_filter(df, drop=False)
+    status_col = "Status" if "Status" in df.columns else "Audit_Status"
+
+    # Find rows where we just changed the status to Spam but it wasn't Spam before
+    leaked_mask = (filtered[status_col] == "Spam") & (df[status_col] != "Spam")
     return df.index[leaked_mask].tolist()
 
 def detect_internal_transfers(df):

@@ -11,7 +11,8 @@ Ce document est le référentiel unique de la structure, des fonctions critiques
 2. **Continuité Historique :** Les soldes de fin d'année (EOY) sont portés à l'année suivante comme point de départ.
 3. **Logique Centralisée :** Toute logique partagée (Calculs Art. 150 VH bis, valorisation EUR, normalisation d'adresses, indexation exhaustive) doit résider exclusivement dans `shared_logic.py`.
 4. **Non-Régression Fonctionnelle :** Ne jamais supprimer une fonctionnalité UI (expanders, filtres, outils de détection ou de gestion) lors d'une refactorisation.
-5. **Zéro Spam Universel :** Tout actif ou transaction marqué comme 'Spam' dans `app2.py` ou via la blacklist globale doit être **strictement exclu** de tous les calculs (VGP, Portefeuille, Bilan Fiscal) et affichages avals, y compris dans le module "Live Harvest".
+5. **Zéro Spam Universel :** Tout actif ou transaction marqué comme 'Spam' dans `app2.py` ou via la blacklist globale doit être **strictement exclu** de tous les calculs (VGP, Portefeuille, Bilan Fiscal) et affichages avals.
+    - **Procédure :** Utiliser systématiquement `sl.apply_spam_filter(df, drop=True)` lors du chargement des données dans les modules de calcul ou de reporting.
 
 ---
 
@@ -82,6 +83,7 @@ Utilisation des données nettoyées pour le reporting final.
     - **PDF Professionnel :** Génération Unicode (DejaVuSans), gestion du word-wrap pour les adresses longues, synchronisation des hauteurs de lignes.
 3. **Diagnostic (appDiagCoh) :** Traçage chronologique par actif/compte et détection des soldes négatifs comme outil de réparation.
 4. **Valorisation (shared_logic) :** Politique "Zéro-Fallback" (0.0 si erreur API) pour forcer l'audit manuel et garantir l'intégrité fiscale. Utilisation des taux BCE (Frankfurter) pour les assets indexés fiat.
+5. **Positions & Snapshots :** Le moteur `get_portfolio_snapshot` doit agréger les journaux qualifiés, les positions manuelles (`manual_positions_*.csv`) et les inventaires N-1. Les positions manuelles sont prioritaires pour définir le stock initial d'un compte.
 
 ---
 

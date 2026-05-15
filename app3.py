@@ -130,17 +130,8 @@ def load_data(year):
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
             if key == 'journal':
-                # --- DOUBLE VÉRIFICATION SPAM À L'OUVERTURE ---
-                leaked_indices = sl.validate_spam_exclusion(df)
-                if leaked_indices:
-                    df.loc[leaked_indices, "Status"] = "Spam"
-                    # Only show toast/message once for the whole dataset
-                    st.toast(f"🛡️ Art 150 VH bis : {len(leaked_indices)} lignes spams écartées automatiquement.")
-
-                # FILTRAGE ANTI-SPAM GLOBAL
-                if 'Status' in df.columns:
-                    df = df[df['Status'] != 'Spam']
-
+                # --- ZÉRO SPAM : Filtre Fiscal ---
+                df = sl.apply_spam_filter(df, drop=True)
                 df = apply_position_labels(df)
 
             data[key] = df

@@ -47,12 +47,11 @@ def load_all_history():
                     df = sl.standardize_df_addresses(df)
                     df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
 
-                    # Anti-Spam Safety
-                    leaked = sl.validate_spam_exclusion(df)
-                    if leaked: df.loc[leaked, "Status"] = "Spam"
+                    # --- ZÉRO SPAM : Filtre de Diagnostic ---
+                    df = sl.apply_spam_filter(df, drop=True)
 
-                    # Filter
-                    df = df[(df["Status"] != "Spam") & (df.get("Category", "") != "Doublon à ignorer")]
+                    # Filter duplicates
+                    df = df[(df.get("Category", "") != "Doublon à ignorer")]
                     journals.append(df)
             except: pass
 

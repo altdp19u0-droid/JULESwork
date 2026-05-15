@@ -233,6 +233,10 @@ if harvest_btn:
     if not df_m.empty:
         df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True, errors="coerce")
         df_m = df_m.dropna(subset=["Date", "Tx_Hash"])
+
+        # --- ZÉRO SPAM : Filtre de récolte ---
+        df_m = sl.apply_spam_filter(df_m, drop=False)
+
         df_m["_amt_round"] = pd.to_numeric(df_m["Amount"], errors="coerce").round(8)
         df_m["_occ"] = df_m.groupby(["Tx_Hash", "Asset", "Chain", "_amt_round", "From", "To"]).cumcount()
         def cons(g):
@@ -242,7 +246,12 @@ if harvest_btn:
                 res["Fee_Amount"], res["Method"], res["Source_Way"] = w2.iloc[0]["Fee_Amount"], w2.iloc[0]["Method"], "Way_1+2"
             return res
         df_f = df_m.groupby(["Tx_Hash", "Asset", "Chain", "_amt_round", "From", "To", "_occ"], as_index=False).apply(cons).reset_index(drop=True)
-        st.session_state.harvest_data[addr_c] = {"port": pd.DataFrame(all_port, columns=RAW_V4_COLUMNS), "tx": df_f.sort_values("Date", ascending=False).drop(columns=["_amt_round", "_occ"]), "status": chains_status}
+
+        # Filter Portfolio spams too
+        df_port = pd.DataFrame(all_port, columns=RAW_V4_COLUMNS)
+        df_port = sl.apply_spam_filter(df_port, drop=False)
+
+        st.session_state.harvest_data[addr_c] = {"port": df_port, "tx": df_f.sort_values("Date", ascending=False).drop(columns=["_amt_round", "_occ"]), "status": chains_status}
     else:
         st.session_state.harvest_data[addr_c] = {"port": pd.DataFrame(all_port, columns=RAW_V4_COLUMNS), "tx": pd.DataFrame(columns=RAW_V4_COLUMNS), "status": chains_status}
         if not all_port:
@@ -261,15 +270,27 @@ if st.session_state.harvest_data:
                 cols[i].caption(f"**{c}**\nBS: {bs_ico}\nETH: {eth_ico}")
                 if isinstance(s["eth"], str) and s["eth"] not in ["True", "empty", "pending"]: cols[i].error(f"Error: {s['eth']}")
 
+            # UI display filtering (Show all but highlight spams? No, user wants spams GONE)
+            # Actually, in Harvest Step, it's better to show them as marked Spam
+            # to let user know they were caught. But for final display, we follow the directive.
+
+            show_spams = st.checkbox("Voir les lignes marquées 'Spam'", value=False, key=f"show_spam_{addr}")
+
+            def get_ui_df(df_base):
+                if show_spams: return df_base
+                return df_base[df_base["Audit_Status"] != "Spam"]
+
             st.markdown("#### 📦 Portfolio")
-            st.dataframe(data["port"], width='stretch', key=f"p_{addr}")
+            st.dataframe(get_ui_df(data["port"]), width='stretch', key=f"p_{addr}")
 
             df_t = data["tx"]
             mask_tok = (df_t["Type"].str.contains("Token")) | (~df_t["Asset"].isin(["ETH", "POL", "BNB", "AVAX"]))
-            st.markdown(f"#### 📝 Transactions (Natives) ({len(df_t[~mask_tok])})")
-            st.dataframe(df_t[~mask_tok], width='stretch', key=f"t_{addr}")
-            st.markdown(f"#### 🪙 Tokens ({len(df_t[mask_tok])})")
-            st.dataframe(df_t[mask_tok], width='stretch', key=f"k_{addr}")
+
+            st.markdown(f"#### 📝 Transactions (Natives) ({len(get_ui_df(df_t[~mask_tok]))})")
+            st.dataframe(get_ui_df(df_t[~mask_tok]), width='stretch', key=f"t_{addr}")
+
+            st.markdown(f"#### 🪙 Tokens ({len(get_ui_df(df_t[mask_tok]))})")
+            st.dataframe(get_ui_df(df_t[mask_tok]), width='stretch', key=f"k_{addr}")
 
             if st.button(f"💾 Sanctuariser {addr[:10]}...", key=f"s_{addr}"):
                 y_dir = os.path.join(EXPORT_BASE_DIR, str(target_year)); os.makedirs(y_dir, exist_ok=True)

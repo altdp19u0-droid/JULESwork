@@ -58,85 +58,65 @@ with st.sidebar:
 # --- Scanner ---
 def scan_needed_prices(target_years, exclude_spams=True):
     all_needed = [] # List of dicts: {'Year', 'Asset', 'Date', 'Type'}
-    spam_list = sl.load_spam_list() if exclude_spams else set()
 
     for y in target_years:
         y_int = int(y)
-        # 1. Cession dates
-        qual_path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
-        if os.path.exists(qual_path):
-            df = sl.pd_read_csv_safe(qual_path)
-            if not df.empty:
-                # --- DOUBLE VÉRIFICATION SPAM PENDANT LE SCAN ---
-                if exclude_spams:
-                    leaked = sl.validate_spam_exclusion(df)
-                    if leaked: df.loc[leaked, "Status"] = "Spam"
-                    if "Status" in df.columns:
-                        df = df[df["Status"] != "Spam"]
+        y_dir = os.path.join(EXPORT_BASE_DIR, y)
+        if not os.path.exists(y_dir): continue
 
-                df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
+        assets_in_year = set()
+
+        # 1. Scan Qualified Journal for Cessions and Assets
+        qual_path = os.path.join(y_dir, f"qualified_journal_{y}.csv")
+        if os.path.exists(qual_path):
+            df_q = sl.pd_read_csv_safe(qual_path)
+            if not df_q.empty:
+                # --- ZÉRO SPAM ---
+                if exclude_spams:
+                    df_q = sl.apply_spam_filter(df_q, drop=True)
+
+                df_q["Date"] = pd.to_datetime(df_q["Date"], utc=True, errors="coerce")
+
+                # Identify assets held
+                assets_in_year.update(df_q["Asset"].dropna().unique())
+
                 # Identify cessions
-                def is_imp(v): return str(v).upper().strip() in ["TRUE", "1", "1.0", "VRAI"]
-                mask = (df["Imposable"].apply(is_imp)) | (df["Category"].fillna("").str.contains("Vente", case=False))
-                cessions = df[mask & (df["Asset"] != "EUR")]
+                mask_cess = (df_q["Imposable"].apply(sl.is_imposable_robust)) | (df_q["Category"].fillna("").str.contains("Vente", case=False))
+                cessions = df_q[mask_cess & (df_q["Asset"] != "EUR")]
                 for _, row in cessions.iterrows():
                     all_needed.append({
                         "Year": y_int, "Asset": str(row["Asset"]), "Date": row["Date"].date(), "Type": "Cession"
                     })
 
-        # 2. End of year
-        # Find all unique assets ever held in this year
-        assets_in_year = set()
-        y_dir = os.path.join(EXPORT_BASE_DIR, y)
-
-        # We prioritize assets from the qualified journal if it exists,
-        # as it contains the spam status.
-        qual_path = os.path.join(y_dir, f"qualified_journal_{y}.csv")
-        assets_from_qual = set()
-        if os.path.exists(qual_path):
-            df_q = sl.pd_read_csv_safe(qual_path)
-            if not df_q.empty:
+        # 2. Scan Manual Positions for Assets
+        pos_path = sl.get_file_path(y_int, 'positions')
+        if os.path.exists(pos_path):
+            df_p = sl.pd_read_csv_safe(pos_path)
+            if not df_p.empty:
+                # Manual positions don't usually have spam, but we check anyway if requested
                 if exclude_spams:
-                    leaked = sl.validate_spam_exclusion(df_q)
-                    if leaked: df_q.loc[leaked, "Status"] = "Spam"
-                    if "Status" in df_q.columns:
-                        df_q = df_q[df_q["Status"] != "Spam"]
-                assets_from_qual = set(df_q["Asset"].dropna().unique())
-                assets_in_year.update(assets_from_qual)
+                    df_p = sl.apply_spam_filter(df_p, drop=True)
+                assets_in_year.update(df_p["Asset"].dropna().unique())
 
-        # Complement with other files ONLY IF we want to be exhaustive
-        # OR if the qualified journal doesn't exist yet for that year.
-        # But we filter them against the global spam list if exclude_spams is active.
-        for f in os.listdir(y_dir):
-            if f.endswith(".csv") and not f.startswith("qualified_"):
-                try:
-                    tmp = sl.pd_read_csv_safe(os.path.join(y_dir, f))
-                    found = set()
-                    if "Asset" in tmp.columns: found.update(tmp["Asset"].dropna().unique())
-                    if "Token" in tmp.columns: found.update(tmp["Token"].dropna().unique())
+        # 3. Scan Previous Year Inventory (EOY Carryover)
+        prev_year = y_int - 1
+        inv_path = sl.get_file_path(prev_year, 'inventory_eoy')
+        if os.path.exists(inv_path):
+            df_inv = sl.pd_read_csv_safe(inv_path)
+            if not df_inv.empty and "Asset" in df_inv.columns:
+                # Assets carried over from previous year need an EOY price for current year
+                assets_in_year.update(df_inv["Asset"].dropna().unique())
 
-                    for a in found:
-                        a_str = str(a).upper().strip()
-                        if exclude_spams:
-                            # 1. Global Blacklist check
-                            if a_str.lower() in spam_list: continue
-
-                            # 2. Local Veto check: if a qualified journal exists and this asset
-                            # is NOT in the non-spam assets, it means it's either spam
-                            # or wasn't qualified (spam by default in some views).
-                            if os.path.exists(qual_path) and a not in assets_from_qual:
-                                continue
-
-                        assets_in_year.add(a)
-                except: pass
-
+        # 4. Handle End of Year (31/12) for all identified assets
         eoy_date = datetime(y_int, 12, 31).date()
         for a in assets_in_year:
-            if str(a) != "EUR" and str(a) != "nan":
+            a_str = str(a).upper().strip()
+            if a_str not in ["EUR", "NAN", "NONE", ""]:
                 all_needed.append({
-                    "Year": y_int, "Asset": str(a), "Date": eoy_date, "Type": "Fin d'année"
+                    "Year": y_int, "Asset": a_str, "Date": eoy_date, "Type": "Fin d'année"
                 })
 
+    if not all_needed: return pd.DataFrame()
     df_needed = pd.DataFrame(all_needed).drop_duplicates(subset=["Asset", "Date"])
     return df_needed
 

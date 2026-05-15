@@ -1,0 +1,3 @@
+Date,Account,Asset,Amount,Status,Category,Counterparty,Imposable
+2024-02-01,ledger,BTC,-0.5,Valide,Vente,exchange,True
+2024-02-01,ledger,SPAM,1000.0,Spam,A vérifier,0xspam,False

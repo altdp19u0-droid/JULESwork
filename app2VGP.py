@@ -118,11 +118,9 @@ else:
         journal = standardize_df_addresses(journal)
         journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
 
-        # --- DOUBLE VÉRIFICATION SPAM À L'OUVERTURE ---
-        leaked = validate_spam_exclusion(journal)
-        if leaked:
-            journal.loc[leaked, "Status"] = "Spam"
-            st.toast(f"🛡️ Art 150 VH bis : {len(leaked)} lignes spams écartées automatiquement.")
+        # --- ZÉRO SPAM : Filtre d'audit ---
+        # Mark spams to notify user, but we will exclude them from masks anyway
+        journal = sl.apply_spam_filter(journal, drop=False)
 
         st.session_state.journal_active = journal
         st.session_state.active_path = path

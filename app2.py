@@ -100,7 +100,7 @@ def apply_position_labels(df):
 def merge_raw_data(year):
     yd = os.path.join(EXPORT_BASE_DIR, str(year))
     if not os.path.exists(yd): return ensure_columns(pd.DataFrame())
-    rows, spam_list = [], sl.load_spam_list()
+    rows = []
 
     # 1. Manual Registries
     for p, t in [(f"manual_fiat_{year}.csv", "Fiat"), (f"manual_swaps_{year}.csv", "Swap")]:
@@ -154,11 +154,10 @@ def merge_raw_data(year):
                 if "Amount" not in df_raw.columns and fa == acc:
                     amt = -amt
 
-                # Asset Status Logic: Whitelist (Valide) > Blacklist (Spam) > Default (A vérifier)
+                # Asset Status Logic: Whitelist (Valide) > Default (A vérifier)
+                # Spam is now handled by centralized apply_spam_filter at the end of merge
                 if asset.upper().strip() in valid_assets:
                     st_ = "Valide"
-                elif sl.resolve_raw_addr(cp) in spam_list or asset.lower() in spam_list:
-                    st_ = "Spam"
                 else:
                     st_ = "A vérifier"
 
@@ -176,6 +175,10 @@ def merge_raw_data(year):
     dff = sl.standardize_df_addresses(dff)
     dff["_d"] = dff["Date"].dt.date
     dff = dff.sort_values("Date", ascending=False).drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account", "_d"], keep="first")
+
+    # --- ZÉRO SPAM : Filtre de qualification ---
+    dff = sl.apply_spam_filter(dff, drop=False)
+
     return apply_position_labels(dff.drop(columns=["_d"]).reset_index(drop=True))
 
 def sync_data(year):
@@ -262,11 +265,13 @@ with st.sidebar:
     c_auto1, c_auto2 = st.columns(2)
     if c_auto1.button("🛡️ Spam Auto", width='stretch', help="Marque comme 'Spam' les assets/contreparties dans la Blacklist."):
         if "journal_qualifie" in st.session_state:
-            s_list, df = sl.load_spam_list(), st.session_state.journal_qualifie
-            v_list = sl.load_valid_assets()
-            # On n'écrase pas si déjà marqué 'Valide' par la whitelist
-            mask = (df["Counterparty"].fillna("").str.lower().apply(sl.resolve_raw_addr).isin(s_list) | df["Asset"].fillna("").str.lower().isin(s_list)) & (~df["Asset"].str.upper().isin(v_list))
-            df.loc[mask, "Status"] = "Spam"; st.rerun()
+            df = st.session_state.journal_qualifie
+            # Use centralized filter to MARK spams (drop=False)
+            # We preserve Whitelist priority by passing valid assets to the mask if needed,
+            # but apply_spam_filter is standard.
+            df = sl.apply_spam_filter(df, drop=False)
+            st.session_state.journal_qualifie = df
+            st.rerun()
 
     if c_auto2.button("✅ Valide Auto", width='stretch', help="Marque comme 'Valide' les assets dans la Whitelist."):
         if "journal_qualifie" in st.session_state:
@@ -276,7 +281,9 @@ with st.sidebar:
 
     st.divider(); st.header("📊 Filtres")
     if "journal_qualifie" in st.session_state and not st.session_state.journal_qualifie.empty:
-        df_f = st.session_state.journal_qualifie
+        # --- ZÉRO SPAM : Filtre les options de filtrage elles-mêmes ---
+        df_f = sl.apply_spam_filter(st.session_state.journal_qualifie, drop=True)
+
         fa = st.multiselect("Asset", options=sl.get_safe_opts(df_f, "Asset"))
         fac = st.multiselect("Account", options=sl.get_owner_display_list(df_f))
         fcp = st.multiselect("Counterparty", options=sl.get_safe_opts(df_f, "Counterparty"))
@@ -423,7 +430,7 @@ with t_q:
         if fcp: dfd = dfd[dfd["Counterparty"].isin(fcp)]
         if fst: dfd = dfd[dfd["Status"].isin(fst)]
         if fct: dfd = dfd[dfd["Category"].isin(fct)]
-        dfd = dfd.reset_index(drop=True)
+        # We DO NOT reset index here to maintain link with st.session_state.journal_qualifie
         if "Sel." not in dfd.columns:
             dfd.insert(0, "Sel.", False)
         if st.button("🔍 Détecter Transferts Internes", width='stretch'):

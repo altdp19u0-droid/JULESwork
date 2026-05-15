@@ -1,2 +1,2 @@
-Location,Asset,Solde,Is_Circuit
-Account: Wallet1,BTC,1.5,False
+Location,Asset,Solde
+Account: ledger,BTC,1.0
