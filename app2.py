@@ -279,6 +279,7 @@ with st.sidebar:
         df_f = st.session_state.journal_qualifie
         fa = st.multiselect("Asset", options=sl.get_safe_opts(df_f, "Asset"))
         fac = st.multiselect("Account", options=sl.get_owner_display_list(df_f))
+        fcp = st.multiselect("Counterparty", options=sl.get_safe_opts(df_f, "Counterparty"))
         fst, fct = st.multiselect("Statut", options=sl.get_safe_opts(df_f, "Status")), st.multiselect("Catégorie", options=sl.get_safe_opts(df_f, "Category"))
         if st.button("⚡ Appliquer"): st.rerun()
 
@@ -419,6 +420,7 @@ with t_q:
         dfd = st.session_state.journal_qualifie.copy()
         if fa: dfd = dfd[dfd["Asset"].isin(fa)]
         if fac: dfd = sl.filter_df_by_owner_display(dfd, fac)
+        if fcp: dfd = dfd[dfd["Counterparty"].isin(fcp)]
         if fst: dfd = dfd[dfd["Status"].isin(fst)]
         if fct: dfd = dfd[dfd["Category"].isin(fct)]
         dfd = dfd.reset_index(drop=True)

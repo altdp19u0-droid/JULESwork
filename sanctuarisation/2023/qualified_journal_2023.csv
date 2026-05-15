@@ -1,0 +1,2 @@
+Date,Account,Counterparty,Asset,Amount,Value ($),Network,Tx Hash,Source Type,Category,Status,Imposable,Linked_ID,Link_Status,VGP (EUR)
+2023-01-01T12:00:00Z,0x123,Binance,BTC,1.0,20000.0,Ethereum,0xabc,Blockchain,A vérifier,A vérifier,False,,,
