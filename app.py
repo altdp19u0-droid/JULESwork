@@ -108,7 +108,14 @@ def fetch_etherscan_v2_rest(domain, addr, api_key, year, max_items, native):
         try:
             res = call_api(url, params)
             if not res: continue
-            data_list = res.get("items") or res.get("result")
+
+            # Etherscan V2 can return items at root, in result, or in result.items
+            data_list = res.get("items")
+            if not isinstance(data_list, list):
+                res_obj = res.get("result")
+                if isinstance(res_obj, list): data_list = res_obj
+                elif isinstance(res_obj, dict): data_list = res_obj.get("items")
+
             if not isinstance(data_list, list):
                 if res.get("status") == "0" and label == "Native": final_status = res.get("result")
                 continue
@@ -227,6 +234,10 @@ if harvest_btn:
             return res
         df_f = df_m.groupby(["Tx_Hash", "Asset", "Chain", "_amt_round", "From", "To", "_occ"], as_index=False).apply(cons).reset_index(drop=True)
         st.session_state.harvest_data[addr_c] = {"port": pd.DataFrame(all_port, columns=RAW_V4_COLUMNS), "tx": df_f.sort_values("Date", ascending=False).drop(columns=["_amt_round", "_occ"]), "status": chains_status}
+    else:
+        st.session_state.harvest_data[addr_c] = {"port": pd.DataFrame(all_port, columns=RAW_V4_COLUMNS), "tx": pd.DataFrame(columns=RAW_V4_COLUMNS), "status": chains_status}
+        if not all_port:
+            st.warning("⚠️ Aucune donnée récoltée pour cette configuration (Année/Chaînes/Adresse).")
     st.rerun()
 
 # --- UI Tables ---
@@ -254,8 +265,8 @@ if st.session_state.harvest_data:
             if st.button(f"💾 Sanctuariser {addr[:10]}...", key=f"s_{addr}"):
                 y_dir = os.path.join(EXPORT_BASE_DIR, str(target_year)); os.makedirs(y_dir, exist_ok=True)
                 prefix = f"{addr}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                if not data["port"].empty: data["port"].to_csv(os.path.join(year_dir, f"raw_portfolio_{prefix}.csv"), index=False)
-                if not df_t.empty: df_t.to_csv(os.path.join(year_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False)
+                if not data["port"].empty: data["port"].to_csv(os.path.join(y_dir, f"raw_portfolio_{prefix}.csv"), index=False)
+                if not df_t.empty: df_t.to_csv(os.path.join(y_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False)
                 st.success("Enregistré.")
 
 st.sidebar.caption("Harvest v7.8 - Full Set")

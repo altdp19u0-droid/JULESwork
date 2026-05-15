@@ -165,7 +165,12 @@ if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)", width='stre
                 "Status": "✅ OK" if price > 0 else "❌ Manquant"
             })
 
-        st.session_state.price_explorer_df = pd.DataFrame(results).sort_values(["Status", "Date"], ascending=[True, False])
+        if results:
+            df_res = pd.DataFrame(results)
+            st.session_state.price_explorer_df = df_res.sort_values(["Status", "Date"], ascending=[True, False])
+        else:
+            st.session_state.price_explorer_df = pd.DataFrame(columns=["Année", "Asset", "Date", "Type", "Prix (EUR)", "Status"])
+            st.info("✨ Aucun besoin de prix détecté pour les critères sélectionnés.")
 
 if "price_explorer_df" in st.session_state:
     df = st.session_state.price_explorer_df
