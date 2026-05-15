@@ -120,6 +120,7 @@ def merge_raw_data(year):
             except: pass
 
     # 2. Blockchain
+    valid_assets = sl.load_valid_assets()
     for f_p in sl.get_latest_raw_files(year):
         fn = os.path.basename(f_p)
         src = sl.extract_source_from_filename(fn); sl.auto_register_owner(src)
@@ -153,7 +154,13 @@ def merge_raw_data(year):
                 if "Amount" not in df_raw.columns and fa == acc:
                     amt = -amt
 
-                st_ = "Spam" if (sl.resolve_raw_addr(cp) in spam_list or asset.lower() in spam_list) else "A vérifier"
+                # Asset Status Logic: Whitelist (Valide) > Blacklist (Spam) > Default (A vérifier)
+                if asset.upper().strip() in valid_assets:
+                    st_ = "Valide"
+                elif sl.resolve_raw_addr(cp) in spam_list or asset.lower() in spam_list:
+                    st_ = "Spam"
+                else:
+                    st_ = "A vérifier"
 
                 rows.append({
                     "Date": dt_val, "Account": acc, "Counterparty": cp, "Asset": asset, "Amount": amt,
@@ -224,11 +231,20 @@ with st.sidebar:
         st.cache_data.clear(); sync_data(target_year); st.session_state.last_year = target_year
     st.button("🔄 Sync / Fusion", on_click=sync_data, args=(target_year,), width='stretch')
 
-    if st.button("🛡️ Nettoyage Spam Auto", width='stretch'):
+    c_auto1, c_auto2 = st.columns(2)
+    if c_auto1.button("🛡️ Spam Auto", width='stretch', help="Marque comme 'Spam' les assets/contreparties dans la Blacklist."):
         if "journal_qualifie" in st.session_state:
             s_list, df = sl.load_spam_list(), st.session_state.journal_qualifie
-            mask = df["Counterparty"].fillna("").str.lower().apply(sl.resolve_raw_addr).isin(s_list) | df["Asset"].fillna("").str.lower().isin(s_list)
+            v_list = sl.load_valid_assets()
+            # On n'écrase pas si déjà marqué 'Valide' par la whitelist
+            mask = (df["Counterparty"].fillna("").str.lower().apply(sl.resolve_raw_addr).isin(s_list) | df["Asset"].fillna("").str.lower().isin(s_list)) & (~df["Asset"].str.upper().isin(v_list))
             df.loc[mask, "Status"] = "Spam"; st.rerun()
+
+    if c_auto2.button("✅ Valide Auto", width='stretch', help="Marque comme 'Valide' les assets dans la Whitelist."):
+        if "journal_qualifie" in st.session_state:
+            v_list, df = sl.load_valid_assets(), st.session_state.journal_qualifie
+            mask = df["Asset"].fillna("").str.upper().isin(v_list)
+            df.loc[mask, "Status"] = "Valide"; st.rerun()
 
     st.divider(); st.header("📊 Filtres")
     if "journal_qualifie" in st.session_state and not st.session_state.journal_qualifie.empty:
@@ -310,6 +326,25 @@ with st.sidebar:
 
         circ_disc = sl.get_external_circuits_discovery(st.session_state.get("journal_qualifie"))
         if circ_disc: st.write("**Dernières découvertes :**"); st.dataframe(pd.DataFrame(circ_disc), hide_index=True)
+
+    with st.expander("✅ Whitelist Assets", expanded=False):
+        v_assets = sl.load_valid_assets(); st.write(f"Whitelist : **{len(v_assets)}**")
+        if v_assets:
+            df_vl = pd.DataFrame(sorted(list(v_assets)), columns=["Valid Asset"])
+            ed_vl = st.data_editor(df_vl, num_rows="dynamic", width='stretch', key="ed_valid_sidebar")
+            if st.button("💾 Sauver Whitelist", key="btn_save_vl_sidebar"):
+                sl.save_valid_assets(set(ed_vl["Valid Asset"].dropna().str.upper().strip())); st.rerun()
+
+            # Modification/Suppression Individuelle
+            sa_vl = st.selectbox("Gérer un asset valide", options=[""]+sorted(list(v_assets)), key="sel_vl_mgr")
+            if sa_vl:
+                if st.button("🗑️ Supprimer de la whitelist", key="btn_del_vl_sidebar"):
+                    v_assets.remove(sa_vl); sl.save_valid_assets(v_assets); st.rerun()
+        else:
+            new_v_asset = st.text_input("Ajouter un asset à valider", placeholder="ex: BTC, ETH", key="add_v_asset_sidebar")
+            if st.button("➕ Ajouter à la whitelist", key="btn_add_vl_sidebar"):
+                if new_v_asset:
+                    v_assets.add(new_v_asset.upper().strip()); sl.save_valid_assets(v_assets); st.rerun()
 
     with st.expander("🏦 Positions (Protocoles)", expanded=False):
         pl = load_position_labels()

@@ -14,6 +14,7 @@ EXTERNAL_CIRCUITS_FILE = "external_circuits.json"
 OWNERS_FILE = "owner_accounts.json"
 SPAM_FILE = "spam_blacklist.json"
 NOTES_FILE = "manual_notes.json"
+VALID_ASSETS_FILE = "valid_assets.json"
 
 def clean_session_state(preserve_keys=[]):
     """
@@ -984,6 +985,20 @@ def save_spam_list(spam_set):
     """Saves the global spam blacklist."""
     with open(SPAM_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(list(spam_set)), f, indent=4)
+
+def load_valid_assets():
+    """Loads the whitelist of valid assets."""
+    if os.path.exists(VALID_ASSETS_FILE):
+        try:
+            with open(VALID_ASSETS_FILE, "r", encoding="utf-8") as f:
+                return {str(x).upper().strip() for x in json.load(f)}
+        except: return set()
+    return set()
+
+def save_valid_assets(assets_set):
+    """Saves the whitelist of valid assets."""
+    with open(VALID_ASSETS_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(list(assets_set)), f, indent=4)
 
 def validate_spam_exclusion(df):
     """
