@@ -190,15 +190,18 @@ def sync_data(year):
                 # Fidelity Engine: Preserve manual user overrides during sync
                 f_cols = ["Category", "Status", "Imposable", "VGP (EUR)", "Linked_ID", "Link_Status"]
                 ndf["_d"], odf["_d"] = ndf["Date"].dt.date, odf["Date"].dt.date
+                # 1. Match by Tx Hash (Strongest link)
                 h_map = odf[odf["Tx Hash"] != ""].drop_duplicates("Tx Hash").set_index("Tx Hash")[f_cols].to_dict('index')
-                m_map = odf[odf["Tx Hash"] == ""].drop_duplicates(["_d", "Account", "Asset"]).set_index(["_d", "Account", "Asset"])[f_cols].to_dict('index')
+                # 2. Match by Content (Fallback for manual/ledger/empty hash entries)
+                # We include Amount for extra specificity
+                m_map = odf[odf["Tx Hash"] == ""].drop_duplicates(["_d", "Account", "Asset", "Amount"]).set_index(["_d", "Account", "Asset", "Amount"])[f_cols].to_dict('index')
 
                 def reap(r):
                     h, fm = str(r["Tx Hash"]), None
                     if h and h in h_map: fm = h_map[h]
-                    elif (r["_d"], r["Account"], r["Asset"]) in m_map:
-                         # For manual/empty hash txs, we match by date/acc/asset
-                         fm = m_map[(r["_d"], r["Account"], r["Asset"])]
+                    elif (r["_d"], r["Account"], r["Asset"], r["Amount"]) in m_map:
+                         # For manual/empty hash txs, we match by date/acc/asset/amount
+                         fm = m_map[(r["_d"], r["Account"], r["Asset"], r["Amount"])]
 
                     if fm:
                         # Carry over manual qualifications
@@ -446,7 +449,47 @@ with t_q:
         else:
             df_styled = dfd
 
-        edf = st.data_editor(df_styled, column_config={"Sel.":st.column_config.CheckboxColumn("Sel."),"Category":st.column_config.SelectboxColumn("Catégorie", options=cats),"Status":st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),"Imposable":st.column_config.CheckboxColumn("Imposable"),"Date":st.column_config.DatetimeColumn(disabled=True),"Account":st.column_config.TextColumn(disabled=True),"Amount":st.column_config.NumberColumn(format="%.6f", disabled=True)}, width='stretch', key="qual_editor_v17")
+        def on_editor_change():
+            # Synchronize session state with editor state immediately
+            # This handles both filtered and unfiltered views
+            if "qual_editor_v17" in st.session_state:
+                changes = st.session_state["qual_editor_v17"]
+                main_j = st.session_state.journal_qualifie
+
+                # Apply edited rows
+                for idx_str, edited_row in changes.get("edited_rows", {}).items():
+                    idx = int(idx_str)
+                    # The editor returns indices relative to the displayed dataframe (df_styled)
+                    # but we preserved the original indices in df_styled!
+                    if idx in main_j.index:
+                        for col, val in edited_row.items():
+                             if col == "Category": main_j.at[idx, "Category"] = val
+                             elif col == "Status": main_j.at[idx, "Status"] = val
+                             elif col == "Imposable": main_j.at[idx, "Imposable"] = sl.is_imposable_robust(val)
+                             elif col == "VGP (EUR)": main_j.at[idx, "VGP (EUR)"] = float(val)
+
+                st.session_state.journal_qualifie = main_j
+
+        def on_editor_change():
+            if "qual_editor_v17" in st.session_state:
+                changes = st.session_state["qual_editor_v17"]
+                main_j = st.session_state.journal_qualifie
+
+                # Apply edits from the editor back to the full journal in session
+                for idx_str, edited_row in changes.get("edited_rows", {}).items():
+                    idx = int(idx_str)
+                    if idx in main_j.index:
+                        for col, val in edited_row.items():
+                             if col == "Category": main_j.at[idx, "Category"] = val
+                             elif col == "Status": main_j.at[idx, "Status"] = val
+                             elif col == "Imposable": main_j.at[idx, "Imposable"] = sl.is_imposable_robust(val)
+                             elif col == "VGP (EUR)": main_j.at[idx, "VGP (EUR)"] = float(val)
+                             elif col == "Linked_ID": main_j.at[idx, "Linked_ID"] = val
+                             elif col == "Link_Status": main_j.at[idx, "Link_Status"] = val
+
+                st.session_state.journal_qualifie = main_j
+
+        edf = st.data_editor(df_styled, column_config={"Sel.":st.column_config.CheckboxColumn("Sel."),"Category":st.column_config.SelectboxColumn("Catégorie", options=cats),"Status":st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),"Imposable":st.column_config.CheckboxColumn("Imposable"),"Date":st.column_config.DatetimeColumn(disabled=True),"Account":st.column_config.TextColumn(disabled=True),"Amount":st.column_config.NumberColumn(format="%.6f", disabled=True)}, width='stretch', key="qual_editor_v17", on_change=on_editor_change)
 
         c1, c2 = st.columns(2)
         if c1.button("💶 Injecter vers Flux Fiat (App 0)", width='stretch'):
@@ -463,10 +506,35 @@ with t_q:
                 st.success(f"{count} lignes injectées vers le registre Swaps.")
             else: st.warning("Veuillez d'abord sélectionner des lignes via la colonne 'Sel.'.")
         if st.button("💾 Sanctuariser", type="primary", width='stretch'):
-            fj, ec = st.session_state.journal_qualifie, edf.drop(columns=["Sel."])
-            if not (fa or fac or fst or fct): fj = ec
-            else: fj.update(ec)
-            fj = fj[fj["Category"] != "Doublon à ignorer"]; st.session_state.journal_qualifie = fj; fj.to_csv(sl.get_file_path(target_year, 'qualified'), index=False, encoding="utf-8-sig"); st.balloons(); st.success("Sauvé.")
+            # Source of truth is st.session_state.journal_qualifie
+            # (already partially updated by on_editor_change)
+            main_j = st.session_state.journal_qualifie
+
+            # Final check from the latest state of the editor (edf)
+            # to ensure everything is captured
+            for idx, row in edf.iterrows():
+                if idx in main_j.index:
+                    main_j.at[idx, "Category"] = row["Category"]
+                    main_j.at[idx, "Status"] = row["Status"]
+                    main_j.at[idx, "Imposable"] = sl.is_imposable_robust(row["Imposable"])
+                    if "VGP (EUR)" in row: main_j.at[idx, "VGP (EUR)"] = float(row["VGP (EUR)"])
+                    if "Linked_ID" in row: main_j.at[idx, "Linked_ID"] = row["Linked_ID"]
+                    if "Link_Status" in row: main_j.at[idx, "Link_Status"] = row["Link_Status"]
+
+            # Global cleanups
+            main_j = main_j[main_j["Category"] != "Doublon à ignorer"]
+
+            # Zéro Spam reinforcement
+            main_j = sl.apply_spam_filter(main_j, drop=False)
+
+            # Final Persistence
+            st.session_state.journal_qualifie = main_j
+            main_j.to_csv(sl.get_file_path(target_year, 'qualified'), index=False, encoding="utf-8-sig")
+
+            st.balloons()
+            st.success(f"Sanctuarisation réussie : {len(main_j)} lignes enregistrées.")
+            time.sleep(1)
+            st.rerun()
 
 with t_r:
     st.subheader("🤝 Réconciliation des Maillons")

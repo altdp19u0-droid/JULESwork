@@ -72,33 +72,51 @@ def resolve_raw_addr(addr_str):
 
 def standardize_address_string(addr_str):
     """
-    Enforces the 'Identifier (Name)' standard.
-    - If 0x address is found: '0x... (Name)'
-    - If no 0x but name exists: 'Identifier (Name)'
-    - Always lowercases hex addresses and labels.
+    Enforces the absolute standard: 'Identifier (Name)'
+    - If input is a known label, resolves to 'Address (Label)'.
+    - If input is a known address, resolves to 'Address (Label)'.
+    - Always lowercases hex addresses.
+    - Preserves case for labels if not in owners map.
     """
-    if not addr_str: return ""
-    raw = resolve_raw_addr(addr_str).lower()
+    if not addr_str or str(addr_str).lower() in ["nan", "none", ""]: return ""
 
-    # Get friendly name if known
-    owners_map = load_owner_accounts()
-    name = owners_map.get(raw, "")
+    s = str(addr_str).strip()
+    raw = resolve_raw_addr(s).lower()
 
-    # If not in owners, check if it was already formatted and preserve that name
-    if not name and "(" in str(addr_str):
-        import re
-        # Try to extract name from 'Identifier (Name)' or 'Name (Identifier)'
-        # If Identifier was 0x..., name is in ()
-        if str(addr_str).strip().lower().startswith("0x"):
-            m = re.search(r'\((.*?)\)', str(addr_str))
-            if m: name = m.group(1)
+    owners_map = load_owner_accounts() # addr -> label
+    # Create reverse map: label -> addr
+    label_to_addr = {str(v).lower(): k for k, v in owners_map.items() if str(v).lower() != "nan"}
+
+    # 1. Resolution
+    if raw in owners_map:
+        # It's a known address
+        return format_owner_display(raw, owners_map[raw])
+
+    if raw in label_to_addr:
+        # It's a known label
+        addr = label_to_addr[raw]
+        return format_owner_display(addr, owners_map[addr])
+
+    # 2. Heuristic for unknown entries that might already be formatted
+    name = ""
+    if "(" in s and ")" in s:
+        # Extract components from 'Id (Name)'
+        parts = s.split("(")
+        p1 = parts[0].strip()
+        p2 = parts[1].replace(")", "").strip()
+
+        # If p1 is hex, it's the id, p2 is name
+        if p1.lower().startswith("0x"):
+            raw = p1.lower()
+            name = p2
         else:
-            # If Identifier was Label, name might be before ()
-            name = str(addr_str).split("(")[0].strip()
-            # But wait, resolve_raw_addr would have returned that as 'raw'.
-            # If addr_str was 'Name (0x...)', raw is 0x..., name is 'Name'
-            if "0x" in str(addr_str).lower():
-                 name = str(addr_str).split("(")[0].strip()
+            # p2 might be the hex address
+            if p2.lower().startswith("0x"):
+                raw = p2.lower()
+                name = p1
+            else:
+                raw = p1 # Orphan label with notes in parens
+                name = p2
 
     return format_owner_display(raw, name)
 
@@ -403,6 +421,14 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
                 df_inv = pd_read_csv_safe(inv_path)
                 if not df_inv.empty and all(c in df_inv.columns for c in ["Location", "Asset", "Solde"]):
                     df_start = df_inv[["Location", "Asset", "Solde"]].copy()
+                    # Standardize Location: 'Account: 0x...' -> 'Account: 0x... (Name)'
+                    def std_loc(loc):
+                        if str(loc).startswith("Account: "):
+                             return f"Account: {standardize_address_string(loc.replace('Account: ', ''))}"
+                        elif str(loc).startswith("Manual Position: "):
+                             return f"Manual Position: {standardize_address_string(loc.replace('Manual Position: ', ''))}"
+                        return loc
+                    df_start["Location"] = df_start["Location"].apply(std_loc)
                     df_start = df_start.rename(columns={"Solde": "Amount"})
                     starting_balances.append(df_start)
                     found_inventory = True
@@ -456,6 +482,8 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
             try:
                 tmp_m = pd_read_csv_safe(path_m)
                 if not tmp_m.empty and "Date" in tmp_m.columns:
+                    # --- UNIFICATION ---
+                    tmp_m = standardize_df_addresses(tmp_m)
                     tmp_m["Date"] = pd.to_datetime(tmp_m["Date"], utc=True, errors="coerce")
                     manual_to_process.append(tmp_m[tmp_m["Date"] <= target_date])
             except: pass
@@ -483,9 +511,16 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
 
     details = []
 
-    # Identify owned accounts by address if possible, otherwise by name
-    owned_names = set(df_j["Account"].dropna().unique()) if not df_j.empty else set()
-    owned_addrs = set()
+    # Identify owned accounts from all sources
+    owned_names = set()
+    if not df_j.empty: owned_names.update(df_j["Account"].dropna().unique())
+    if not df_m.empty: owned_names.update(df_m["Account"].dropna().unique())
+
+    # Also add known owners from reference file
+    owners_map = load_owner_accounts()
+    owned_names.update(owners_map.values())
+
+    owned_addrs = set(owners_map.keys())
     for n in owned_names:
         res = resolve_raw_addr(n).lower()
         if res.startswith("0x"): owned_addrs.add(res)
@@ -497,9 +532,13 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
     if starting_balances:
         df_s = pd.concat(starting_balances)
         if not df_s.empty and all(c in df_s.columns for c in ["Location", "Amount"]):
+            # Normalize amount to float
+            df_s["Amount"] = pd.to_numeric(df_s["Amount"], errors="coerce").fillna(0.0)
+
             mask_w = df_s["Location"].str.startswith("Account:", na=False)
             start_wallets_df = df_s[mask_w].copy()
-            start_wallets_df["Account"] = start_wallets_df["Location"].str.replace("Account: ", "").apply(standardize_address_string)
+            # Standardize after stripping prefix
+            start_wallets_df["Account"] = start_wallets_df["Location"].str.replace("Account: ", "", regex=False).apply(standardize_address_string)
             start_wallets = start_wallets_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
     if not df_j.empty or not start_wallets.empty:
@@ -606,20 +645,27 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
     if starting_balances:
         df_s = pd.concat(starting_balances)
         if not df_s.empty and all(c in df_s.columns for c in ["Location", "Amount"]):
+            # Amount is already normalized above
             mask_m = df_s["Location"].str.startswith("Manual Position:", na=False)
             start_manual_df = df_s[mask_m].copy()
-            start_manual_df["Account"] = start_manual_df["Location"].str.replace("Manual Position: ", "").apply(standardize_address_string)
+            start_manual_df["Account"] = start_manual_df["Location"].str.replace("Manual Position: ", "", regex=False).apply(standardize_address_string)
             start_manual = start_manual_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
     if not df_m.empty or not start_manual.empty:
         m_pre = pd.DataFrame(columns=["Account", "Asset", "Amount"])
         if not df_m.empty and "Date" in df_m.columns:
+            # UNIFICATION CASE (Lowering/resolving accounts)
+            df_m = standardize_df_addresses(df_m)
+
             # Map Quantité to Amount for unified balance logic
             m_pre_df = df_m[df_m["Date"] < start_of_year].copy()
-            if "Quantité" in m_pre_df.columns:
-                m_pre_df["Amount"] = m_pre_df["Quantité"]
-            elif "Amount" not in m_pre_df.columns:
+            # Robust mapping for manual positions
+            q_col = "Quantité" if "Quantité" in m_pre_df.columns else "Amount" if "Amount" in m_pre_df.columns else None
+            if q_col:
+                m_pre_df["Amount"] = pd.to_numeric(m_pre_df[q_col], errors="coerce").fillna(0.0)
+            else:
                 m_pre_df["Amount"] = 0.0
+
             m_pre = m_pre_df.groupby(["Account", "Asset"])["Amount"].sum().reset_index()
 
         if len(start_manual) > 0:
@@ -627,10 +673,12 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
 
         m_ytd = pd.DataFrame(columns=["Account", "Asset", "In", "Out"])
         if not df_m.empty and "Date" in df_m.columns:
+            # df_m already standardized above
             m_ytd_df = df_m[df_m["Date"] >= start_of_year].copy()
-            if "Quantité" in m_ytd_df.columns:
-                m_ytd_df["Amount"] = m_ytd_df["Quantité"]
-            elif "Amount" not in m_ytd_df.columns:
+            q_col = "Quantité" if "Quantité" in m_ytd_df.columns else "Amount" if "Amount" in m_ytd_df.columns else None
+            if q_col:
+                m_ytd_df["Amount"] = pd.to_numeric(m_ytd_df[q_col], errors="coerce").fillna(0.0)
+            else:
                 m_ytd_df["Amount"] = 0.0
 
             m_ytd = m_ytd_df.groupby(["Account", "Asset"])["Amount"].agg([
@@ -1071,12 +1119,15 @@ def apply_spam_filter(df, drop=True):
         if status_col and str(row.get(status_col)) == "Spam": return True
 
         # 2. Check Counterparty address
-        cp_raw = resolve_raw_addr(row.get("Counterparty", ""))
-        if cp_raw.lower() in spam_list: return True
+        cp_val = row.get("Counterparty", "")
+        if cp_val and str(cp_val).lower() not in ["nan", "none", ""]:
+            cp_raw = resolve_raw_addr(cp_val).lower()
+            if cp_raw in spam_list: return True
 
         # 3. Check Asset name
         asset_low = str(row.get("Asset", "")).lower().strip()
-        if asset_low in spam_list: return True
+        if asset_low and asset_low not in ["nan", "none", ""] and asset_low in spam_list:
+            return True
 
         return False
 

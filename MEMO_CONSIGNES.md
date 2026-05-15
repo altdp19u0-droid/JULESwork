@@ -29,7 +29,7 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
     - **Structure :** L'interface doit obligatoirement afficher trois tableaux distincts : **Portfolio**, **Transactions** (Natives/Internes) et **Tokens** (ERC-20/CEX).
     - **Intégrité :** Chaque tableau doit impérativement afficher les 19 colonnes du standard RAW V4. La colonne `Asset` (nom de l'actif) doit être visible et renseignée pour tous les transferts.
     - **Diagnostic :** Confirmer l'accessibilité de Blockscout et Etherscan avec distinction claire entre succès, vide et erreur.
-- **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `resolve_owner_display` pour discriminer et unifier les identités. Le standard absolu est le format : **`Identifiant_Technique (Nom_Amical)`**. La suite doit impérativement dédoublonner les listes via `get_owner_display_list` pour qu'une même identité (liée par `owner_accounts.json`) n'apparaisse qu'une seule fois dans les menus et rapports. Un suivi incrémental des comptes collectés doit rester visible.
+- **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `standardize_address_string` pour discriminer et unifier les identités. Le standard absolu est le format : **`Identifiant_Technique (Nom_Amical)`**. La suite doit impérativement résoudre les labels en adresses hexadécimales (et vice-versa) via `owner_accounts.json` pour qu'un compte comme "Binance" et son adresse "0x123..." soient traités comme une seule entité. Dédoublonner les listes via `get_owner_display_list`.
 - **GESTION DES CLÉS API :**
     - **Clé Universelle (V2 Unifiée) :** Permettre la saisie d'une clé API unique s'appliquant à tous les réseaux.
     - **Standard Etherscan V2 REST :**
@@ -57,7 +57,8 @@ C'est l'étape critique de transformation des données brutes en journal comptab
 
 1. **Agrégation Exhaustive & Fidelity Engine :**
     - Doit traiter chaque ligne des fichiers bruts sans exception. Utilise des fallbacks (ex: Date 31/12 pour inventaires si absent).
-    - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP) déjà présentes dans le journal qualifié.
+    - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP) déjà présentes dans le journal qualifié en utilisant un quintuplet de correspondance (Date, Account, Asset, Amount, Hash).
+    - **Persistance Directe :** La sanctuarisation dans `app2.py` doit itérer manuellement sur l'éditeur pour reporter chaque modification sur le journal complet en session avant l'écriture disque.
 2. **Gestion des Doublons Suspects :**
     - Détection fine par trio (Montant/Asset/Compte) à date identique.
     - **Interface :** Expander de revue dédié et **surlignage rouge** des lignes suspectes dans le tableau.
