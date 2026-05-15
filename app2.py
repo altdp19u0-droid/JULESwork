@@ -362,7 +362,7 @@ with st.sidebar:
             df_vl = pd.DataFrame(sorted(list(v_assets)), columns=["Valid Asset"])
             ed_vl = st.data_editor(df_vl, num_rows="dynamic", width='stretch', key="ed_valid_sidebar")
             if st.button("💾 Sauver Whitelist", key="btn_save_vl_sidebar"):
-                sl.save_valid_assets(set(ed_vl["Valid Asset"].dropna().str.upper().strip())); st.rerun()
+                sl.save_valid_assets(set(ed_vl["Valid Asset"].dropna().str.upper().str.strip())); st.rerun()
 
             # Modification/Suppression Individuelle
             sa_vl = st.selectbox("Gérer un asset valide", options=[""]+sorted(list(v_assets)), key="sel_vl_mgr")
