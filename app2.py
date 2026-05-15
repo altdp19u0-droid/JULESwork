@@ -182,47 +182,71 @@ def merge_raw_data(year):
     return apply_position_labels(dff.drop(columns=["_d"]).reset_index(drop=True))
 
 def sync_data(year):
-    qp, ndf = sl.get_file_path(year, 'qualified'), merge_raw_data(year); st.session_state.last_sync_time = time.time()
-    if os.path.exists(qp) and os.path.getsize(qp) > 0:
+    # Use persistent session keys for the Hub
+    QUAL_KEY = "_hub_journal_qualifie"
+    qp = sl.get_file_path(year, 'qualified')
+    ndf = merge_raw_data(year)
+    st.session_state.last_sync_time = time.time()
+
+    # 1. Identify "Old" data for the Fidelity Engine
+    # Priority: current session (if same year) > disk file
+    odf = pd.DataFrame()
+    if QUAL_KEY in st.session_state and not st.session_state[QUAL_KEY].empty:
+        # Check if session data matches the target year
+        if pd.to_datetime(st.session_state[QUAL_KEY]["Date"]).dt.year.iloc[0] == year:
+            odf = st.session_state[QUAL_KEY]
+
+    if odf.empty and os.path.exists(qp) and os.path.getsize(qp) > 0:
+        odf = sl.pd_read_csv_safe(qp)
+
+    if not odf.empty:
         try:
-            odf = ensure_columns(sl.pd_read_csv_safe(qp)); odf = sl.standardize_df_addresses(odf); odf["Date"] = pd.to_datetime(odf["Date"], utc=True, errors="coerce")
+            odf = ensure_columns(odf)
+            odf = sl.standardize_df_addresses(odf)
+            odf["Date"] = pd.to_datetime(odf["Date"], utc=True, errors="coerce")
+
             if not ndf.empty:
                 # Fidelity Engine: Preserve manual user overrides during sync
                 f_cols = ["Category", "Status", "Imposable", "VGP (EUR)", "Linked_ID", "Link_Status"]
                 ndf["_d"], odf["_d"] = ndf["Date"].dt.date, odf["Date"].dt.date
+
                 # 1. Match by Tx Hash (Strongest link)
                 h_map = odf[odf["Tx Hash"] != ""].drop_duplicates("Tx Hash").set_index("Tx Hash")[f_cols].to_dict('index')
                 # 2. Match by Content (Fallback for manual/ledger/empty hash entries)
-                # We include Amount for extra specificity
                 m_map = odf[odf["Tx Hash"] == ""].drop_duplicates(["_d", "Account", "Asset", "Amount"]).set_index(["_d", "Account", "Asset", "Amount"])[f_cols].to_dict('index')
 
                 def reap(r):
                     h, fm = str(r["Tx Hash"]), None
                     if h and h in h_map: fm = h_map[h]
                     elif (r["_d"], r["Account"], r["Asset"], r["Amount"]) in m_map:
-                         # For manual/empty hash txs, we match by date/acc/asset/amount
                          fm = m_map[(r["_d"], r["Account"], r["Asset"], r["Amount"])]
 
                     if fm:
-                        # Carry over manual qualifications
                         for k in f_cols:
-                            # Only overwrite if the old value was meaningful (not default "A vérifier")
                             if k == "Category" and fm[k] != "A vérifier": r[k] = fm[k]
                             elif k == "Status" and fm[k] != "A vérifier": r[k] = fm[k]
                             elif k in ["VGP (EUR)", "Linked_ID", "Link_Status"]: r[k] = fm[k]
-
-                        # Imposable flag preservation (OR logic: if either was imposable, it stays imposable)
                         r["Imposable"] = sl.is_imposable_robust(r["Imposable"]) or sl.is_imposable_robust(fm["Imposable"])
                     else:
                         r["Imposable"] = sl.is_imposable_robust(r["Imposable"])
                     return r
+
                 res = ndf.apply(reap, axis=1).drop(columns=["_d"])
-                nh, nk = set(res["Tx Hash"].unique()), set(zip(ndf["Date"].dt.date, ndf["Account"], ndf["Asset"]))
-                only_o = odf[~odf.apply(lambda r: (r["Tx Hash"] != "" and r["Tx Hash"] in nh) or ((r["Date"].date(), r["Account"], r["Asset"]) in nk), axis=1)]
-                st.session_state.journal_qualifie = ensure_columns(pd.concat([res, only_o]).sort_values("Date", ascending=False).reset_index(drop=True))
-            else: st.session_state.journal_qualifie = odf
-        except: st.session_state.journal_qualifie = ndf
-    else: st.session_state.journal_qualifie = ndf
+
+                # Identify entries in old journal that are NOT in new harvest (keep them)
+                nh = set(res["Tx Hash"].unique())
+                nk = set(zip(ndf["Date"].dt.date, ndf["Account"], ndf["Asset"], ndf["Amount"]))
+                only_o = odf[~odf.apply(lambda r: (r["Tx Hash"] != "" and r["Tx Hash"] in nh) or ((r["Date"].date(), r["Account"], r["Asset"], r["Amount"]) in nk), axis=1)]
+
+                final_df = ensure_columns(pd.concat([res, only_o]).sort_values("Date", ascending=False).reset_index(drop=True))
+                st.session_state[QUAL_KEY] = final_df
+            else:
+                st.session_state[QUAL_KEY] = odf
+        except Exception as e:
+            st.error(f"Erreur Fidelity Engine : {e}")
+            st.session_state[QUAL_KEY] = ndf
+    else:
+        st.session_state[QUAL_KEY] = ndf
 
 # --- Sidebar ---
 with st.sidebar:
@@ -260,32 +284,33 @@ with st.sidebar:
             st.success("Réglage effacé.")
             st.rerun()
 
-    if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
-        sl.clean_session_state(preserve_keys=["last_year"])
-        st.cache_data.clear(); sync_data(target_year); st.session_state.last_year = target_year
+    QUAL_KEY = "_hub_journal_qualifie"
+    YEAR_KEY = "_hub_last_year_app2"
+
+    if QUAL_KEY not in st.session_state or st.session_state.get(YEAR_KEY) != target_year:
+        st.cache_data.clear()
+        sync_data(target_year)
+        st.session_state[YEAR_KEY] = target_year
     st.button("🔄 Sync / Fusion", on_click=sync_data, args=(target_year,), width='stretch')
 
     c_auto1, c_auto2 = st.columns(2)
     if c_auto1.button("🛡️ Spam Auto", width='stretch', help="Marque comme 'Spam' les assets/contreparties dans la Blacklist."):
-        if "journal_qualifie" in st.session_state:
-            df = st.session_state.journal_qualifie
-            # Use centralized filter to MARK spams (drop=False)
-            # We preserve Whitelist priority by passing valid assets to the mask if needed,
-            # but apply_spam_filter is standard.
+        if QUAL_KEY in st.session_state:
+            df = st.session_state[QUAL_KEY]
             df = sl.apply_spam_filter(df, drop=False)
-            st.session_state.journal_qualifie = df
+            st.session_state[QUAL_KEY] = df
             st.rerun()
 
     if c_auto2.button("✅ Valide Auto", width='stretch', help="Marque comme 'Valide' les assets dans la Whitelist."):
-        if "journal_qualifie" in st.session_state:
-            v_list, df = sl.load_valid_assets(), st.session_state.journal_qualifie
+        if QUAL_KEY in st.session_state:
+            v_list, df = sl.load_valid_assets(), st.session_state[QUAL_KEY]
             mask = df["Asset"].fillna("").str.upper().isin(v_list)
             df.loc[mask, "Status"] = "Valide"; st.rerun()
 
     st.divider(); st.header("📊 Filtres")
-    if "journal_qualifie" in st.session_state and not st.session_state.journal_qualifie.empty:
+    if QUAL_KEY in st.session_state and not st.session_state[QUAL_KEY].empty:
         # --- ZÉRO SPAM : Filtre les options de filtrage elles-mêmes ---
-        df_f = sl.apply_spam_filter(st.session_state.journal_qualifie, drop=True)
+        df_f = sl.apply_spam_filter(st.session_state[QUAL_KEY], drop=True)
 
         fa = st.multiselect("Asset", options=sl.get_safe_opts(df_f, "Asset"))
         fac = st.multiselect("Account", options=sl.get_owner_display_list(df_f))
@@ -402,11 +427,12 @@ with st.sidebar:
 
 # --- Main App ---
 t_q, t_r = st.tabs(["📋 Qualification", "🤝 Réconciliation"])
+QUAL_KEY = "_hub_journal_qualifie"
 
 with t_q:
     st.subheader(f"Journal de Qualification {target_year}")
-    if "journal_qualifie" in st.session_state and not st.session_state.journal_qualifie.empty:
-        df_full = st.session_state.journal_qualifie; df_full["_d"] = df_full["Date"].dt.date
+    if QUAL_KEY in st.session_state and not st.session_state[QUAL_KEY].empty:
+        df_full = st.session_state[QUAL_KEY]; df_full["_d"] = df_full["Date"].dt.date
         sd_mask = (df_full.get("Category") != "Doublon à ignorer") & (df_full.get("Category") != "Doublon (Fusionné)")
         dups = df_full[sd_mask][df_full[sd_mask].duplicated(subset=["Asset", "Amount", "Account", "_d"], keep=False)]
         real_s = dups.groupby(["Asset", "Amount", "Account", "_d"]).filter(lambda x: x["Tx Hash"].nunique() > 1) if not dups.empty else pd.DataFrame()
@@ -423,21 +449,21 @@ with t_q:
                         # On marque tous les autres comme Doublon (Fusionné) et Spam
                         df_full.loc[sorted_indices[1:], "Category"] = "Doublon (Fusionné)"
                         df_full.loc[sorted_indices[1:], "Status"] = "Spam"
-                    st.session_state.journal_qualifie = df_full
+                    st.session_state[QUAL_KEY] = df_full
                     st.success("Fusion terminée.")
                     st.rerun()
 
-        dfd = st.session_state.journal_qualifie.copy()
+        dfd = st.session_state[QUAL_KEY].copy()
         if fa: dfd = dfd[dfd["Asset"].isin(fa)]
         if fac: dfd = sl.filter_df_by_owner_display(dfd, fac)
         if fcp: dfd = dfd[dfd["Counterparty"].isin(fcp)]
         if fst: dfd = dfd[dfd["Status"].isin(fst)]
         if fct: dfd = dfd[dfd["Category"].isin(fct)]
-        # We DO NOT reset index here to maintain link with st.session_state.journal_qualifie
+        # We DO NOT reset index here to maintain link with st.session_state[QUAL_KEY]
         if "Sel." not in dfd.columns:
             dfd.insert(0, "Sel.", False)
         if st.button("🔍 Détecter Transferts Internes", width='stretch'):
-            df, ct = sl.detect_internal_transfers(st.session_state.journal_qualifie); st.session_state.journal_qualifie = df; st.rerun()
+            df, ct = sl.detect_internal_transfers(st.session_state[QUAL_KEY]); st.session_state[QUAL_KEY] = df; st.rerun()
         cats = sorted(list(set(["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense", "Frais", "Doublon à ignorer"] + list(dfd["Category"].unique()))))
 
         # Style logic for highlighting suspect duplicates
@@ -473,7 +499,7 @@ with t_q:
         def on_editor_change():
             if "qual_editor_v17" in st.session_state:
                 changes = st.session_state["qual_editor_v17"]
-                main_j = st.session_state.journal_qualifie
+                main_j = st.session_state[QUAL_KEY]
 
                 # Apply edits from the editor back to the full journal in session
                 for idx_str, edited_row in changes.get("edited_rows", {}).items():
@@ -487,7 +513,7 @@ with t_q:
                              elif col == "Linked_ID": main_j.at[idx, "Linked_ID"] = val
                              elif col == "Link_Status": main_j.at[idx, "Link_Status"] = val
 
-                st.session_state.journal_qualifie = main_j
+                st.session_state[QUAL_KEY] = main_j
 
         edf = st.data_editor(df_styled, column_config={"Sel.":st.column_config.CheckboxColumn("Sel."),"Category":st.column_config.SelectboxColumn("Catégorie", options=cats),"Status":st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),"Imposable":st.column_config.CheckboxColumn("Imposable"),"Date":st.column_config.DatetimeColumn(disabled=True),"Account":st.column_config.TextColumn(disabled=True),"Amount":st.column_config.NumberColumn(format="%.6f", disabled=True)}, width='stretch', key="qual_editor_v17", on_change=on_editor_change)
 
@@ -506,9 +532,9 @@ with t_q:
                 st.success(f"{count} lignes injectées vers le registre Swaps.")
             else: st.warning("Veuillez d'abord sélectionner des lignes via la colonne 'Sel.'.")
         if st.button("💾 Sanctuariser", type="primary", width='stretch'):
-            # Source of truth is st.session_state.journal_qualifie
+            # Source of truth is st.session_state[QUAL_KEY]
             # (already partially updated by on_editor_change)
-            main_j = st.session_state.journal_qualifie
+            main_j = st.session_state[QUAL_KEY]
 
             # Final check from the latest state of the editor (edf)
             # to ensure everything is captured
@@ -528,7 +554,7 @@ with t_q:
             main_j = sl.apply_spam_filter(main_j, drop=False)
 
             # Final Persistence
-            st.session_state.journal_qualifie = main_j
+            st.session_state[QUAL_KEY] = main_j
             main_j.to_csv(sl.get_file_path(target_year, 'qualified'), index=False, encoding="utf-8-sig")
 
             st.balloons()
@@ -538,13 +564,13 @@ with t_q:
 
 with t_r:
     st.subheader("🤝 Réconciliation des Maillons")
-    if "journal_qualifie" in st.session_state:
-        df_r = st.session_state.journal_qualifie
+    if QUAL_KEY in st.session_state:
+        df_r = st.session_state[QUAL_KEY]
 
         c_r1, c_r2 = st.columns([1, 2])
         if c_r1.button("🚀 Lancer recherche auto", width='stretch'):
             df_upd, count = sl.find_reconciliation_matches(df_r)
-            st.session_state.journal_qualifie = df_upd
+            st.session_state[QUAL_KEY] = df_upd
             st.success(f"{count} maillons potentiels détectés.")
             st.rerun()
 
