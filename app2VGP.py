@@ -40,11 +40,17 @@ def load_position_labels():
 # --- UI sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    # Unified Hub Year
-    if "_hub_target_year" not in st.session_state:
-        st.session_state["_hub_target_year"] = datetime.now().year
 
-    target_year = st.number_input("Année à traiter", min_value=2015, max_value=2030, key="_hub_target_year")
+    # Load Unified Processing Year
+    g_conf = sl.load_global_config()
+    default_year = g_conf.get("processing_year") or datetime.now().year
+
+    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=default_year, key="_hub_target_year")
+
+    # Persist change if modified here too
+    if target_year != g_conf.get("processing_year"):
+        g_conf["processing_year"] = int(target_year)
+        sl.save_global_config(g_conf)
 
     # Year switch detection
     if "last_vgp_year" not in st.session_state:

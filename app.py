@@ -59,6 +59,11 @@ EXPORT_BASE_DIR = "sanctuarisation"
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres de Récolte")
+
+    # Load Unified Processing Year
+    g_conf = sl.load_global_config()
+    default_year = g_conf.get("processing_year") or datetime.now().year
+
     known_displays = sl.get_owner_display_list()
     addr_opts = ["-- Nouvelle Adresse --"] + known_displays
     selected_addr = st.selectbox("Sélectionner un compte", addr_opts)
@@ -68,8 +73,12 @@ with st.sidebar:
         st.caption(f"Cible : `{address}`")
     chains_to_scan = st.multiselect("Chaînes", list(CHAIN_APIS.keys()), default=["Ethereum", "Base", "Arbitrum"])
     st.divider()
-    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
-    target_year = st.number_input("Année", min_value=2015, max_value=2030, key="_hub_target_year")
+
+    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=default_year, key="_hub_target_year")
+    # Persist change if modified here too
+    if target_year != g_conf.get("processing_year"):
+        g_conf["processing_year"] = int(target_year); sl.save_global_config(g_conf)
+
     max_txs = st.number_input("Max transactions", min_value=10, max_value=50000, value=2000, step=100, key="app_max_txs")
     st.divider()
     st.subheader("🔑 Clé API Etherscan V2")

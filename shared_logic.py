@@ -15,6 +15,29 @@ OWNERS_FILE = "owner_accounts.json"
 SPAM_FILE = "spam_blacklist.json"
 NOTES_FILE = "manual_notes.json"
 VALID_ASSETS_FILE = "valid_assets.json"
+GLOBAL_CONFIG_FILE = "global_config.json"
+
+def load_global_config():
+    """Loads global settings like activity start year and current processing year."""
+    defaults = {
+        "start_year": None,
+        "processing_year": datetime.now().year
+    }
+    if os.path.exists(GLOBAL_CONFIG_FILE):
+        try:
+            with open(GLOBAL_CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # Ensure types are correct
+                if data.get("start_year"): data["start_year"] = int(data["start_year"])
+                if data.get("processing_year"): data["processing_year"] = int(data["processing_year"])
+                return {**defaults, **data}
+        except: pass
+    return defaults
+
+def save_global_config(config):
+    """Saves global settings."""
+    with open(GLOBAL_CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4)
 
 def clean_session_state(preserve_keys=[]):
     """
@@ -358,13 +381,21 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
     target_year_val = target_date.year
     start_of_year = datetime(target_year_val, 1, 1, tzinfo=target_date.tzinfo)
 
+    # Load global config to check for Activity Start Year
+    config = load_global_config()
+    activity_start_year = config.get("start_year")
+
     journals_to_process = []
     manual_to_process = []
     starting_balances = [] # List of DataFrames: [Location, Asset, Solde]
 
     # 1. Mandatory Inventory Check
     found_inventory = False
-    if not force_full_history:
+
+    # Rule: If target year is the Activity Start Year, we FORCE zero starting balance.
+    is_start_year = (activity_start_year is not None and int(target_year_val) == int(activity_start_year))
+
+    if not force_full_history and not is_start_year:
         prev_year = target_year_val - 1
         inv_path = os.path.join(EXPORT_BASE_DIR, str(prev_year), f"inventory_EOY_{prev_year}.csv")
         if os.path.exists(inv_path):
@@ -378,7 +409,10 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
                     start_scan_year = target_year_val
             except: pass
 
-    if not found_inventory:
+    if is_start_year:
+        found_inventory = True # Treat as found (but empty) to avoid UI warnings
+        start_scan_year = target_year_val
+    elif not found_inventory:
         # If no inventory found or full history requested
         start_scan_year = start_recalc_year
         if not force_full_history and target_year_val > 2020:

@@ -220,12 +220,40 @@ def sync_data(year):
 
 # --- Sidebar ---
 with st.sidebar:
-    st.header("⚙️ Paramètres app2")
-    # Unified Hub Year
-    if "_hub_target_year" not in st.session_state:
-        st.session_state["_hub_target_year"] = datetime.now().year
+    st.header("⚙️ Configuration")
 
-    target_year = st.number_input("Année fiscale", 2015, 2030, key="_hub_target_year")
+    # Global Config Management
+    g_conf = sl.load_global_config()
+
+    # 1. Année de Traitement d'Activité (Persistent selection)
+    default_year = g_conf.get("processing_year") or datetime.now().year
+    # Hub prefix is preserved for cross-module compatibility
+    target_year = st.number_input("Année de traitement d'activité", 2015, 2030, value=default_year, key="_hub_target_year")
+
+    # Save selection to global config if changed
+    if target_year != g_conf.get("processing_year"):
+        g_conf["processing_year"] = int(target_year)
+        sl.save_global_config(g_conf)
+
+    # 2. Année de Début d'Activité
+    start_year_val = g_conf.get("start_year")
+    start_year_input = st.text_input("Année de début d'activité", value=str(start_year_val) if start_year_val else "", placeholder="ex: 2021 (Vide = Date du jour)")
+
+    if st.button("💾 Fixer l'année de début"):
+        if start_year_input.strip():
+            try:
+                sy = int(start_year_input.strip())
+                g_conf["start_year"] = sy
+                sl.save_global_config(g_conf)
+                st.success(f"Année de début fixée à {sy}")
+                st.rerun()
+            except: st.error("Année invalide.")
+        else:
+            g_conf["start_year"] = None
+            sl.save_global_config(g_conf)
+            st.success("Réglage effacé.")
+            st.rerun()
+
     if "journal_qualifie" not in st.session_state or st.session_state.get("last_year") != target_year:
         sl.clean_session_state(preserve_keys=["last_year"])
         st.cache_data.clear(); sync_data(target_year); st.session_state.last_year = target_year
