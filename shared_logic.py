@@ -163,10 +163,20 @@ def resolve_owner_display(identifier):
     return identifier # Fallback if unknown
 
 def pd_read_csv_safe(path):
-    try: return pd.read_csv(path, encoding="utf-8-sig")
+    """Reads a CSV with multiple encoding fallbacks and strips column names."""
+    df = None
+    try: df = pd.read_csv(path, encoding="utf-8-sig")
     except:
-        try: return pd.read_csv(path, encoding="latin-1")
-        except: return pd.read_csv(path, encoding="utf-8", errors="replace")
+        try: df = pd.read_csv(path, encoding="latin-1")
+        except:
+            try: df = pd.read_csv(path, encoding="utf-8", errors="replace")
+            except: return pd.DataFrame()
+
+    if df is not None:
+        df.columns = [str(c).strip() for c in df.columns]
+        # Also strip string values in the whole dataframe to avoid whitespace issues
+        df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
+    return df
 
 def is_imposable_robust(val):
     s = str(val).upper().strip()

@@ -1,0 +1,5 @@
+﻿Date,Account,Counterparty,Asset,Amount,Value ($),Network,Tx Hash,Source Type,Category,Status,Imposable,Linked_ID,Link_Status,VGP (EUR),Source_File
+2025-03-01 00:00:00+00:00,bank,bank,EUR,-1000.0,-1041.1027360179903,Fiat,0xM1,Fiat,Flux Fiat,Valide,False,,,0.0,manual_fiat_2025.csv
+2025-03-01 00:00:00+00:00,bank,bank,ETH,0.5,1041.1027360179903,Fiat,0xM1,Fiat-to-Crypto,Achat,Valide,False,,,0.0,manual_fiat_2025.csv
+2025-01-01 10:00:00+00:00,0x1,0x3,ETH,0.0,0.0,ETH,0xH1,Restored,A vérifier,A vérifier,False,,,0.0,raw_transactions_sanct_20250101.csv
+2025-01-02 12:00:00+00:00,0x2,0x2,ETH,0.0,0.0,ETH,0xH2,Restored,A vérifier,A vérifier,False,,,0.0,raw_transactions_sanct_20250101.csv
