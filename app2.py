@@ -460,7 +460,7 @@ with st.sidebar:
                     del pl[sa_pl]; sl.save_position_labels(pl); st.rerun()
 
 # --- Main App ---
-t_q, t_r = st.tabs(["📋 Qualification", "🤝 Réconciliation"])
+t_q, t_r, t_audit = st.tabs(["📋 Qualification", "🤝 Réconciliation", "🔍 Audit & Récupération"])
 QUAL_KEY = "_hub_journal_qualifie"
 
 with t_q:
@@ -489,7 +489,10 @@ with t_q:
 
         dfd = st.session_state[QUAL_KEY].copy()
         if not show_spams:
-            dfd = dfd[dfd["Status"] != "Spam"]
+            # Mask spams AND duplicates
+            mask_spam = (dfd["Status"] == "Spam")
+            mask_dup = dfd["Category"].fillna("").str.contains("Doublon", case=False, na=False)
+            dfd = dfd[~(mask_spam | mask_dup)]
 
         if fa: dfd = dfd[dfd["Asset"].isin(fa)]
         if fac: dfd = sl.filter_df_by_owner_display(dfd, fac)
@@ -692,5 +695,118 @@ with t_r:
                         df_r.loc[df_r["Linked_ID"] == lid, "Linked_ID"] = ""
                         st.session_state.journal_qualifie = df_r
                         st.rerun()
+
+with t_audit:
+    st.subheader("🔍 Centre d'Audit & Récupération")
+    st.info("Cet outil compare votre journal de travail avec les sauvegardes inaltérables du Sanctuaire.")
+
+    if st.button("🚀 Lancer l'analyse comparative", width='stretch'):
+        with st.spinner("Analyse du Sanctuaire..."):
+            df_sanctuary = sl.get_sanctuary_transactions(target_year)
+            if df_sanctuary.empty:
+                st.warning("Aucune donnée trouvée dans le Sanctuaire pour cette année.")
+            else:
+                # Standardize sanctuary data for comparison
+                df_sanctuary = sl.standardize_df_addresses(df_sanctuary)
+
+                # Working journal
+                df_work = st.session_state.get(QUAL_KEY, pd.DataFrame())
+
+                # Identify Orphans (In Sanctuary but NOT in Working Journal)
+                # Key: quintuplet (Date, Account, Asset, Amount, Tx Hash)
+                def get_comp_key(df):
+                    d = pd.to_datetime(df["Date"], utc=True, errors='coerce').dt.strftime('%Y%m%d')
+                    acc = df["Account"].astype(str).str.lower().str.strip()
+                    ast = df["Asset"].astype(str).str.upper().str.strip()
+                    amt = pd.to_numeric(df["Amount"], errors='coerce').fillna(0).round(6).astype(str)
+                    h = df["Tx_Hash"].astype(str).str.lower().str.strip() if "Tx_Hash" in df.columns else df["Tx Hash"].astype(str).str.lower().str.strip() if "Tx Hash" in df.columns else ""
+                    return d + "_" + acc + "_" + ast + "_" + amt + "_" + h
+
+                keys_work = set(get_comp_key(df_work)) if not df_work.empty else set()
+                df_sanctuary["_comp_key"] = get_comp_key(df_sanctuary)
+
+                orphans = df_sanctuary[~df_sanctuary["_comp_key"].isin(keys_work)].copy()
+
+                if orphans.empty:
+                    st.success("✅ Félicitations : Toutes les transactions du sanctuaire sont présentes dans votre journal.")
+                else:
+                    st.error(f"⚠️ {len(orphans)} transactions du sanctuaire sont absentes de votre journal de travail.")
+
+                    if "Sel_Recup" not in orphans.columns: orphans.insert(0, "Sel_Recup", False)
+
+                    ed_recup = st.data_editor(
+                        orphans.drop(columns=["_comp_key"]),
+                        column_config={"Sel_Recup": st.column_config.CheckboxColumn("Récupérer")},
+                        width='stretch',
+                        disabled=["Date", "Account", "Asset", "Amount", "Tx_Hash"],
+                        key="ed_recovery_orphans"
+                    )
+
+                    rec1, rec2 = st.columns(2)
+                    if rec1.button("📥 Restaurer la sélection", width='stretch'):
+                        to_restore = ed_recup[ed_recup["Sel_Recup"]].drop(columns="Sel_Recup")
+                        if not to_restore.empty:
+                            # Convert to Qualification schema
+                            rows_to_add = []
+                            for _, r in to_restore.iterrows():
+                                rows_to_add.append({
+                                    "Date": r.get("Date"), "Account": r.get("Account"), "Counterparty": r.get("To") if r.get("Amount", 0)<0 else r.get("From"),
+                                    "Asset": r.get("Asset"), "Amount": r.get("Amount"), "Network": r.get("Chain"), "Tx Hash": r.get("Tx_Hash") or r.get("Tx Hash"),
+                                    "Source Type": "Restored from Sanctuary", "Category": "A vérifier", "Status": "A vérifier", "Imposable": False
+                                })
+                            new_df = ensure_columns(pd.DataFrame(rows_to_add))
+                            st.session_state[QUAL_KEY] = pd.concat([st.session_state[QUAL_KEY], new_df]).drop_duplicates().reset_index(drop=True)
+                            st.success(f"{len(to_restore)} transactions restaurées. Utilisez 'Sanctuariser' pour confirmer.")
+                            time.sleep(1); st.rerun()
+
+                    if rec2.button("📥 Restaurer TOUT en bloc", width='stretch', type="primary"):
+                        # Similar logic for all orphans
+                        rows_to_add = []
+                        for _, r in orphans.iterrows():
+                            rows_to_add.append({
+                                "Date": r.get("Date"), "Account": r.get("Account"), "Counterparty": r.get("To") if r.get("Amount", 0)<0 else r.get("From"),
+                                "Asset": r.get("Asset"), "Amount": r.get("Amount"), "Network": r.get("Chain"), "Tx Hash": r.get("Tx_Hash") or r.get("Tx Hash"),
+                                "Source Type": "Restored from Sanctuary", "Category": "A vérifier", "Status": "A vérifier", "Imposable": False
+                            })
+                        new_df = ensure_columns(pd.DataFrame(rows_to_add))
+                        st.session_state[QUAL_KEY] = pd.concat([st.session_state[QUAL_KEY], new_df]).drop_duplicates().reset_index(drop=True)
+                        st.success(f"{len(orphans)} transactions restaurées. Utilisez 'Sanctuariser' pour confirmer.")
+                        time.sleep(1); st.rerun()
+
+    st.divider()
+    st.subheader("🗑️ Revue des Exclues (Spams & Doublons)")
+    if QUAL_KEY in st.session_state:
+        df_all = st.session_state[QUAL_KEY]
+        mask_exc = (df_all["Status"] == "Spam") | (df_all["Category"].fillna("").str.contains("Doublon", case=False, na=False))
+        df_exclues = df_all[mask_exc].copy()
+
+        if df_exclues.empty:
+            st.info("Aucune transaction n'est actuellement exclue.")
+        else:
+            st.write(f"Nombre de transactions exclues : **{len(df_exclues)}**")
+            if "Sel_Reset" not in df_exclues.columns: df_exclues.insert(0, "Sel_Reset", False)
+
+            ed_reset = st.data_editor(
+                df_exclues,
+                column_config={"Sel_Reset": st.column_config.CheckboxColumn("Réintégrer")},
+                width='stretch',
+                key="ed_audit_exclues"
+            )
+
+            res1, res2 = st.columns(2)
+            if res1.button("✅ Réintégrer la sélection", width='stretch'):
+                selected_indices = ed_reset[ed_reset["Sel_Reset"]].index
+                if not selected_indices.empty:
+                    st.session_state[QUAL_KEY].loc[selected_indices, "Status"] = "A vérifier"
+                    st.session_state[QUAL_KEY].loc[selected_indices, "Category"] = "A vérifier"
+                    st.success(f"{len(selected_indices)} transactions réintégrées.")
+                    time.sleep(1); st.rerun()
+
+            if res2.button("✅ Réintégrer TOUT", width='stretch'):
+                all_indices = df_exclues.index
+                st.session_state[QUAL_KEY].loc[all_indices, "Status"] = "A vérifier"
+                st.session_state[QUAL_KEY].loc[all_indices, "Category"] = "A vérifier"
+                st.success("Toutes les transactions ont été réintégrées.")
+                time.sleep(1); st.rerun()
 
 sl.show_status()

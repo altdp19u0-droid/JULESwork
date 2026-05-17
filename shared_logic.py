@@ -251,6 +251,7 @@ def get_latest_raw_files(year):
     latest_map = {}
 
     import re
+    # Pattern for timestamp: _YYYYMMDD or _YYYYMMDD_HHMMSS
     ts_pattern = re.compile(r'_(\d{8}(?:_\d{6})?)$')
 
     for f_path in all_raw:
@@ -258,15 +259,40 @@ def get_latest_raw_files(year):
         basename = f.replace(".csv", "")
 
         match = ts_pattern.search(basename)
+        # If match, prefix is everything before the timestamp
         prefix = basename[:match.start()] if match else basename
 
         if prefix not in latest_map:
             latest_map[prefix] = f_path
         else:
+            # Comparison between full paths (string comparison works for timestamps)
             if f_path > latest_map[prefix]:
                 latest_map[prefix] = f_path
 
-    return list(latest_map.values())
+    return sorted(list(latest_map.values()))
+
+def get_sanctuary_transactions(year):
+    """
+    Collects all transactions from ALL files in the sanctuary folder for a given year.
+    Used for audit and recovery.
+    """
+    s_dir = os.path.join(EXPORT_BASE_DIR, str(year), "sanctuary")
+    if not os.path.exists(s_dir): return pd.DataFrame()
+
+    files = [os.path.join(s_dir, f) for f in os.listdir(s_dir) if f.endswith(".csv") and f.startswith("raw_")]
+    if not files: return pd.DataFrame()
+
+    all_rows = []
+    for f in files:
+        try:
+            df = pd_read_csv_safe(f)
+            if df.empty: continue
+            df["_orig_file"] = os.path.basename(f)
+            all_rows.append(df)
+        except: pass
+
+    if not all_rows: return pd.DataFrame()
+    return pd.concat(all_rows).reset_index(drop=True)
 
 def check_file_freshness(path, last_load_time):
     """Returns True if the file has been modified since last_load_time."""

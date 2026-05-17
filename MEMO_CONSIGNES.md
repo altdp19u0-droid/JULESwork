@@ -61,6 +61,7 @@ C'est l'étape critique de transformation des données brutes en journal comptab
     - Doit traiter chaque ligne des fichiers bruts sans exception. Utilise des fallbacks (ex: Date 31/12 pour inventaires si absent).
     - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP) déjà présentes dans le journal qualifié en utilisant un quintuplet de correspondance (Date, Account, Asset, Amount, Hash).
     - **Persistance Directe :** La sanctuarisation dans `app2.py` doit itérer manuellement sur l'éditeur pour reporter chaque modification sur le journal complet en session avant l'écriture disque.
+    - **Architecture Clean Gateway :** Lors de la sanctuarisation, `app2.py` génère impérativement un second fichier : `qualified_journal_CLEAN_{year}.csv`. Ce fichier est purgé des spams et doublons, et contient les labels résolus. C'est l'unique source de vérité pour les applications avals.
 2. **Gestion des Doublons Suspects :**
     - Détection fine par trio (Montant/Asset/Compte) à date identique.
     - **Interface :** Expander de revue dédié et **surlignage rouge** des lignes suspectes dans le tableau.
@@ -84,7 +85,7 @@ Utilisation des données nettoyées pour le reporting final.
     - **Sécurité Fiscale (Lock) :** Blocage automatique de la génération de rapport si `appDiagCoh.py` détecte des ruptures de stock (soldes négatifs) sur des cessions.
     - **Calcul Art. 150 VH bis :** Application stricte, ratio d'abattement plafonné à 1.0, exclusion des VGP non positives.
     - **PDF Professionnel :** Génération Unicode (DejaVuSans), gestion du word-wrap pour les adresses longues, synchronisation des hauteurs de lignes.
-3. **Diagnostic (appDiagCoh) :** Traçage chronologique par actif/compte et détection des soldes négatifs comme outil de réparation.
+3. **Diagnostic (appDiagCoh) :** Traçage chronologique par actif/compte et détection des soldes négatifs comme outil de réparation. Utilise `sl.load_clean_history()` pour une vision globale instantanée.
 4. **Valorisation (shared_logic) :** Politique "Zéro-Fallback" (0.0 si erreur API) pour forcer l'audit manuel et garantir l'intégrité fiscale. Utilisation des taux BCE (Frankfurter) pour les assets indexés fiat.
 5. **Positions & Snapshots :** Le moteur `get_portfolio_snapshot` doit agréger les journaux qualifiés, les positions manuelles (`manual_positions_*.csv`) et les inventaires N-1. Les positions manuelles sont prioritaires pour définir le stock initial d'un compte.
 
