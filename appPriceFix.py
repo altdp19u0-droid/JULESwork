@@ -274,7 +274,10 @@ if "price_explorer_df" in st.session_state:
         for y, prices in annual_updates.items():
             y_dir = os.path.join(EXPORT_BASE_DIR, y)
             os.makedirs(y_dir, exist_ok=True)
+            s_dir = os.path.join(y_dir, "sanctuary"); os.makedirs(s_dir, exist_ok=True)
+
             path = os.path.join(y_dir, f"verified_prices_{y}.json")
+            s_path = os.path.join(s_dir, f"verified_prices_{y}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
 
             # Merge with existing if any
             existing = {}
@@ -284,7 +287,12 @@ if "price_explorer_df" in st.session_state:
                 except: pass
             existing.update(prices)
 
+            # 1. Working copy
             with open(path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, indent=4)
+
+            # 2. Sanctuary copy (permanent record)
+            with open(s_path, "w", encoding="utf-8") as f:
                 json.dump(existing, f, indent=4)
 
         st.balloons()

@@ -311,10 +311,38 @@ def fragment_fiat():
     selected_rows = edited_df[edited_df["Mod."] == True]
     if not selected_rows.empty:
         real_idx = selected_rows.index[0]
-        if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_fiat"):
+        cl1, cl2 = st.columns(2)
+        if cl1.button(f"📥 Charger la ligne {real_idx}", key="btn_load_fiat"):
             st.session_state.fiat_edit_idx = real_idx
             st.session_state.fiat_pending_load = selected_rows.iloc[0]
             st.rerun()
+
+        with cl2.popover("🗑️ Supprimer / Restaurer", width='stretch'):
+            if st.button("⏪ Supprimer du Registre (Restaurer RAW)", help="Supprime la ligne de ce registre. Elle redeviendra visible dans App 2 (Qualification) si elle provenait d'une injection.", width='stretch'):
+                st.session_state.fiat_journal = st.session_state.fiat_journal.drop(index=selected_rows.index)
+                st.success("Ligne supprimée du registre.")
+                time.sleep(1); st.rerun()
+
+            if st.button("🔥 Éliminer DÉFINITIVEMENT du RAW", help="Supprime la transaction du fichier source original. Utile si la transaction est erronée dès la collecte.", width='stretch'):
+                count_del = 0
+                for _, s_row in selected_rows.iterrows():
+                    # We need the source file but app0 might not have it in its schema
+                    # Logic: Try to find match in app2 journal to get source file
+                    src_f = s_row.get("Source_File")
+                    if not src_f and "_hub_journal_qualifie" in st.session_state:
+                         qj = st.session_state["_hub_journal_qualifie"]
+                         # Match by quintuplet
+                         q_amt = s_row.get("Quantité") or s_row.get("Amount") or 0.0
+                         match = qj[ (qj["Asset"]==s_row["Asset"]) & (abs(qj["Amount"]-float(q_amt))<1e-6) & (qj["Tx Hash"]==s_row["Tx Hash"]) ]
+                         if not match.empty: src_f = match.iloc[0].get("Source_File")
+
+                    if src_f:
+                        f_path = os.path.join(EXPORT_BASE_DIR, str(target_year), src_f)
+                        if sl.remove_row_from_csv(f_path, s_row): count_del += 1
+
+                st.session_state.fiat_journal = st.session_state.fiat_journal.drop(index=selected_rows.index)
+                st.success(f"Ligne supprimée et éliminée de {count_del} fichiers RAW.")
+                time.sleep(1); st.rerun()
 
     if not edited_df.drop(columns=["Mod."], errors="ignore").equals(df_fiat.drop(columns=["Mod."], errors="ignore")):
         st.session_state.fiat_journal = edited_df.drop(columns=["Mod."], errors="ignore")
@@ -442,10 +470,17 @@ def fragment_pos():
     selected_rows = edited_df[edited_df["Mod."] == True]
     if not selected_rows.empty:
         real_idx = selected_rows.index[0]
-        if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_pos"):
+        cl1, cl2 = st.columns(2)
+        if cl1.button(f"📥 Charger la ligne {real_idx}", key="btn_load_pos"):
             st.session_state.pos_edit_idx = real_idx
             st.session_state.pos_pending_load = selected_rows.iloc[0]
             st.rerun()
+
+        with cl2.popover("🗑️ Supprimer / Restaurer", width='stretch'):
+            if st.button("⏪ Supprimer du Registre", width='stretch'):
+                st.session_state.positions_journal = st.session_state.positions_journal.drop(index=selected_rows.index)
+                st.success("Ligne supprimée.")
+                time.sleep(1); st.rerun()
 
     if not edited_df.drop(columns=["Mod."], errors="ignore").equals(df_pos.drop(columns=["Mod."], errors="ignore")):
         st.session_state.positions_journal = edited_df.drop(columns=["Mod."], errors="ignore")
@@ -600,9 +635,16 @@ def fragment_swaps():
     selected_rows = edited_df[edited_df["Mod."] == True]
     if not selected_rows.empty:
         real_idx = selected_rows.index[0]
-        if st.button(f"📥 Charger la ligne {real_idx}", key="btn_load_swap"):
+        cl1, cl2 = st.columns(2)
+        if cl1.button(f"📥 Charger la ligne {real_idx}", key="btn_load_swap"):
             st.session_state.swap_pending_load = selected_rows.iloc[0]
             st.rerun()
+
+        with cl2.popover("🗑️ Supprimer / Restaurer", width='stretch'):
+            if st.button("⏪ Supprimer du Registre", width='stretch'):
+                st.session_state.swaps_journal = st.session_state.swaps_journal.drop(index=selected_rows.index)
+                st.success("Ligne supprimée.")
+                time.sleep(1); st.rerun()
 
     if not edited_df.drop(columns=["Mod."], errors="ignore").equals(df_swaps.drop(columns=["Mod."], errors="ignore")):
         st.session_state.swaps_journal = edited_df.drop(columns=["Mod."], errors="ignore")
@@ -635,11 +677,12 @@ with col_save1:
         df_pos.to_csv(pos_path, index=False, encoding="utf-8-sig")
         df_swaps.to_csv(swap_path, index=False, encoding="utf-8-sig")
 
-        # Backups
+        # Backups in Sanctuary
+        s_dir = os.path.join(year_dir, "sanctuary"); os.makedirs(s_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        df_fiat.to_csv(os.path.join(year_dir, f"backup_fiat_{ts}.csv"), index=False, encoding="utf-8-sig")
-        df_pos.to_csv(os.path.join(year_dir, f"backup_positions_{ts}.csv"), index=False, encoding="utf-8-sig")
-        df_swaps.to_csv(os.path.join(year_dir, f"backup_swaps_{ts}.csv"), index=False, encoding="utf-8-sig")
+        df_fiat.to_csv(os.path.join(s_dir, f"backup_fiat_{ts}.csv"), index=False, encoding="utf-8-sig")
+        df_pos.to_csv(os.path.join(s_dir, f"backup_positions_{ts}.csv"), index=False, encoding="utf-8-sig")
+        df_swaps.to_csv(os.path.join(s_dir, f"backup_swaps_{ts}.csv"), index=False, encoding="utf-8-sig")
 
         st.balloons()
         st.success(f"📂 Registres mis à jour et sauvegardés dans : {year_dir}")

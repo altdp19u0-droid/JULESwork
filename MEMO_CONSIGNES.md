@@ -19,6 +19,8 @@ Ce document est le référentiel unique de la structure, des fonctions critiques
 ## II. PHASE 1 : RÉCOLTE & STANDARD "RAW" (app.py)
 Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de tout calcul fiscal ou de prix**.
 
+**ALERTE CRITIQUE : IL EST STRICTEMENT INTERDIT DE MODIFIER LE FICHIER `app.py`.** Ce fichier a atteint un niveau de fiabilité complexe à obtenir et toute modification risque de dégrader la qualité de la récolte.
+
 ### 1. Architecture du Moteur à 3 Voies
 - **VOIE 1 (Blockscout Deep Scan) :** Priorité sémantique (extraction des étiquettes From_Label/To_Label et types de processus).
 - **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2 via Etherscan/BscScan).

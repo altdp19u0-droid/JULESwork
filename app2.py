@@ -19,7 +19,8 @@ POSITIONS_FILE = "position_labels.json"
 COLUMNS = [
     "Date", "Account", "Counterparty", "Asset", "Amount",
     "Value ($)", "Network", "Tx Hash", "Source Type",
-    "Category", "Status", "Imposable", "Linked_ID", "Link_Status", "VGP (EUR)"
+    "Category", "Status", "Imposable", "Linked_ID", "Link_Status", "VGP (EUR)",
+    "Source_File"
 ]
 
 def ensure_columns(df):
@@ -60,24 +61,13 @@ def ensure_columns(df):
     return df_copy[COLUMNS]
 
 # --- Helpers ---
-def load_position_labels():
-    if os.path.exists(POSITIONS_FILE):
-        try:
-            with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
-                return {str(k).lower(): v for k, v in json.load(f).items()}
-        except: return {}
-    return {}
-
-def save_position_labels(labels_dict):
-    with open(POSITIONS_FILE, "w", encoding="utf-8") as f:
-        json.dump({str(k).lower(): v for k, v in labels_dict.items()}, f, indent=4)
 
 def apply_position_labels(df):
     """Associe les labels aux adresses de contrepartie selon le standard 'Identifier (Name)'."""
     if df.empty: return df
     df = df.copy()
     # Labels from positions
-    labels = load_position_labels()
+    labels = sl.load_position_labels()
     # Labels from circuits
     ext_data = sl.load_external_circuits()
     circ_labels = ext_data.get("labels", {})
@@ -112,11 +102,11 @@ def merge_raw_data(year):
                     if t == "Fiat":
                         me, qa, asset, ft = float(r.get("Montant EUR", 0)), float(r.get("Quantité", 0)), str(r.get("Asset", "EUR")).upper(), str(r.get("Type", ""))
                         rt = sl.get_fiat_rate("USD", pd.to_datetime(r.get("Date"), utc=True))
-                        rows.append({"Date": r.get("Date"), "Account": str(r.get("Account", r.get("Compte/Label", "Manual"))), "Counterparty": str(r.get("Counterparty", r.get("Plateforme", "Bank"))), "Asset": "EUR", "Amount": me if "Vente" in ft else -me, "Value ($)": ((me if "Vente" in ft else -me)/rt) if rt>0 else 0, "Network": "Fiat", "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Fiat", "Category": "Flux Fiat", "Status": "Valide", "Imposable": False})
+                        rows.append({"Date": r.get("Date"), "Account": str(r.get("Account", r.get("Compte/Label", "Manual"))), "Counterparty": str(r.get("Counterparty", r.get("Plateforme", "Bank"))), "Asset": "EUR", "Amount": me if "Vente" in ft else -me, "Value ($)": ((me if "Vente" in ft else -me)/rt) if rt>0 else 0, "Network": "Fiat", "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Fiat", "Category": "Flux Fiat", "Status": "Valide", "Imposable": False, "Source_File": p})
                         if asset != "EUR" and asset != "NAN" and qa > 0:
-                            rows.append({"Date": r.get("Date"), "Account": str(r.get("Account", r.get("Compte/Label", "Manual"))), "Counterparty": str(r.get("Counterparty", r.get("Plateforme", "Bank"))), "Asset": asset, "Amount": qa if "Achat" in ft else -qa, "Value ($)": me/rt if rt>0 else 0, "Network": "Fiat", "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Fiat-to-Crypto", "Category": "Achat" if "Achat" in ft else "Vente", "Status": "Valide", "Imposable": sl.is_imposable_robust(r.get("Imposable"))})
+                            rows.append({"Date": r.get("Date"), "Account": str(r.get("Account", r.get("Compte/Label", "Manual"))), "Counterparty": str(r.get("Counterparty", r.get("Plateforme", "Bank"))), "Asset": asset, "Amount": qa if "Achat" in ft else -qa, "Value ($)": me/rt if rt>0 else 0, "Network": "Fiat", "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Fiat-to-Crypto", "Category": "Achat" if "Achat" in ft else "Vente", "Status": "Valide", "Imposable": sl.is_imposable_robust(r.get("Imposable")), "Source_File": p})
                     else:
-                        rows.append({"Date": r.get("Date"), "Account": str(r.get("Account", "")), "Counterparty": str(r.get("Counterparty", "")), "Asset": str(r.get("Asset", "")), "Amount": float(r.get("Amount", 0)), "Value ($)": 0, "Network": "Manual", "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Manual", "Category": "Swap", "Status": "Valide", "Imposable": sl.is_imposable_robust(r.get("Imposable", False))})
+                        rows.append({"Date": r.get("Date"), "Account": str(r.get("Account", "")), "Counterparty": str(r.get("Counterparty", "")), "Asset": str(r.get("Asset", "")), "Amount": float(r.get("Amount", 0)), "Value ($)": 0, "Network": "Manual", "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Manual", "Category": "Swap", "Status": "Valide", "Imposable": sl.is_imposable_robust(r.get("Imposable", False)), "Source_File": p})
             except: pass
 
     # 2. Blockchain
@@ -166,20 +156,23 @@ def merge_raw_data(year):
                     "Value ($)": float(r.get("Value ($)") or r.get(h_map.get("value ($)")) or 0),
                     "Network": str(r.get("Chain") or r.get(h_map.get("chain"), asset)),
                     "Tx Hash": tx_h, "Source Type": str(r.get("Type") or "Blockchain"),
-                    "Category": "A vérifier", "Status": st_, "Imposable": sl.is_imposable_robust(r.get("Imposable", False))
+                    "Category": "A vérifier", "Status": st_, "Imposable": sl.is_imposable_robust(r.get("Imposable", False)),
+                    "Source_File": fn
                 })
         except: pass
 
     dff = ensure_columns(pd.DataFrame(rows))
     dff["Date"] = pd.to_datetime(dff["Date"], utc=True, errors="coerce")
     dff = sl.standardize_df_addresses(dff)
-    dff["_d"] = dff["Date"].dt.date
-    dff = dff.sort_values("Date", ascending=False).drop_duplicates(subset=["Tx Hash", "Asset", "Amount", "Account", "_d"], keep="first")
+
+    # We NO LONGER drop duplicates here to allow the user to see and manage them (suspect duplicates) in the UI.
+    # We only drop EXACT line-by-line duplicates that might come from redundant file imports.
+    dff = dff.sort_values("Date", ascending=False).drop_duplicates().reset_index(drop=True)
 
     # --- ZÉRO SPAM : Filtre de qualification ---
     dff = sl.apply_spam_filter(dff, drop=False)
 
-    return apply_position_labels(dff.drop(columns=["_d"]).reset_index(drop=True))
+    return apply_position_labels(dff)
 
 def sync_data(year):
     # Use persistent session keys for the Hub
@@ -309,13 +302,22 @@ with st.sidebar:
 
     st.divider(); st.header("📊 Filtres")
     if QUAL_KEY in st.session_state and not st.session_state[QUAL_KEY].empty:
-        # --- ZÉRO SPAM : Filtre les options de filtrage elles-mêmes ---
-        df_f = sl.apply_spam_filter(st.session_state[QUAL_KEY], drop=True)
+        # Options are discovered from the FULL journal to avoid missing options when filters are active
+        df_full_opt = st.session_state[QUAL_KEY]
+        fa = st.multiselect("Asset", options=sl.get_safe_opts(df_full_opt, "Asset"))
+        fac = st.multiselect("Account", options=sl.get_owner_display_list(df_full_opt))
+        fcp = st.multiselect("Counterparty", options=sl.get_safe_opts(df_full_opt, "Counterparty"))
 
-        fa = st.multiselect("Asset", options=sl.get_safe_opts(df_f, "Asset"))
-        fac = st.multiselect("Account", options=sl.get_owner_display_list(df_f))
-        fcp = st.multiselect("Counterparty", options=sl.get_safe_opts(df_f, "Counterparty"))
-        fst, fct = st.multiselect("Statut", options=sl.get_safe_opts(df_f, "Status")), st.multiselect("Catégorie", options=sl.get_safe_opts(df_f, "Category"))
+        # Ensure 'Spam' is always an option in Status filter
+        stat_opts = sorted(list(set(["Spam", "Valide", "A vérifier"] + sl.get_safe_opts(df_full_opt, "Status"))))
+        fst = st.multiselect("Statut", options=stat_opts)
+
+        show_spams = st.toggle("Afficher les Spams", value=False, help="Affiche les transactions marquées comme Spam.")
+
+        # Ensure categories are discovered from full journal and handle possible non-string values
+        cat_opts = sorted(list(set(["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense", "Frais", "Doublon à ignorer"] + [str(c) for c in df_full_opt["Category"].unique() if not pd.isna(c)])))
+        fct = st.multiselect("Catégorie", options=cat_opts)
+
         if st.button("⚡ Appliquer"): st.rerun()
 
     st.divider(); st.header("⚙️ Référentiels")
@@ -342,6 +344,38 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error("Veuillez saisir une adresse et un nom.")
+
+    with st.expander("🛡️ Récupération & Sanctuaire", expanded=False):
+        st.info("Restaurez un fichier brut depuis le sanctuaire vers votre espace de travail.")
+        s_files = []
+        s_dir = os.path.join(EXPORT_BASE_DIR, str(target_year), "sanctuary")
+        if os.path.exists(s_dir):
+            s_files = [f for f in os.listdir(s_dir) if f.endswith(".csv") or f.endswith(".json")]
+
+        if not s_files:
+            st.write("Aucun fichier dans le sanctuaire pour cette année.")
+        else:
+            file_to_restore = st.selectbox("Fichier à restaurer", sorted(s_files), key="sel_restore")
+            if st.button("🔄 Restaurer", width='stretch', help="Restaure ce fichier dans l'espace de travail. S'il s'agit d'une récolte, elle deviendra la plus récente."):
+                import shutil
+                src_path = os.path.join(s_dir, file_to_restore)
+
+                # Logic: To make a restored harvest the "latest", we give it a fresh timestamp
+                if file_to_restore.startswith("raw_"):
+                    # raw_transactions_consolidated_0x..._20230101_120000.csv
+                    # We append _RESTORED_TS
+                    ts_now = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    base_name = file_to_restore.replace(".csv", "")
+                    target_name = f"{base_name}_RESTORED_{ts_now}.csv"
+                elif "verified_prices" in file_to_restore:
+                    target_name = f"verified_prices_{target_year}.json"
+                else:
+                    target_name = file_to_restore
+
+                shutil.copy(src_path, os.path.join(EXPORT_BASE_DIR, str(target_year), target_name))
+                st.success(f"Restauré : {target_name}")
+                st.info("Utilisez le bouton 'Sync / Fusion' pour prendre en compte ce fichier.")
+                st.rerun()
 
     with st.expander("🛡️ Blacklist Spams", expanded=False):
         s_list = sl.load_spam_list(); st.write(f"Blacklist : **{len(s_list)}**")
@@ -411,19 +445,19 @@ with st.sidebar:
                     v_assets.add(new_v_asset.upper().strip()); sl.save_valid_assets(v_assets); st.rerun()
 
     with st.expander("🏦 Positions (Protocoles)", expanded=False):
-        pl = load_position_labels()
+        pl = sl.load_position_labels()
         if pl:
             ed_pl = st.data_editor(pd.DataFrame(list(pl.items()), columns=["Adresse", "Label"]), num_rows="dynamic", width='stretch', key="ed_prot_sidebar")
             if st.button("💾 Sauver Liste Positions", key="btn_save_pl_sidebar"):
-                save_position_labels({str(r["Adresse"]).lower(): r["Label"] for _, r in ed_pl.iterrows()}); st.rerun()
+                sl.save_position_labels({str(r["Adresse"]).lower(): r["Label"] for _, r in ed_pl.iterrows()}); st.rerun()
 
             sa_pl = st.selectbox("Gérer une position", options=[""]+sorted(list(pl.keys())), format_func=lambda x: f"{pl[x]} ({x})" if x else "Sélectionner...", key="sel_pl_mgr")
             if sa_pl:
                 ml_pl = st.text_input("Nouveau Nom", value=pl[sa_pl], key="mod_lbl_acc_pl")
                 if st.button("💾 Appliquer modification", key="btn_mod_pl_sidebar"):
-                    pl[sa_pl]=ml_pl.strip(); save_position_labels(pl); st.rerun()
+                    pl[sa_pl]=ml_pl.strip(); sl.save_position_labels(pl); st.rerun()
                 if st.button("🗑️ Supprimer du registre", key="btn_del_pl_sidebar"):
-                    del pl[sa_pl]; save_position_labels(pl); st.rerun()
+                    del pl[sa_pl]; sl.save_position_labels(pl); st.rerun()
 
 # --- Main App ---
 t_q, t_r = st.tabs(["📋 Qualification", "🤝 Réconciliation"])
@@ -454,17 +488,25 @@ with t_q:
                     st.rerun()
 
         dfd = st.session_state[QUAL_KEY].copy()
+        if not show_spams:
+            dfd = dfd[dfd["Status"] != "Spam"]
+
         if fa: dfd = dfd[dfd["Asset"].isin(fa)]
         if fac: dfd = sl.filter_df_by_owner_display(dfd, fac)
         if fcp: dfd = dfd[dfd["Counterparty"].isin(fcp)]
         if fst: dfd = dfd[dfd["Status"].isin(fst)]
         if fct: dfd = dfd[dfd["Category"].isin(fct)]
+
         # We DO NOT reset index here to maintain link with st.session_state[QUAL_KEY]
         if "Sel." not in dfd.columns:
             dfd.insert(0, "Sel.", False)
+
         if st.button("🔍 Détecter Transferts Internes", width='stretch'):
             df, ct = sl.detect_internal_transfers(st.session_state[QUAL_KEY]); st.session_state[QUAL_KEY] = df; st.rerun()
-        cats = sorted(list(set(["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense", "Frais", "Doublon à ignorer"] + list(dfd["Category"].unique()))))
+
+        # Bug Fix: Ensure all items are strings and handle potential NaNs before sorting to avoid TypeError
+        raw_cats = [str(c) for c in st.session_state[QUAL_KEY]["Category"].unique() if not pd.isna(c) and str(c).strip() != ""]
+        cats = sorted(list(set(["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense", "Frais", "Doublon à ignorer"] + raw_cats)))
 
         # Style logic for highlighting suspect duplicates
         if not real_s.empty:
@@ -474,27 +516,6 @@ with t_q:
             df_styled = dfd.style.apply(highlight_dups, axis=1)
         else:
             df_styled = dfd
-
-        def on_editor_change():
-            # Synchronize session state with editor state immediately
-            # This handles both filtered and unfiltered views
-            if "qual_editor_v17" in st.session_state:
-                changes = st.session_state["qual_editor_v17"]
-                main_j = st.session_state.journal_qualifie
-
-                # Apply edited rows
-                for idx_str, edited_row in changes.get("edited_rows", {}).items():
-                    idx = int(idx_str)
-                    # The editor returns indices relative to the displayed dataframe (df_styled)
-                    # but we preserved the original indices in df_styled!
-                    if idx in main_j.index:
-                        for col, val in edited_row.items():
-                             if col == "Category": main_j.at[idx, "Category"] = val
-                             elif col == "Status": main_j.at[idx, "Status"] = val
-                             elif col == "Imposable": main_j.at[idx, "Imposable"] = sl.is_imposable_robust(val)
-                             elif col == "VGP (EUR)": main_j.at[idx, "VGP (EUR)"] = float(val)
-
-                st.session_state.journal_qualifie = main_j
 
         def on_editor_change():
             if "qual_editor_v17" in st.session_state:
@@ -515,9 +536,28 @@ with t_q:
 
                 st.session_state[QUAL_KEY] = main_j
 
-        edf = st.data_editor(df_styled, column_config={"Sel.":st.column_config.CheckboxColumn("Sel."),"Category":st.column_config.SelectboxColumn("Catégorie", options=cats),"Status":st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),"Imposable":st.column_config.CheckboxColumn("Imposable"),"Date":st.column_config.DatetimeColumn(disabled=True),"Account":st.column_config.TextColumn(disabled=True),"Amount":st.column_config.NumberColumn(format="%.6f", disabled=True)}, width='stretch', key="qual_editor_v17", on_change=on_editor_change)
+        col_cfg_q = {
+            "Sel.": st.column_config.CheckboxColumn("Sel."),
+            "Category": st.column_config.SelectboxColumn("Catégorie", options=cats),
+            "Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),
+            "Imposable": st.column_config.CheckboxColumn("Imposable"),
+            "Date": st.column_config.DatetimeColumn(disabled=True),
+            "Account": st.column_config.TextColumn(disabled=True),
+            "Amount": st.column_config.NumberColumn(format="%.6f", disabled=True),
+            "VGP (EUR)": st.column_config.NumberColumn("VGP (EUR)", format="%.2f"),
+            "Value ($)": st.column_config.NumberColumn("Value ($)", format="%.2f", disabled=True),
+            "Source Type": st.column_config.TextColumn("Source Type", disabled=True),
+            "Network": st.column_config.TextColumn("Réseau", disabled=True),
+            # Technical columns hidden
+            "Source_File": None,
+            "Linked_ID": None,
+            "Link_Status": None,
+            "_d": None
+        }
 
-        c1, c2 = st.columns(2)
+        edf = st.data_editor(df_styled, column_config=col_cfg_q, width='stretch', key="qual_editor_v17", on_change=on_editor_change)
+
+        c1, c2, c3 = st.columns(3)
         if c1.button("💶 Injecter vers Flux Fiat (App 0)", width='stretch'):
             selected = edf[edf["Sel."]].drop(columns="Sel.").to_dict('records')
             if selected:
@@ -531,6 +571,33 @@ with t_q:
                 count = sl.inject_to_app0(selected, "Swap", target_year)
                 st.success(f"{count} lignes injectées vers le registre Swaps.")
             else: st.warning("Veuillez d'abord sélectionner des lignes via la colonne 'Sel.'.")
+
+        with c3.popover("🗑️ Supprimer / Restaurer", width='stretch'):
+            st.info("Agit sur les lignes sélectionnées (colonne 'Sel.').")
+            if st.button("⏪ Restaurer vers État RAW", help="Supprime la modification dans le journal qualifié. La transaction redeviendra visible comme 'A vérifier' issue de la collecte originale.", width='stretch'):
+                selected_indices = edf[edf["Sel."]].index
+                if not selected_indices.empty:
+                    st.session_state[QUAL_KEY] = st.session_state[QUAL_KEY].drop(index=selected_indices)
+                    st.success(f"{len(selected_indices)} lignes restaurées vers l'état RAW.")
+                    time.sleep(1); st.rerun()
+                else: st.warning("Aucune sélection.")
+
+            if st.button("🔥 Éliminer DÉFINITIVEMENT du RAW", help="Supprime la transaction du fichier source original (working raw). Elle ne réapparaîtra plus jamais lors des prochaines synchronisations (sauf restauration manuelle via le Sanctuaire).", width='stretch'):
+                selected_rows = edf[edf["Sel."]].drop(columns="Sel.")
+                if not selected_rows.empty:
+                    count_del = 0
+                    for _, s_row in selected_rows.iterrows():
+                        src_f = s_row.get("Source_File")
+                        if src_f:
+                            f_path = os.path.join(EXPORT_BASE_DIR, str(target_year), src_f)
+                            if sl.remove_row_from_csv(f_path, s_row):
+                                count_del += 1
+                    # Also remove from current session journal
+                    st.session_state[QUAL_KEY] = st.session_state[QUAL_KEY].drop(index=selected_rows.index)
+                    st.success(f"{count_del} lignes éliminées définitivement des fichiers RAW.")
+                    time.sleep(1); st.rerun()
+                else: st.warning("Aucune sélection.")
+
         if st.button("💾 Sanctuariser", type="primary", width='stretch'):
             # Source of truth is st.session_state[QUAL_KEY]
             # (already partially updated by on_editor_change)

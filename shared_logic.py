@@ -191,9 +191,13 @@ def standardize_asset(asset):
         asset_clean = asset_clean.replace(k, v)
     return unicodedata.normalize('NFKC', asset_clean).upper().strip()
 
-def get_file_path(year, category):
+def get_file_path(year, category, sanctuary=False):
     """Centralized path resolution for all apps."""
     base = os.path.join(EXPORT_BASE_DIR, str(year))
+    if sanctuary:
+        base = os.path.join(base, "sanctuary")
+        os.makedirs(base, exist_ok=True)
+
     if category == 'qualified':
         return os.path.join(base, f"qualified_journal_{year}.csv")
     if category == 'fiat':
@@ -204,6 +208,8 @@ def get_file_path(year, category):
         return os.path.join(base, f"manual_swaps_{year}.csv")
     if category == 'prices':
         return os.path.join(base, f"eoy_prices_{year}.json")
+    if category == 'verified_prices':
+        return os.path.join(base, f"verified_prices_{year}.json")
     if category == 'inventory_eoy':
         return os.path.join(base, f"inventory_EOY_{year}.csv")
     return None
@@ -386,14 +392,7 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
     journal_or_year: either a dataframe or a year (int) to load current year data.
     Mandatory starting point: inventory_EOY_{year-1}.csv if force_full_history is False.
     """
-    pos_labels = {}
-    if os.path.exists(POSITIONS_FILE):
-        try:
-            with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
-                mappings = json.load(f)
-                for addr, val in mappings.items():
-                    pos_labels[addr] = val.get("label") if isinstance(val, dict) else val
-        except: pass
+    pos_labels = load_position_labels()
 
     target_date = pd.to_datetime(target_date, utc=True)
     target_year_val = target_date.year
@@ -571,7 +570,8 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
                     "Location": f"Account: {r['Account']}", "Asset": r["Asset"],
                     "Report": r["Reported"], "Entrées": r["In"],
                     "Sorties": r["Out"], # Preserve negative sign
-                    "Solde": r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": r["Final_Bal"] * p
+                    "Solde": r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": r["Final_Bal"] * p,
+                    "Is_Circuit": False, "Is_Position": False
                 })
 
     # --- B. INTERNAL TRANSFER OFFSET LEGS (Receivables) ---
@@ -631,13 +631,15 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
                 # and journal inflow (pos) is asset exit (neg)
                 val_eur = (-r["Final_Bal"]) * p
 
+                is_position = raw_cp in pos_labels
                 details.append({
                     "Location": label, "Asset": r["Asset"],
                     "Report": -r["Reported"],
                     "Entrées": abs(r["In"]), # Journal outflow is Receivable inflow
                     "Sorties": -abs(r["Out"]), # Journal inflow is Receivable outflow
                     "Solde": -r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": val_eur,
-                    "Is_Circuit": is_circuit # Meta field for filtering
+                    "Is_Circuit": is_circuit, # Meta field for filtering
+                    "Is_Position": is_position
                 })
 
     # --- C. MANUAL POSITIONS ---
@@ -696,13 +698,16 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
                     "Location": f"Manual Position: {r['Account']}", "Asset": r["Asset"],
                     "Report": r["Reported"], "Entrées": r["In"],
                     "Sorties": r["Out"], # Preserve sign
-                    "Solde": r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": r["Final_Bal"] * p
+                    "Solde": r["Final_Bal"], "Prix (EUR)": p, "Valeur (EUR)": r["Final_Bal"] * p,
+                    "Is_Circuit": False, "Is_Position": True
                 })
 
     full_details = pd.DataFrame(details)
 
-    if not full_details.empty and "Is_Circuit" not in full_details.columns:
-        full_details["Is_Circuit"] = False
+    if not full_details.empty:
+        if "Is_Circuit" not in full_details.columns: full_details["Is_Circuit"] = False
+        if "Is_Position" not in full_details.columns: full_details["Is_Position"] = False
+        full_details["Is_Position"] = full_details["Is_Position"].fillna(False)
 
     # Calculate Total VGP: We EXCLUDE rows marked as 'Is_Circuit'
     if not full_details.empty:
@@ -712,6 +717,27 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
         total_vgp = 0.0
 
     return full_details, total_vgp
+
+def load_position_labels():
+    """Loads and unifies protocol position labels."""
+    if os.path.exists(POSITIONS_FILE):
+        try:
+            with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # Handle both {addr: label} and {addr: {label: x, ...}}
+                unified = {}
+                for k, v in data.items():
+                    label = v.get("label") if isinstance(v, dict) else v
+                    unified[str(k).lower()] = label
+                return unified
+        except: return {}
+    return {}
+
+def save_position_labels(data):
+    """Saves protocol position labels."""
+    lower_data = {str(k).lower(): v for k, v in data.items()}
+    with open(POSITIONS_FILE, "w", encoding="utf-8") as f:
+        json.dump(lower_data, f, indent=4)
 
 def load_external_circuits():
     if os.path.exists(EXTERNAL_CIRCUITS_FILE):
@@ -747,6 +773,14 @@ def save_owner_accounts(data):
     lower_data = {str(k).lower(): v for k, v in data.items()}
     with open(OWNERS_FILE, "w", encoding="utf-8") as f:
         json.dump(lower_data, f, indent=4)
+
+def get_all_labels():
+    """Returns a merged dictionary of all technical IDs and their friendly labels."""
+    merged = load_owner_accounts()
+    merged.update(load_position_labels())
+    ext = load_external_circuits()
+    merged.update(ext.get("labels", {}))
+    return merged
 
 def load_manual_notes():
     if os.path.exists(NOTES_FILE):
@@ -826,14 +860,14 @@ def get_owner_display_list(journal_df=None):
     Guarantees that each unique identity (linked by owner_accounts.json) appears only once.
     Priority is given to Hex addresses as the primary identifier.
     """
-    owners_map = load_owner_accounts() # addr -> label
+    all_labels = get_all_labels() # addr -> label
     # Reverse map: label -> addr
-    label_to_addr = {str(v).lower(): k for k, v in owners_map.items() if str(v).lower() != "nan"}
+    label_to_id = {str(v).lower(): k for k, v in all_labels.items() if str(v).lower() != "nan"}
 
     # 1. Collect all identifiers from all sources
-    all_raw_ids = set(owners_map.keys())
+    all_raw_ids = set(all_labels.keys())
     # Add labels that are values in the map (to handle if they appear in journals)
-    all_raw_ids.update([str(v).strip() for v in owners_map.values() if str(v).lower() != "nan"])
+    all_raw_ids.update([str(v).strip() for v in all_labels.values() if str(v).lower() != "nan"])
 
     if journal_df is not None and "Account" in journal_df.columns:
         all_raw_ids.update([str(a).strip() for a in journal_df["Account"].dropna().unique()])
@@ -862,14 +896,12 @@ def get_owner_display_list(journal_df=None):
         # Determine the primary key for this identity
         if low_id.startswith("0x"):
             prim_key = low_id
-        elif low_id in label_to_addr:
-            prim_key = label_to_addr[low_id]
+        elif low_id in label_to_id:
+            prim_key = label_to_id[low_id]
         else:
             prim_key = low_id # Orphan label
 
-        name = owners_map.get(prim_key, "")
-        if not name and prim_key in label_to_addr: # Should not happen with current logic but for safety
-             name = prim_key
+        name = all_labels.get(prim_key, "")
 
         if prim_key not in identity_registry:
             identity_registry[prim_key] = {"ident": raw_id, "name": name}
@@ -892,8 +924,8 @@ def filter_df_by_owner_display(df, selected_displays):
     """Filters a DataFrame where 'Account' matches any selected formatted owner display."""
     if not selected_displays: return df
 
-    owners_map = load_owner_accounts()
-    label_to_addr = {str(v).lower(): k for k, v in owners_map.items() if str(v).lower() != "nan"}
+    all_labels = get_all_labels()
+    label_to_id = {str(v).lower(): k for k, v in all_labels.items() if str(v).lower() != "nan"}
 
     # Map of all allowed raw identifiers
     allowed_ids = set()
@@ -904,15 +936,24 @@ def filter_df_by_owner_display(df, selected_displays):
             p2 = disp.split(" (")[1][:-1].lower()
             allowed_ids.add(p1)
             allowed_ids.add(p2)
+            # IMPORTANT: Also add the full string itself for exact matches in standardized dataframes
+            allowed_ids.add(disp.lower())
         else:
             allowed_ids.add(disp.lower())
 
     def row_matches(acc):
         a = str(acc).lower().strip()
+        # 1. Direct match with allowed IDs or the full display string
         if a in allowed_ids: return True
-        # Check mapping links
-        if a in owners_map and owners_map[a].lower() in allowed_ids: return True
-        if a in label_to_addr and label_to_addr[a].lower() in allowed_ids: return True
+
+        # 2. Check if the input 'acc' is already standardized 'ID (Name)'
+        raw_id_from_acc = resolve_raw_addr(a).lower()
+        if raw_id_from_acc in allowed_ids: return True
+
+        # 3. Check mapping links
+        if raw_id_from_acc in all_labels and all_labels[raw_id_from_acc].lower() in allowed_ids: return True
+        if raw_id_from_acc in label_to_id and label_to_id[raw_id_from_acc].lower() in allowed_ids: return True
+
         return False
 
     return df[df["Account"].apply(row_matches)]
@@ -927,15 +968,7 @@ def get_external_circuits_discovery(journal_df=None):
     4. Collect accounts having Txs with Level N collected accounts (Level 2+).
     """
     owner_addrs = set(get_owner_addresses(journal_df))
-
-    pos_labels = {}
-    if os.path.exists(POSITIONS_FILE):
-        try:
-            with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
-                mappings = json.load(f)
-                for addr, val in mappings.items():
-                    pos_labels[addr] = val.get("label") if isinstance(val, dict) else val
-        except: pass
+    pos_labels = load_position_labels()
     pos_addrs = set(pos_labels.keys())
 
     # Build the interaction graph from all available journals
@@ -1347,6 +1380,69 @@ def calculate_fiscal_gains(cessions_df, initial_acq_price):
             pass
 
     return pd.DataFrame(results), temp_acq
+
+def remove_row_from_csv(file_path, row_to_remove):
+    """
+    Removes a specific row from a CSV file using a matching quintuplet.
+    """
+    if not os.path.exists(file_path): return False
+    try:
+        df = pd_read_csv_safe(file_path)
+        if df.empty: return False
+
+        # We normalize the file for comparison
+        # Find column mappings
+        h_map = {c.lower().replace(" ", "").replace("_", ""): c for c in df.columns}
+
+        mask = pd.Series([True] * len(df))
+
+        # Quintuplet matching
+        match_keys = {
+            "Date": ["date"],
+            "Account": ["account"],
+            "Asset": ["asset", "tokensymbol"],
+            "Amount": ["amount", "valueeth", "value", "quantity"],
+            "Tx Hash": ["txhash", "hash"]
+        }
+
+        for k, alternates in match_keys.items():
+            target_col = None
+            for alt in alternates:
+                if alt in h_map:
+                    target_col = h_map[alt]
+                    break
+
+            if target_col:
+                val = row_to_remove.get(k)
+                if val is None and k == "Amount":
+                    val = row_to_remove.get("Quantité") or row_to_remove.get("Montant")
+
+                if k == "Date":
+                    try:
+                        d1 = pd.to_datetime(df[target_col], utc=True, errors='coerce')
+                        d2 = pd.to_datetime(val, utc=True, errors='coerce')
+                        mask &= (d1 == d2)
+                    except: pass
+                elif k == "Amount":
+                    try:
+                        v1 = pd.to_numeric(df[target_col], errors='coerce').fillna(0.0)
+                        v2 = float(val)
+                        # We try exact match, then absolute match as fallback (for legacy or unsigned files)
+                        m_exact = (abs(v1 - v2) < 1e-8)
+                        if not m_exact.any():
+                             mask &= (abs(v1.abs() - abs(v2)) < 1e-8)
+                        else:
+                             mask &= m_exact
+                    except: pass
+                else:
+                    mask &= (df[target_col].astype(str).str.lower().str.strip() == str(val).lower().strip())
+
+        if mask.any():
+            df_new = df[~mask]
+            df_new.to_csv(file_path, index=False, encoding="utf-8-sig")
+            return True
+    except: pass
+    return False
 
 def inject_to_app0(rows_list, target_type, year):
     """

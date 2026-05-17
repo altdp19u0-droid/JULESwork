@@ -181,7 +181,9 @@ if harvest_btn:
             bs_tok = fetch_blockscout_v2(cfg["bs_v2"], addr_c, max_txs, target_year, "token-transfers")
             for t in (bs_nat + bs_int):
                 dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
-                tx_h, f_r, t_r = str(t.get("hash") or t.get("tx_hash")).lower().strip(), str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()
+                h_val = t.get("hash") or t.get("tx_hash") or t.get("txHash")
+                tx_h = str(h_val).lower().strip() if h_val else "none"
+                f_r, t_r = str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()
                 val = float(t.get("value", 0)) / 1e18
                 all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native" if "method" in t else "Internal", "Method": t.get("method", "Internal"), "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": native, "Amount": val if t_r == addr_c else -val, "Fee_Asset": native, "Fee_Amount": (int(t.get("gas_used", 0)) * int(t.get("gas_price", 0))) / 1e18 if f_r == addr_c else 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
             for t in bs_tok:
@@ -189,8 +191,10 @@ if harvest_btn:
                 tok = t.get("token") or {}
                 asset, dec = str(tok.get("symbol", "TOKEN")).upper().strip(), int(tok.get("decimals") or 18)
                 val = float(t.get("total", {}).get("value") or t.get("value", 0)) / (10**dec)
+                h_val = t.get("tx_hash") or t.get("hash") or t.get("txHash")
+                tx_h = str(h_val).lower().strip() if h_val else "none"
                 f_r, t_r = str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()
-                all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": str(t.get("tx_hash") or t.get("hash")).lower().strip(), "Type": "Token", "Method": "", "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": asset, "Amount": val if t_r == addr_c else -val, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
+                all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Token", "Method": "", "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": asset, "Amount": val if t_r == addr_c else -val, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
             chains_status[chain]["bs"] = True; f1.caption(f"✅ Way_1 (BS) : {len(bs_nat)+len(bs_int)+len(bs_tok)} lignes")
         except: chains_status[chain]["bs"] = False; f1.error("❌ Way_1 : Échec")
 
@@ -200,7 +204,9 @@ if harvest_btn:
             chains_status[chain]["eth"] = stat_v2
             if res_v2:
                 for t, label, dt in res_v2:
-                    tx_h, f_r, t_r = str(t.get("hash") or t.get("txHash") or "").lower().strip(), str(t.get("from") or "").lower().strip(), str(t.get("to") or "").lower().strip()
+                    h_val = t.get("hash") or t.get("txHash") or t.get("tx_hash")
+                    tx_h = str(h_val).lower().strip() if h_val else "none"
+                    f_r, t_r = str(t.get("from") or "").lower().strip(), str(t.get("to") or "").lower().strip()
                     amt = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal", 18) or 18))
                     asset_v2 = str(t.get("tokenSymbol") or native).upper().strip()
                     all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": label, "Method": t.get("functionName", ""), "Account": addr_c, "From": f_r, "To": t_r, "From_Label": "", "To_Label": "", "Counterparty": t_r if f_r == addr_c else f_r, "Asset": asset_v2, "Amount": amt if t_r == addr_c else -amt, "Fee_Asset": native if f_r == addr_c else "", "Fee_Amount": (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 1e18 if f_r == addr_c else 0.0, "Source_Way": "Way_2", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
@@ -294,9 +300,17 @@ if st.session_state.harvest_data:
 
             if st.button(f"💾 Sanctuariser {addr[:10]}...", key=f"s_{addr}"):
                 y_dir = os.path.join(EXPORT_BASE_DIR, str(target_year)); os.makedirs(y_dir, exist_ok=True)
+                s_dir = os.path.join(y_dir, "sanctuary"); os.makedirs(s_dir, exist_ok=True)
                 prefix = f"{addr}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+                # 1. Working copy (latest raw for other apps)
                 if not data["port"].empty: data["port"].to_csv(os.path.join(y_dir, f"raw_portfolio_{prefix}.csv"), index=False)
                 if not df_t.empty: df_t.to_csv(os.path.join(y_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False)
-                st.success("Enregistré.")
+
+                # 2. SANCTUARY copy (never modified, permanent archive)
+                if not data["port"].empty: data["port"].to_csv(os.path.join(s_dir, f"raw_portfolio_{prefix}.csv"), index=False)
+                if not df_t.empty: df_t.to_csv(os.path.join(s_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False)
+
+                st.success(f"Récolte sanctuarisée ({prefix})")
 
 st.sidebar.caption("Harvest v7.8 - Full Set")

@@ -322,8 +322,8 @@ with tab_accounts:
         if journals_prev:
             full_prev = pd.concat(journals_prev)
             full_prev = full_prev[full_prev["Asset"] != "EUR"]
-            # Filter Spam/Dup
-            if 'Status' in full_prev.columns: full_prev = full_prev[full_prev['Status'] != 'Spam']
+            # --- ZÉRO SPAM ---
+            full_prev = sl.apply_spam_filter(full_prev, drop=True)
 
             # Sum of everything up to end of previous year
             eoy_prev_bals = full_prev.groupby(['Asset'])['Amount'].sum().reset_index()
@@ -841,11 +841,8 @@ with tab_bilan:
                 if os.path.exists(path_j):
                     try:
                         df_y = sl.pd_read_csv_safe(path_j)
-                        # Standard exclusion filter
-                        if 'Status' in df_y.columns:
-                            df_y = df_y[df_y['Status'] != 'Spam']
-                        if 'Category' in df_y.columns:
-                            df_y = df_y[df_y['Category'] != 'Doublon à ignorer']
+                        # --- ZÉRO SPAM ---
+                        df_y = sl.apply_spam_filter(df_y, drop=True)
                         all_txs.append(df_y)
                     except: pass
 

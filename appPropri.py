@@ -59,9 +59,8 @@ def get_owner_history(year):
                 df_q = sl.pd_read_csv_safe(path)
                 if not df_q.empty and "Date" in df_q.columns:
                     df_q = sl.standardize_df_addresses(df_q)
-                    leaked = sl.validate_spam_exclusion(df_q)
-                    if leaked: df_q.loc[leaked, "Status"] = "Spam"
-                    df_q = df_q[df_q["Status"] != "Spam"].copy()
+                    # --- ZÉRO SPAM ---
+                    df_q = sl.apply_spam_filter(df_q, drop=True)
                     df_q["acc_raw"] = df_q["Account"].apply(sl.resolve_raw_addr)
                 else:
                     df_q = pd.DataFrame()
@@ -294,9 +293,8 @@ def get_complementary_history(year):
                 # UNIFICATION
                 df_q = sl.standardize_df_addresses(df_q)
 
-                leaked = sl.validate_spam_exclusion(df_q)
-                if leaked: df_q.loc[leaked, "Status"] = "Spam"
-                df_q = df_q[df_q["Status"] != "Spam"].copy()
+                # --- ZÉRO SPAM ---
+                df_q = sl.apply_spam_filter(df_q, drop=True)
 
                 # Filter for Internal Transfers where Counterparty is NOT an owner
                 if "Category" in df_q.columns and "Counterparty" in df_q.columns:
