@@ -539,7 +539,7 @@ with t_q:
         col_cfg_q = {
             "Sel.": st.column_config.CheckboxColumn("Sel."),
             "Category": st.column_config.SelectboxColumn("Catégorie", options=cats),
-            "Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),
+            "Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam", "Injecté Fiat", "Injecté Swap"]),
             "Imposable": st.column_config.CheckboxColumn("Imposable"),
             "Date": st.column_config.DatetimeColumn(disabled=True),
             "Account": st.column_config.TextColumn(disabled=True),
@@ -559,17 +559,25 @@ with t_q:
 
         c1, c2, c3 = st.columns(3)
         if c1.button("💶 Injecter vers Flux Fiat (App 0)", width='stretch'):
-            selected = edf[edf["Sel."]].drop(columns="Sel.").to_dict('records')
-            if selected:
-                count = sl.inject_to_app0(selected, "Fiat", target_year)
+            selected_indices = edf[edf["Sel."]].index
+            if not selected_indices.empty:
+                selected_rows = edf.loc[selected_indices].drop(columns="Sel.").to_dict('records')
+                count = sl.inject_to_app0(selected_rows, "Fiat", target_year)
+                # Update journal to show injection
+                st.session_state[QUAL_KEY].loc[selected_indices, "Status"] = "Injecté Fiat"
                 st.success(f"{count} lignes injectées vers le registre Fiat.")
+                time.sleep(1); st.rerun()
             else: st.warning("Veuillez d'abord sélectionner des lignes via la colonne 'Sel.'.")
 
         if c2.button("🔄 Injecter vers Swaps (App 0)", width='stretch'):
-            selected = edf[edf["Sel."]].drop(columns="Sel.").to_dict('records')
-            if selected:
-                count = sl.inject_to_app0(selected, "Swap", target_year)
+            selected_indices = edf[edf["Sel."]].index
+            if not selected_indices.empty:
+                selected_rows = edf.loc[selected_indices].drop(columns="Sel.").to_dict('records')
+                count = sl.inject_to_app0(selected_rows, "Swap", target_year)
+                # Update journal to show injection
+                st.session_state[QUAL_KEY].loc[selected_indices, "Status"] = "Injecté Swap"
                 st.success(f"{count} lignes injectées vers le registre Swaps.")
+                time.sleep(1); st.rerun()
             else: st.warning("Veuillez d'abord sélectionner des lignes via la colonne 'Sel.'.")
 
         with c3.popover("🗑️ Supprimer / Restaurer", width='stretch'):
@@ -598,13 +606,11 @@ with t_q:
                     time.sleep(1); st.rerun()
                 else: st.warning("Aucune sélection.")
 
-        if st.button("💾 Sanctuariser", type="primary", width='stretch'):
+        if st.button("💾 Sanctuariser & Générer Journal Propre (CLEAN)", type="primary", width='stretch'):
             # Source of truth is st.session_state[QUAL_KEY]
-            # (already partially updated by on_editor_change)
-            main_j = st.session_state[QUAL_KEY]
+            main_j = st.session_state[QUAL_KEY].copy()
 
             # Final check from the latest state of the editor (edf)
-            # to ensure everything is captured
             for idx, row in edf.iterrows():
                 if idx in main_j.index:
                     main_j.at[idx, "Category"] = row["Category"]
@@ -614,19 +620,31 @@ with t_q:
                     if "Linked_ID" in row: main_j.at[idx, "Linked_ID"] = row["Linked_ID"]
                     if "Link_Status" in row: main_j.at[idx, "Link_Status"] = row["Link_Status"]
 
-            # Global cleanups
-            main_j = main_j[main_j["Category"] != "Doublon à ignorer"]
-
-            # Zéro Spam reinforcement
-            main_j = sl.apply_spam_filter(main_j, drop=False)
-
-            # Final Persistence
+            # 1. Save FULL Journal (Audit history)
             st.session_state[QUAL_KEY] = main_j
             main_j.to_csv(sl.get_file_path(target_year, 'qualified'), index=False, encoding="utf-8-sig")
 
+            # 2. Generate and Save CLEAN Journal (Working base for other apps)
+            # Rules: No Spams, No Ignores/Duplicates, Resolve Labels
+            clean_j = main_j.copy()
+            clean_j = sl.apply_spam_filter(clean_j, drop=True)
+
+            # Exclusion of internal ignore categories
+            if "Category" in clean_j.columns:
+                mask_ignore = clean_j["Category"].fillna("").str.contains("ignorer|Fusionné", case=False, na=False)
+                clean_j = clean_j[~mask_ignore]
+
+            # Resolve labels for the CLEAN file
+            # This ensures app3/appPropri don't have to resolve addresses anymore
+            clean_j = apply_position_labels(clean_j)
+
+            clean_path = sl.get_file_path(target_year, 'qualified_clean')
+            clean_j.to_csv(clean_path, index=False, encoding="utf-8-sig")
+
             st.balloons()
-            st.success(f"Sanctuarisation réussie : {len(main_j)} lignes enregistrées.")
-            time.sleep(1)
+            st.success(f"Sanctuarisation réussie !")
+            st.info(f"Journal COMPLET : {len(main_j)} lignes | Journal PROPRE (CLEAN) : {len(clean_j)} lignes.")
+            time.sleep(2)
             st.rerun()
 
 with t_r:

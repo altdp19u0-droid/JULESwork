@@ -32,44 +32,14 @@ def normalize_asset(asset):
     return unicodedata.normalize('NFKC', s).upper().strip()
 
 def load_all_history():
-    """Aggregates all qualified journals and manual positions from 2020."""
-    journals = []
-    manuals = []
-
+    """Aggregates consolidated clean journals from 2020."""
+    # GATEWAY ARCHITECTURE: Use consolidated clean history
     current_year = datetime.now().year
-    for y in range(2020, current_year + 1):
-        # 1. Qualified Journal
-        path_j = sl.get_file_path(y, 'qualified')
-        if os.path.exists(path_j):
-            try:
-                df = sl.pd_read_csv_safe(path_j)
-                if not df.empty:
-                    df = sl.standardize_df_addresses(df)
-                    df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
+    df_clean = sl.load_clean_history(current_year)
+    return df_clean, pd.DataFrame() # Manual positions are already in CLEAN
 
-                    # --- ZÉRO SPAM : Filtre de Diagnostic ---
-                    df = sl.apply_spam_filter(df, drop=True)
-
-                    # Filter duplicates
-                    df = df[(df.get("Category", "") != "Doublon à ignorer")]
-                    journals.append(df)
-            except: pass
-
-        # 2. Manual Positions
-        path_m = sl.get_file_path(y, 'positions')
-        if os.path.exists(path_m):
-            try:
-                df_m = sl.pd_read_csv_safe(path_m)
-                if not df_m.empty:
-                    df_m = sl.standardize_df_addresses(df_m)
-                    df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True, errors="coerce")
-                    manuals.append(df_m)
-            except: pass
-
-    return pd.concat(journals) if journals else pd.DataFrame(), pd.concat(manuals) if manuals else pd.DataFrame()
-
-def compute_running_balances(df_j, df_m):
-    if df_j.empty and df_m.empty: return pd.DataFrame()
+def compute_running_balances(df_j, df_m_legacy):
+    if df_j.empty: return pd.DataFrame()
 
     # 1. Prepare Rows
     rows = []
@@ -97,14 +67,7 @@ def compute_running_balances(df_j, df_m):
                         "Counterparty": r["Account"], "Source": "Internal Leg", "Is_Cession": False
                     })
 
-    # Manual Entries
-    if not df_m.empty:
-        for _, r in df_m.iterrows():
-            rows.append({
-                "Date": r["Date"], "Account": str(r["Account"]), "Asset": normalize_asset(r["Asset"]),
-                "Amount": float(r["Quantité"]), "Type": "Manual Position", "Category": "Stock Initial/Snapshot",
-                "Counterparty": "Manual", "Source": "Manual", "Is_Cession": False
-            })
+    # Manual Entries are already in the CLEAN journal as Source Type 'Manual Position'
 
     full_history = pd.DataFrame(rows).sort_values("Date")
 

@@ -104,8 +104,12 @@ def pdf_safe_str(val, use_unicode=True):
     return s.encode('latin-1', 'replace').decode('latin-1')
 
 def load_data(year):
+    # GATEWAY ARCHITECTURE: Prefer CLEAN journal
+    clean_path = sl.get_file_path(year, 'qualified_clean')
+    qual_path = sl.get_file_path(year, 'qualified')
+
     paths = {
-        'journal': sl.get_file_path(year, 'qualified'),
+        'journal': clean_path if os.path.exists(clean_path) else qual_path,
         'fiat': sl.get_file_path(year, 'fiat'),
         'positions': sl.get_file_path(year, 'positions')
     }
@@ -117,8 +121,7 @@ def load_data(year):
     for key, path in paths.items():
         if os.path.exists(path) and os.path.getsize(path) > 0:
             df = sl.pd_read_csv_safe(path)
-            # UNIFICATION
-            df = sl.standardize_df_addresses(df)
+
             # Standardisation Date
             if 'Date' in df.columns:
                 df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
@@ -130,9 +133,12 @@ def load_data(year):
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
             if key == 'journal':
-                # --- ZÉRO SPAM : Filtre Fiscal ---
-                df = sl.apply_spam_filter(df, drop=True)
-                df = apply_position_labels(df)
+                # If we are using the non-clean file, we apply filters
+                if "CLEAN" not in path:
+                    df = sl.standardize_df_addresses(df)
+                    df = sl.apply_spam_filter(df, drop=True)
+                    df = apply_position_labels(df)
+                # If CLEAN, data is already filtered and labeled by app2 Gateway
 
             data[key] = df
         else:
@@ -203,11 +209,13 @@ with st.sidebar:
         st.rerun()
 
     # Data Freshness Warning
-    qual_path = sl.get_file_path(target_year, 'qualified')
-    if os.path.exists(qual_path):
+    clean_path = sl.get_file_path(target_year, 'qualified_clean')
+    check_path = clean_path if os.path.exists(clean_path) else sl.get_file_path(target_year, 'qualified')
+
+    if os.path.exists(check_path):
         last_load = st.session_state.get("last_app3_sync_time", 0)
-        if sl.check_file_freshness(qual_path, last_load):
-            st.warning("⚠️ Données qualifiées mises à jour. Veuillez 'Recharger'.")
+        if sl.check_file_freshness(check_path, last_load):
+            st.warning("⚠️ Journal mis à jour. Veuillez 'Recharger'.")
 
     if st.button("🧮 Recalculer tout (Session)", key="btn_recalc_all"):
         st.cache_data.clear()
@@ -311,20 +319,11 @@ with tab_accounts:
         st.info(f"Calcul des soldes au 31/12/{target_year - 1} pour initialiser l'année {target_year}.")
         prev_date = datetime(target_year - 1, 12, 31)
 
-        # Use the same logic as VGP calculation but for the previous year-end
-        journals_prev = []
-        for y_p in range(2020, target_year):
-            path_p = sl.get_file_path(y_p, 'qualified')
-            if os.path.exists(path_p):
-                try: journals_prev.append(sl.pd_read_csv_safe(path_p))
-                except: pass
+        # GATEWAY: Use consolidated clean history
+        full_prev = sl.load_clean_history(target_year - 1)
 
-        if journals_prev:
-            full_prev = pd.concat(journals_prev)
+        if not full_prev.empty:
             full_prev = full_prev[full_prev["Asset"] != "EUR"]
-            # --- ZÉRO SPAM ---
-            full_prev = sl.apply_spam_filter(full_prev, drop=True)
-
             # Sum of everything up to end of previous year
             eoy_prev_bals = full_prev.groupby(['Asset'])['Amount'].sum().reset_index()
             eoy_prev_bals = eoy_prev_bals[eoy_prev_bals['Amount'].abs() > 1e-8]
@@ -834,20 +833,10 @@ with tab_bilan:
         st.write("Ce bouton génère un fichier CSV contenant l'intégralité des transactions (hors spams) utilisées pour la constitution de l'inventaire et le calcul des plus-values.")
 
         if st.button("📊 Préparer l'export Historique (Sans Spam)", width='stretch', key="btn_export_hist_fiscal"):
-            # Aggregation logic (same as VGP/Portfolio but row-based)
-            all_txs = []
-            for y in range(2020, target_year + 1):
-                path_j = sl.get_file_path(y, 'qualified')
-                if os.path.exists(path_j):
-                    try:
-                        df_y = sl.pd_read_csv_safe(path_j)
-                        # --- ZÉRO SPAM ---
-                        df_y = sl.apply_spam_filter(df_y, drop=True)
-                        all_txs.append(df_y)
-                    except: pass
+            # GATEWAY: Use consolidated clean history
+            df_hist_full = sl.load_clean_history(target_year)
 
-            if all_txs:
-                df_hist_full = pd.concat(all_txs, ignore_index=True)
+            if not df_hist_full.empty:
                 # Apply labels for audit clarity
                 df_hist_full = apply_position_labels(df_hist_full)
 

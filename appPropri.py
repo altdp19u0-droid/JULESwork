@@ -45,69 +45,19 @@ with st.sidebar:
 # --- Logic: Loading and Filtering ---
 @st.cache_data
 def get_owner_history(year):
-    """Loads all qualified journals and manual records up to 'year' and filters for owner accounts."""
+    """Loads consolidated clean history up to 'year' and filters for owner accounts."""
     owners_map = sl.load_owner_accounts()
     owner_addrs = set(owners_map.keys())
 
-    all_txs = []
-    for y in range(2020, year + 1):
-        # 1. From Qualified Journal
-        df_q = pd.DataFrame()
-        path = sl.get_file_path(y, 'qualified')
-        if os.path.exists(path):
-            try:
-                df_q = sl.pd_read_csv_safe(path)
-                if not df_q.empty and "Date" in df_q.columns:
-                    df_q = sl.standardize_df_addresses(df_q)
-                    # --- ZÉRO SPAM ---
-                    df_q = sl.apply_spam_filter(df_q, drop=True)
-                    df_q["acc_raw"] = df_q["Account"].apply(sl.resolve_raw_addr)
-                else:
-                    df_q = pd.DataFrame()
-            except: pass
+    # GATEWAY ARCHITECTURE: Use consolidated clean history
+    combined = sl.load_clean_history(year)
 
-        # 2. From Manual registries (Fiat/Swaps) to catch real-time edits in app0
-        # This prevents the "empty dashboard" when user adds items but hasn't synced Step 2 yet.
-        df_manual = pd.DataFrame()
+    if not combined.empty:
+        # Resolve owner addresses for filtering
+        combined["acc_raw"] = combined["Account"].apply(sl.resolve_raw_addr)
+        # Check against both technical ID and label from standard resolution
+        combined = combined[combined["acc_raw"].isin(owner_addrs) | combined["Account"].isin(owners_map.values())]
 
-        # 2a. Fiat
-        path_f = sl.get_file_path(y, 'fiat')
-        if os.path.exists(path_f):
-            try:
-                raw_f = sl.pd_read_csv_safe(path_f)
-                if not raw_f.empty and "Date" in raw_f.columns:
-                    raw_f = sl.standardize_df_addresses(raw_f)
-                    # Map to standard schema
-                    f_rows = []
-                    for _, r in raw_f.iterrows():
-                        qty = float(r.get("Quantité", 0.0))
-                        f_rows.append({
-                            "Date": r["Date"], "Account": r.get("Account", r.get("Compte/Label")),
-                            "Counterparty": r.get("Counterparty", r.get("Plateforme")),
-                            "Asset": r["Asset"], "Amount": qty if "Achat" in str(r["Type"]) else -qty,
-                            "Source Type": "Manual Fiat", "Category": str(r["Type"]), "Status": "Valide"
-                        })
-                    df_manual = pd.concat([df_manual, pd.DataFrame(f_rows)])
-            except: pass
-
-        # 2b. Swaps
-        path_s = sl.get_file_path(y, 'swaps')
-        if os.path.exists(path_s):
-            try:
-                raw_s = sl.pd_read_csv_safe(path_s)
-                if not raw_s.empty and "Date" in raw_s.columns:
-                    raw_s = sl.standardize_df_addresses(raw_s)
-                    raw_s["Source Type"] = "Manual Swap"
-                    df_manual = pd.concat([df_manual, raw_s])
-            except: pass
-
-        if not df_manual.empty:
-            df_manual["acc_raw"] = df_manual["Account"].apply(sl.resolve_raw_addr)
-            df_manual = df_manual[df_manual["acc_raw"].isin(owner_addrs)].copy()
-
-        # Merge and Deduplicate
-        combined = pd.concat([df_q, df_manual])
-        if not combined.empty:
             combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
             # --- CRITICAL FIX: Filter out rows with None dates ---
             combined = combined[combined["Date"].notna()]
@@ -164,77 +114,16 @@ def get_acquisition_history(year):
 
 @st.cache_data
 def get_cessions_history(year):
-    """Loads all qualified and manual imposable cessions from 2020 to 'year'."""
-    all_cessions = []
+    """Loads all imposable cessions from consolidated clean history up to 'year'."""
+    # GATEWAY ARCHITECTURE: Use consolidated clean history
+    combined = sl.load_clean_history(year)
 
-    for y in range(2020, year + 1):
-        # 1. From Qualified Journal (consolidated truth)
-        path_q = sl.get_file_path(y, 'qualified')
-        df_q = pd.DataFrame()
-        if os.path.exists(path_q):
-            try:
-                df_q = sl.pd_read_csv_safe(path_q)
-                if not df_q.empty and all(c in df_q.columns for c in ["Date", "Imposable", "Category", "Asset"]):
-                    df_q = sl.standardize_df_addresses(df_q)
-                    mask_cess = (df_q['Imposable'].apply(sl.is_imposable_robust) |
-                                 df_q['Category'].fillna("").str.contains("Vente", case=False)) & (df_q['Asset'] != 'EUR')
-                    df_q = df_q[mask_cess].copy()
-                else:
-                    df_q = pd.DataFrame()
-            except: df_q = pd.DataFrame()
+    if not combined.empty:
+        # Filter for cessions
+        mask_cess = (combined['Imposable'].apply(sl.is_imposable_robust) |
+                     combined['Category'].fillna("").str.contains("Vente", case=False)) & (combined['Asset'] != 'EUR')
+        combined = combined[mask_cess].copy()
 
-        # 2. From Manual Fiat (detecting non-synced sales)
-        path_f = sl.get_file_path(y, 'fiat')
-        df_f_cess = pd.DataFrame()
-        if os.path.exists(path_f):
-            try:
-                raw_f = sl.pd_read_csv_safe(path_f)
-                if not raw_f.empty and all(c in raw_f.columns for c in ["Date", "Type", "Imposable", "Asset", "Quantité", "Montant EUR"]):
-                    raw_f = sl.standardize_df_addresses(raw_f)
-                    # Sales (Vente) marked as imposable
-                    mask_f_cess = raw_f['Type'].fillna("").str.contains("Vente", case=False) & raw_f['Imposable'].apply(sl.is_imposable_robust)
-                    df_f_raw = raw_f[mask_f_cess].copy()
-                    if not df_f_raw.empty:
-                        rows = []
-                        for _, r in df_f_raw.iterrows():
-                            rows.append({
-                                "Date": r["Date"], "Account": r.get("Account", r.get("Compte/Label")),
-                                "Asset": r["Asset"], "Amount": -float(r["Quantité"]),
-                                "Prix de Cession (EUR)": float(r["Montant EUR"]),
-                                "VGP (EUR)": 0.0, "Network": "Fiat", "Source Type": "Manual Fiat",
-                                "Category": "Vente", "Status": "Valide", "Imposable": True
-                            })
-                        df_f_cess = pd.DataFrame(rows)
-            except: pass
-
-        # 3. From Manual Swaps (detecting non-synced imposable swaps)
-        path_s = sl.get_file_path(y, 'swaps')
-        df_s_cess = pd.DataFrame()
-        if os.path.exists(path_s):
-            try:
-                raw_s = sl.pd_read_csv_safe(path_s)
-                if not raw_s.empty and all(c in raw_s.columns for c in ["Date", "Imposable", "Amount", "Asset", "Account"]):
-                    raw_s = sl.standardize_df_addresses(raw_s)
-                    mask_s_cess = raw_s['Imposable'].apply(sl.is_imposable_robust)
-                    df_s_raw = raw_s[mask_s_cess].copy()
-                    if not df_s_raw.empty:
-                        rows = []
-                        for _, r in df_s_raw.iterrows():
-                            # A swap usually has two legs in appPropri, here we focus on the disposal (neg amount)
-                            amt = float(r["Amount"])
-                            if amt < 0:
-                                rows.append({
-                                    "Date": r["Date"], "Account": r["Account"], "Asset": r["Asset"], "Amount": amt,
-                                    "Prix de Cession (EUR)": 0.0, "VGP (EUR)": 0.0, "Network": "Manual",
-                                    "Source Type": "Manual Swap", "Category": "Swap", "Status": "Valide", "Imposable": True
-                                })
-                        df_s_cess = pd.DataFrame(rows)
-            except: pass
-
-        # Merge and Deduplicate (by Date, Account, Asset, Amount)
-        # We prioritize df_q (qualified journal)
-        combined = pd.concat([df_q, df_f_cess, df_s_cess])
-        if not combined.empty:
             combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
             # --- CRITICAL FIX: Filter out rows with None dates ---
             combined = combined[combined["Date"].notna()]
@@ -260,62 +149,37 @@ def get_cessions_history(year):
 
 @st.cache_data
 def get_complementary_history(year):
-    """Loads movements from manual positions and internal transfer receivables."""
+    """Loads movements from manual positions and internal transfer receivables from clean history."""
     owners_map = sl.load_owner_accounts()
     owner_addrs = set(owners_map.keys())
 
+    # GATEWAY ARCHITECTURE: Use consolidated clean history
+    combined = sl.load_clean_history(year)
+
     all_txs = []
-    for y in range(2020, year + 1):
-        # 1. Manual Positions
-        path_m = sl.get_file_path(y, 'positions')
-        if os.path.exists(path_m):
-            try:
-                df_m = sl.pd_read_csv_safe(path_m)
-                if df_m.empty: continue
-                # UNIFICATION
-                df_m = sl.standardize_df_addresses(df_m)
-                if not df_m.empty and "Date" in df_m.columns:
-                    df_m["Date"] = pd.to_datetime(df_m["Date"], utc=True, errors="coerce")
-                    # Standardize columns to match history schema
-                    df_m = df_m.rename(columns={"Quantité": "Amount"})
-                    df_m["Category"] = "Position Manuelle"
-                    df_m["Status"] = "Valide"
-                    df_m["Counterparty"] = "Saisie Manuelle"
-                    all_txs.append(df_m)
-            except: pass
+    if not combined.empty:
+        # 1. Manual Positions (Source Type check)
+        mask_m = combined["Source Type"].fillna("").str.contains("Manual Position", case=False, na=False)
+        if mask_m.any():
+            df_m = combined[mask_m].copy()
+            df_m["Category"] = "Position Manuelle"
+            all_txs.append(df_m)
 
         # 2. Receivables from Internal Transfers to unknown accounts
-        path_q = sl.get_file_path(y, 'qualified')
-        if os.path.exists(path_q):
-            try:
-                df_q = sl.pd_read_csv_safe(path_q)
-                if df_q.empty or "Date" not in df_q.columns: continue
-                # UNIFICATION
-                df_q = sl.standardize_df_addresses(df_q)
+        mask_int = (combined["Category"] == "Transfert Interne")
+        combined["cp_raw"] = combined["Counterparty"].apply(sl.resolve_raw_addr)
+        df_receivable = combined[mask_int & (~combined["cp_raw"].isin(owner_addrs))].copy()
 
-                # --- ZÉRO SPAM ---
-                df_q = sl.apply_spam_filter(df_q, drop=True)
-
-                # Filter for Internal Transfers where Counterparty is NOT an owner
-                if "Category" in df_q.columns and "Counterparty" in df_q.columns:
-                    mask_int = (df_q["Category"] == "Transfert Interne")
-                    df_q["cp_raw"] = df_q["Counterparty"].apply(sl.resolve_raw_addr)
-                    df_receivable = df_q[mask_int & (~df_q["cp_raw"].isin(owner_addrs))].copy()
-
-                    if not df_receivable.empty:
-                        df_receivable["Date"] = pd.to_datetime(df_receivable["Date"], utc=True, errors="coerce")
-                        # In VGP calculation, the receivable is the negative of the leg
-                        df_receivable["Amount"] = -df_receivable["Amount"]
-                        df_receivable["Account"] = df_receivable["Counterparty"]
-                        df_receivable["Category"] = "Créance (Transfert Interne Sortant)"
-                        all_txs.append(df_receivable)
-            except: pass
+        if not df_receivable.empty:
+            # In VGP calculation, the receivable is the negative of the leg
+            df_receivable["Amount"] = -df_receivable["Amount"]
+            df_receivable["Account"] = df_receivable["Counterparty"]
+            df_receivable["Category"] = "Créance (Transfert Interne Sortant)"
+            all_txs.append(df_receivable)
 
     if not all_txs: return pd.DataFrame()
-    res = pd.concat(all_txs)
-    if "Date" in res.columns:
-        return res.sort_values("Date", ascending=False).reset_index(drop=True)
-    return res.reset_index(drop=True)
+    res = pd.concat(all_txs).sort_values("Date", ascending=False).reset_index(drop=True)
+    return res
 
 # --- Helpers for UI ---
 def valuate_dataframe(df, cache):

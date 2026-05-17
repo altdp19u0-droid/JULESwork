@@ -104,6 +104,9 @@ with st.sidebar:
     show_status()
 
 # --- Main logic ---
+# GATEWAY: VGP logic can work on the FULL journal (to keep traceability)
+# or the CLEAN journal. We use the FULL journal for auditing VGP but we could also pivot.
+# Recommendation: VGP works on FULL to allow identifying which transactions cause stock errors (including spams).
 path = get_file_path(target_year, 'qualified')
 
 if not os.path.exists(path):

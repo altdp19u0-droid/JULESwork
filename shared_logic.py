@@ -212,6 +212,8 @@ def get_file_path(year, category, sanctuary=False):
         return os.path.join(base, f"verified_prices_{year}.json")
     if category == 'inventory_eoy':
         return os.path.join(base, f"inventory_EOY_{year}.csv")
+    if category == 'qualified_clean':
+        return os.path.join(base, f"qualified_journal_CLEAN_{year}.csv")
     return None
 
 def get_all_raw_files(year):
@@ -495,7 +497,9 @@ def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=Fals
 
     # Filter Spam/Dup/EUR
     if not df_j.empty:
-        df_j = df_j[(df_j["Status"] != "Spam") & (df_j.get("Category", "") != "Doublon à ignorer") & (df_j["Asset"] != "EUR")]
+        # We exclude both Spams and any category containing 'Doublon'
+        mask_exc = (df_j["Status"] == "Spam") | (df_j.get("Category", "").fillna("").str.contains("Doublon", case=False, na=False))
+        df_j = df_j[~mask_exc & (df_j["Asset"] != "EUR")]
     if not df_m.empty:
         df_m = df_m[df_m["Asset"] != "EUR"]
 
@@ -1167,6 +1171,11 @@ def apply_spam_filter(df, drop=True):
     is_spam_mask = df.apply(check_row_spam, axis=1)
 
     if drop:
+        # Also exclude duplicates if dropping
+        if "Category" in df.columns:
+            # Robust check for category containing 'Doublon'
+            is_dup = df["Category"].fillna("").str.contains("Doublon", case=False, na=False)
+            is_spam_mask |= is_dup
         return df[~is_spam_mask].reset_index(drop=True)
     else:
         if status_col:
@@ -1316,6 +1325,31 @@ def find_reconciliation_matches(df, time_window_days=3, val_tolerance_pct=0.05):
                 break # Move to next exit
 
     return df, count_proposed
+
+def load_clean_history(end_year, start_year=2020):
+    """Loads consolidated clean journals from start_year to end_year."""
+    all_dfs = []
+    for y in range(start_year, end_year + 1):
+        # Prefer CLEAN, fallback to qualified (which will be filtered anyway)
+        p_clean = get_file_path(y, 'qualified_clean')
+        if os.path.exists(p_clean):
+            df = pd_read_csv_safe(p_clean)
+        else:
+            p_qual = get_file_path(y, 'qualified')
+            if os.path.exists(p_qual):
+                df = pd_read_csv_safe(p_qual)
+                df = apply_spam_filter(df, drop=True)
+            else:
+                df = pd.DataFrame()
+
+        if not df.empty:
+             df = standardize_df_addresses(df)
+             if 'Date' in df.columns:
+                 df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
+             all_dfs.append(df)
+
+    if not all_dfs: return pd.DataFrame()
+    return pd.concat(all_dfs).sort_values("Date", ascending=False).reset_index(drop=True)
 
 def show_status():
     st.sidebar.success("✅ Système Opérationnel")

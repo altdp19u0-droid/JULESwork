@@ -66,13 +66,19 @@ def scan_needed_prices(target_years, exclude_spams=True):
 
         assets_in_year = set()
 
-        # 1. Scan Qualified Journal for Cessions and Assets
-        qual_path = os.path.join(y_dir, f"qualified_journal_{y}.csv")
-        if os.path.exists(qual_path):
-            df_q = sl.pd_read_csv_safe(qual_path)
+        # 1. Scan CLEAN Journal for Cessions and Assets
+        # GATEWAY: Prefer CLEAN journal for scanning needs
+        clean_path = sl.get_file_path(y_int, 'qualified_clean')
+        qual_path = sl.get_file_path(y_int, 'qualified')
+
+        path_to_scan = clean_path if os.path.exists(clean_path) else qual_path
+
+        if os.path.exists(path_to_scan):
+            df_q = sl.pd_read_csv_safe(path_to_scan)
             if not df_q.empty:
                 # --- ZÉRO SPAM ---
-                if exclude_spams:
+                # Only filter if not already CLEAN
+                if exclude_spams and "CLEAN" not in path_to_scan:
                     df_q = sl.apply_spam_filter(df_q, drop=True)
 
                 df_q["Date"] = pd.to_datetime(df_q["Date"], utc=True, errors="coerce")
