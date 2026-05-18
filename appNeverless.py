@@ -289,7 +289,7 @@ if uploaded_file:
             os.makedirs(year_dir, exist_ok=True)
 
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"raw_neverless_{ts}.csv"
+            filename = f"raw_transactions_consolidated_neverless_app_{ts}.csv"
             save_path = os.path.join(year_dir, filename)
 
             # On enregistre la version éditée

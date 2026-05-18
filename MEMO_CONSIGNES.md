@@ -22,7 +22,7 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 - **VOIE 1 (Blockscout Deep Scan) :** Priorité sémantique (extraction des étiquettes From_Label/To_Label et types de processus).
 - **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2 via Etherscan/BscScan).
 - **VOIE 3 (Imports CEX/Offline) :** Intégration automatique des fichiers `raw_*.csv` locaux.
-    - **Standard Neverless (appNeverless.py) :** Importateur spécialisé capable d'éclater les lignes mixtes Neverless en flux `IN`, `OUT` et `FEE` simples. Supporte l'identification des contreparties via les colonnes `from` / `to` et la préservation du flag `imposable` (injecté en tant que `RAW_TAXABLE` dans `Audit_Status`).
+    - **Standard Neverless (appNeverless.py) :** Importateur spécialisé capable d'éclater les lignes mixtes Neverless en flux `IN`, `OUT` et `FEE` simples. Supporte l'identification des contreparties via les colonnes `from` / `to` et la préservation du flag `imposable` (injecté en tant que `RAW_TAXABLE` dans `Audit_Status`). Les fichiers produits sont sanctuarisés dans `/sanctuary/` sous le format `raw_transactions_consolidated_neverless_app_{ts}.csv`.
 - **FUSION INTELLIGENTE :** Dédoublonnage scrupuleux par le quadruplet **`(Tx_Hash, Asset, Account, Chain)`**. La fusion doit préserver les labels de la Voie 1 et injecter les frais/méthodes de la Voie 2.
 - **NOMMAGE CONSOLIDÉ :** Le fichier final doit impérativement porter le suffixe `_consolidated_` (ex: `raw_transactions_consolidated_*.csv`) pour indiquer le traitement multivoie.
 - **UI RÉCOLTE :**
