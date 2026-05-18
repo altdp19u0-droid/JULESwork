@@ -10,7 +10,7 @@ QUALIFIED_V4_COLUMNS = [
     "Date", "Chain", "Tx_Hash", "Type", "Method", "Account", "From", "To",
     "From_Label", "To_Label", "Counterparty", "Asset", "Amount",
     "Fee_Asset", "Fee_Amount", "Source_Way", "Audit_Status", "Fee_Audit_Alert",
-    "Source_Exchange_Rate", "VGP (EUR)", "Linked_ID", "Link_Status", "Category"
+    "Source_Exchange_Rate", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable"
 ]
 
 def ensure_columns(df):
@@ -132,7 +132,7 @@ def run_fidelity_engine(raw_df, existing_df):
     raw_df["_uid"] = raw_df["Tx_Hash"].astype(str) + "_" + raw_df["Asset"].astype(str) + "_" + raw_df["Account"].astype(str)
 
     # Les colonnes à préserver (celles que l'utilisateur modifie)
-    preservable = ["Audit_Status", "Category", "From_Label", "To_Label", "Counterparty", "VGP (EUR)", "Linked_ID", "Link_Status"]
+    preservable = ["Audit_Status", "Category", "From_Label", "To_Label", "Counterparty", "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable"]
 
     # Map de l'existant
     qualif_map = existing_df.set_index("_uid")[preservable].to_dict('index')
@@ -203,23 +203,35 @@ def main():
 
         with st.expander("🛑 Blacklist Spams"):
             spams = sl.load_spam_list()
+            for s in sorted(list(spams)):
+                sc = st.columns([4, 1])
+                sc[0].text(s)
+                if sc[1].button("🗑️", key=f"del_spam_{s}"):
+                    spams.remove(s)
+                    sl.save_spam_list(spams)
+                    st.rerun()
             new_spam = st.text_input("Ajouter Spam (Asset/CP)", key="new_spam")
             if st.button("Ajouter", key="btn_spam"):
                 if new_spam:
                     spams.add(new_spam.lower())
                     sl.save_spam_list(spams)
                     st.rerun()
-            st.write(sorted(list(spams)))
 
         with st.expander("✅ Whitelist Assets"):
             valides = sl.load_valid_assets()
+            for v in sorted(list(valides)):
+                vc = st.columns([4, 1])
+                vc[0].text(v)
+                if vc[1].button("🗑️", key=f"del_val_{v}"):
+                    valides.remove(v)
+                    sl.save_valid_assets(valides)
+                    st.rerun()
             new_v = st.text_input("Asset Valide", key="new_val")
             if st.button("Valider", key="btn_val"):
                 if new_v:
                     valides.add(new_v.upper())
                     sl.save_valid_assets(valides)
                     st.rerun()
-            st.write(sorted(list(valides)))
 
         with st.expander("🏦 Comptes Propriétaires"):
             owners = sl.load_owner_accounts()
@@ -288,15 +300,25 @@ def main():
         st.title(f"Qualification {year}")
 
         # Filtres
-        f_cols = st.columns(4)
-        f_status = f_cols[0].multiselect("Statut", ["A vérifier", "Valide", "Spam", "Ignoré"], default=["A vérifier", "Valide"])
-        f_acc = f_cols[1].multiselect("Compte", sl.get_owner_display_list())
+        with st.expander("🔍 Filtres avancés", expanded=True):
+            f_cols1 = st.columns(3)
+            f_status = f_cols1[0].multiselect("Statut", ["A vérifier", "Valide", "Spam", "Ignoré"], default=["A vérifier", "Valide"])
+            f_acc = f_cols1[1].multiselect("Compte", sl.get_owner_display_list())
+            f_asset = f_cols1[2].multiselect("Asset", sorted(list(df["Asset"].unique())))
+
+            f_cols2 = st.columns(3)
+            f_cp = f_cols2[0].multiselect("Contrepartie", sorted(list(df["Counterparty"].dropna().unique())))
+            f_imp = f_cols2[1].selectbox("Imposable", ["Tous", "Oui", "Non"])
 
         view_df = df.copy()
         if f_status: view_df = view_df[view_df["Audit_Status"].isin(f_status)]
         if f_acc:
             acc_set = {sl.resolve_raw_addr(x) for x in f_acc}
             view_df = view_df[view_df["Account"].apply(sl.resolve_raw_addr).isin(acc_set)]
+        if f_asset: view_df = view_df[view_df["Asset"].isin(f_asset)]
+        if f_cp: view_df = view_df[view_df["Counterparty"].isin(f_cp)]
+        if f_imp == "Oui": view_df = view_df[view_df["Imposable"].apply(sl.is_imposable_robust)]
+        elif f_imp == "Non": view_df = view_df[~view_df["Imposable"].apply(sl.is_imposable_robust)]
 
         # Editor
         edited_df = st.data_editor(
@@ -304,10 +326,11 @@ def main():
             column_config={
                 "Audit_Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam", "Ignoré"]),
                 "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Revenu", "Dépense", "Transfert", "Swap", "Achat", "Vente"]),
+                "Imposable": st.column_config.CheckboxColumn("Imposable"),
             },
             disabled=["Date", "Chain", "Tx_Hash", "Account", "Asset", "Amount", "Source_Way"],
-            num_rows="dynamic",
-            use_container_width=True,
+            num_rows="fixed", # Avoid "dynamic" if it breaks sorting in some streamlit versions
+            width='stretch',
             key="qualif_editor"
         )
 
