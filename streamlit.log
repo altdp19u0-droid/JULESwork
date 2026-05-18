@@ -1,10 +1,39 @@
-  Stopping...
 
 Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
 
+2026-05-18 12:37:53.282 Uvicorn server started on 0.0.0.0:8501
 
   You can now view your Streamlit app in your browser.
 
   Local URL: http://localhost:8501
   Network URL: http://192.168.0.2:8501
   External URL: http://34.46.237.233:8501
+
+2026-05-18 12:39:32.180 The widget with key "_hub_target_year" was created with a default value but also had its value set via the Session State API.
+Stack (most recent call last):
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 379, in _run_script_thread
+    self._run_script(request.rerun_data)
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 705, in _run_script
+    ) = exec_func_with_error_handling(code_to_exec, ctx)
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 129, in exec_func_with_error_handling
+    result = func()
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 689, in code_to_exec
+    exec(code, module.__dict__)  # noqa: S102
+  File "/app/appNeverless.py", line 242, in <module>
+    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=st.session_state["_hub_target_year"], key="_hub_target_year")
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/streamlit/runtime/metrics_util.py", line 698, in wrapped_func
+    result = non_optional_func(*args, **kwargs)
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/streamlit/elements/widgets/number_input.py", line 446, in number_input
+    return self._number_input(
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/streamlit/elements/widgets/number_input.py", line 491, in _number_input
+    check_widget_policies(
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/streamlit/elements/lib/policies.py", line 180, in check_widget_policies
+    check_session_state_rules(
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/streamlit/elements/lib/policies.py", line 91, in check_session_state_rules
+    _LOGGER.warning(
