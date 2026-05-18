@@ -284,11 +284,12 @@ if uploaded_file:
 
         st.divider()
         if st.button("💾 Sanctuariser (Enregistrer les Brutes)", width='stretch'):
-            year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
+            # Chemin standard : sanctuarisation/{year}/sanctuary/
+            year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year), "sanctuary")
             os.makedirs(year_dir, exist_ok=True)
 
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"raw_token_transfers_neverless_{ts}.csv"
+            filename = f"raw_neverless_{ts}.csv"
             save_path = os.path.join(year_dir, filename)
 
             # On enregistre la version éditée
