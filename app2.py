@@ -226,7 +226,7 @@ def main():
             for addr, label in list(owners.items()):
                 cols = st.columns([3, 1])
                 cols[0].text(f"{label}\n{addr[:10]}...")
-                if cols[1].button("\360\237\227\221", key=f"del_own_{addr}"):
+                if cols[1].button("🗑️", key=f"del_own_{addr}"):
                     del owners[addr]
                     sl.save_owner_accounts(owners)
                     st.rerun()
@@ -243,7 +243,7 @@ def main():
             for addr, label in list(pos.items()):
                 cols = st.columns([3, 1])
                 cols[0].text(f"{label}\n{addr[:10]}...")
-                if cols[1].button("\360\237\227\221", key=f"del_pos_{addr}"):
+                if cols[1].button("🗑️", key=f"del_pos_{addr}"):
                     del pos[addr]
                     sl.save_position_labels(pos)
                     st.rerun()
@@ -260,7 +260,7 @@ def main():
             for addr, label in list(ext.get("labels", {}).items()):
                 cols = st.columns([3, 1])
                 cols[0].text(f"{label}\n{addr[:10]}...")
-                if cols[1].button("\360\237\227\221", key=f"del_ext_{addr}"):
+                if cols[1].button("🗑️", key=f"del_ext_{addr}"):
                     del ext["labels"][addr]
                     sl.save_external_circuits(ext)
                     st.rerun()

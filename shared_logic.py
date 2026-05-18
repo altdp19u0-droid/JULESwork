@@ -139,10 +139,22 @@ def get_file_path(year, category):
     return None
 
 def get_all_raw_files(year):
+    """Collects all raw files from the year directory AND its sanctuary subfolder."""
     year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
     if not os.path.exists(year_dir): return []
+
+    all_paths = []
+    # 1. Root year dir
     files = [f for f in os.listdir(year_dir) if f.endswith(".csv") and f.startswith("raw_")]
-    return [os.path.join(year_dir, f) for f in sorted(files, reverse=True)]
+    all_paths.extend([os.path.join(year_dir, f) for f in files])
+
+    # 2. Sanctuary subfolder
+    sanctuary_dir = os.path.join(year_dir, "sanctuary")
+    if os.path.exists(sanctuary_dir):
+        s_files = [f for f in os.listdir(sanctuary_dir) if f.endswith(".csv") and f.startswith("raw_")]
+        all_paths.extend([os.path.join(sanctuary_dir, f) for f in s_files])
+
+    return sorted(list(set(all_paths)), reverse=True)
 
 def extract_source_from_filename(filename):
     basename = os.path.basename(filename).replace(".csv", "")
@@ -289,18 +301,6 @@ def apply_spam_filter(df, drop=True):
     if status_col in df.columns: df.loc[mask, status_col] = "Spam"
     return df
 
-def detect_internal_transfers(df):
-    if df.empty: return df, 0
-    df = df.copy(); owners = get_owner_addresses(df)
-    def is_int(r):
-        cp = resolve_raw_addr(r.get("Counterparty", "")).lower()
-        return cp in owners
-    mask = df.apply(is_int, axis=1)
-    df.loc[mask, "Category"] = "Transfert Interne"
-    status_col = "Audit_Status" if "Audit_Status" in df.columns else "Status"
-    df.loc[mask, status_col] = "Valide"
-    return df, mask.sum()
-
 def validate_spam_exclusion(df):
     """Returns indices of rows identified as spam."""
     if df.empty: return []
@@ -329,10 +329,6 @@ def load_price_cache():
             with open(PRICE_CACHE_FILE, "r", encoding="utf-8") as f: return json.load(f)
         except: pass
     return {}
-
-def save_price_cache(cache):
-    with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=4)
 
 def get_price_eur(asset, date_obj, cache=None):
     if not isinstance(date_obj, datetime):
@@ -393,19 +389,12 @@ def calculate_fiscal_gains(cessions_df, total_acq_price):
 
     return df, current_acq_base
 
-def get_portfolio_snapshot(journal_or_year, target_date, force_full_history=False, start_recalc_year=2020):
+def get_portfolio_snapshot(year, target_date):
     """Calculates balances and total VGP."""
     target_date = pd.to_datetime(target_date, utc=True)
-
-    if isinstance(journal_or_year, pd.DataFrame):
-        df_j = journal_or_year
-    else:
-        # Load history up to the target year
-        df_j = load_clean_history(journal_or_year)
-
+    df_j = load_clean_history(year)
     if df_j.empty: return pd.DataFrame(), 0.0
 
-    df_j = df_j.copy()
     df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True)
     df_j = df_j[df_j["Date"] <= target_date]
     df_j = apply_spam_filter(df_j, drop=True)
