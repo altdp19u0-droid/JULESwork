@@ -1,40 +1,54 @@
-from playwright.sync_api import sync_playwright, expect
+from playwright.sync_api import sync_playwright
 import time
 
-def verify():
+def verify_app2_visibility():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto("http://localhost:8501")
-        time.sleep(10)
+        context = browser.new_context(viewport={'width': 1280, 'height': 1200})
+        page = context.new_page()
 
-        # Step 1: Force Year 2025 in Sidebar
-        # We need to wait for App2 to load
-        page.get_by_role("combobox", name="Navigation").click()
-        time.sleep(2)
-        page.get_by_text("Step 2", exact=False).click()
-        time.sleep(10)
-
-        # In Sidebar, set Year to 2025 (though it should be default now)
-        # Try to find the number input for year
         try:
-            page.get_by_label("Année de traitement").fill("2025")
-            page.get_by_label("Année de traitement").press("Enter")
+            print("Navigating to Hub...")
+            page.goto("http://localhost:8503")
             time.sleep(5)
-        except: pass
 
-        # Click Audit Tab
-        page.get_by_role("tab", name="Audit & Restauration").click()
-        time.sleep(2)
+            # Select Step 2: Qualification
+            print("Switching to app2...")
+            # Streamlit selectbox is a combobox
+            page.get_by_label("🚀 Navigation").click()
+            time.sleep(1)
+            page.get_by_text("⚖️ Step 2: Qualification (app2)").click()
+            time.sleep(10)
 
-        # Click Analyze
-        page.get_by_role("button", name="Comparer avec le Sanctuaire").click()
-        time.sleep(5)
+            # Screenshot of Qualification table
+            print("Capturing app2 view...")
+            page.screenshot(path="verification/app2_visibility.png")
 
-        # Final Screenshot
-        page.screenshot(path="verification/audit_final_2025.png")
+            # Check for Toggle Spams
+            print("Checking Toggle Spams...")
+            toggle = page.get_by_text("Afficher les Spams")
+            if toggle.is_visible():
+                toggle.click()
+                time.sleep(3)
+                page.screenshot(path="verification/app2_with_spams.png")
+            else:
+                print("Toggle not found")
 
-        browser.close()
+            # Check for delete popover button
+            print("Checking deletion popover...")
+            popover_btn = page.get_by_text("🗑️ Supprimer / Restaurer")
+            if popover_btn.is_visible():
+                popover_btn.click()
+                time.sleep(2)
+                page.screenshot(path="verification/app2_delete_popover.png")
+            else:
+                print("Popover button not found")
+
+        except Exception as e:
+            print(f"Error during verification: {e}")
+            page.screenshot(path="verification/error_screenshot.png")
+        finally:
+            browser.close()
 
 if __name__ == "__main__":
-    verify()
+    verify_app2_visibility()

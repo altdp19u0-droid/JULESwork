@@ -6,7 +6,7 @@ import streamlit as st
 from datetime import datetime
 import shared_logic as sl
 
-# --- CONFIGURATION & INITIALIZATION ---
+# --- Configuration ---
 if "is_hub" not in st.session_state:
     st.set_page_config(page_title="Jules Crypto - Qualification (app2)", layout="wide")
 
@@ -14,7 +14,7 @@ st.title("⚖️ Qualification & Nettoyage (Step 2)")
 
 EXPORT_BASE_DIR = "sanctuarisation"
 
-# Standard Schema for the Qualification Journal (V4 aligned)
+# Schema Unifié (Ordre et colonnes garantis)
 COLUMNS = [
     "Date", "Account", "Counterparty", "Asset", "Amount",
     "Value ($)", "Network", "Tx Hash", "Source Type",
@@ -22,374 +22,394 @@ COLUMNS = [
     "Source_File"
 ]
 
-def ensure_v4_columns(df):
-    """Ensures the DataFrame follows the standard schema and types."""
+def ensure_columns(df):
+    """Garantit que le DataFrame possède toutes les colonnes du schéma et nettoie les types."""
     if df is None or df.empty:
         return pd.DataFrame(columns=COLUMNS)
 
-    df = df.copy()
-    # Normalize headers
+    # 1. Normalize existing column names
     df.columns = [str(c).strip() for c in df.columns]
 
-    for col in COLUMNS:
-        if col not in df.columns:
-            # Case-insensitive match attempt
-            matches = [c for c in df.columns if str(c).lower().replace(" ","").replace("_","") == col.lower().replace(" ","").replace("_","")]
+    df_copy = df.copy()
+    for c in COLUMNS:
+        if c not in df_copy.columns:
+            # Case insensitive lookup
+            matches = [oc for oc in df_copy.columns if str(oc).lower().replace(" ","").replace("_","") == c.lower().replace(" ","").replace("_","")]
             if matches:
-                df = df.rename(columns={matches[0]: col})
+                df_copy = df_copy.rename(columns={matches[0]: c})
             else:
-                if col == "Imposable": df[col] = False
-                elif col in ["Amount", "Value ($)", "VGP (EUR)"]: df[col] = 0.0
-                else: df[col] = ""
+                if c == "Imposable": df_copy[c] = False
+                elif c in ["Amount", "Value ($)", "VGP (EUR)"]: df_copy[c] = 0.0
+                else: df_copy[c] = ""
 
-    # Force types
+    # 2. Forced Numeric Conversion
     for c in ["Amount", "Value ($)", "VGP (EUR)"]:
-        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+        if c in df_copy.columns:
+            df_copy[c] = pd.to_numeric(df_copy[c], errors='coerce').fillna(0.0)
 
-    df["Imposable"] = df["Imposable"].apply(sl.is_imposable_robust)
+    # 3. Robust Imposable detection
+    if "Imposable" in df_copy.columns:
+        df_copy["Imposable"] = df_copy["Imposable"].apply(sl.is_imposable_robust)
 
-    if "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
-        df = df.dropna(subset=["Date"])
+    # 4. Strict Date Cleaning (Fixes TypeError by ensuring all are Timestamps)
+    if "Date" in df_copy.columns:
+        df_copy["Date"] = pd.to_datetime(df_copy["Date"], utc=True, errors="coerce")
+        df_copy = df_copy.dropna(subset=["Date"])
 
-    return df[COLUMNS]
+    return df_copy[COLUMNS]
 
-# --- CORE ENGINE ---
+# --- Helpers ---
 
-def get_robust_fingerprint(df):
-    """Generates a high-fidelity key for transaction matching across varied schemas."""
-    if df.empty: return pd.Series()
+def apply_position_labels(df):
+    """Associe les labels aux adresses de contrepartie selon le standard 'Identifier (Name)'."""
+    if df.empty: return df
+    df = df.copy()
+    mapping = sl.get_all_labels()
 
-    # Header mapping per dataframe to handle inconsistencies
-    h_map = {str(c).lower().replace(" ","").replace("_",""): c for c in df.columns}
+    def format_val(val):
+        r = sl.resolve_raw_addr(val)
+        if r in mapping:
+             return sl.format_owner_display(r, mapping[r])
+        return sl.standardize_address_string(val)
 
-    def get_val(r, candidates, default=""):
-        for c in candidates:
-            if c in h_map:
-                v = r.get(h_map[c])
-                return str(v).strip() if v is not None and not pd.isna(v) else default
-        return str(default)
+    if "Counterparty" in df.columns:
+        df["Counterparty"] = df["Counterparty"].apply(format_val)
+    if "Account" in df.columns:
+        df["Account"] = df["Account"].apply(lambda x: sl.standardize_address_string(x))
+    return df
 
-    def get_amt(r):
-        # We look for amount or equivalents
-        candidates = ["amount", "valueeth", "value", "quantity", "montant"]
-        for c in candidates:
-            if c in h_map:
-                v = r.get(h_map[c])
-                if v is not None and not pd.isna(v):
-                    try: return abs(float(v))
-                    except: pass
-        return 0.0
-
-    d = pd.to_datetime(df.apply(lambda r: get_val(r, ["date"]), axis=1), utc=True, errors="coerce").dt.strftime("%Y%m%d")
-    acc = df.apply(lambda r: get_val(r, ["account", "compte"]), axis=1).apply(sl.resolve_raw_addr).str.lower()
-    amt = df.apply(get_amt, axis=1).round(6).astype(str)
-    ast = df.apply(lambda r: get_val(r, ["asset", "tokensymbol", "symbol", "chain"], "ETH"), axis=1).str.upper()
-    h = df.apply(lambda r: get_val(r, ["txhash", "hash", "transactionhash"]), axis=1).str.lower()
-
-    return d + "_" + acc + "_" + ast + "_" + amt + "_" + h
-
-def merge_raw_sources(year):
-    """Aggregation engine for all raw data sources (Manual & Blockchain)."""
+# --- Engine ---
+def merge_raw_data(year):
+    yd = os.path.join(EXPORT_BASE_DIR, str(year))
+    if not os.path.exists(yd): return ensure_columns(pd.DataFrame())
     rows = []
 
-    # 1. Manual Registries (Fiat & Swaps)
-    year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
-    if os.path.exists(year_dir):
-        manual_files = [f for f in os.listdir(year_dir) if f.startswith("manual_") and f.endswith(".csv")]
-        for fn in manual_files:
-            path = os.path.join(year_dir, fn)
-            try:
-                df_m = sl.pd_read_csv_safe(path)
-                if df_m.empty: continue
-
-                # App0 Fiat mapping
-                if "fiat" in fn:
-                    for _, r in df_m.iterrows():
-                        me = float(r.get("Montant EUR", 0))
-                        qa = float(r.get("Quantité", 0))
-                        asset = str(r.get("Asset", "EUR")).upper()
-                        f_type = str(r.get("Type", ""))
-                        rt = sl.get_fiat_rate("USD", pd.to_datetime(r.get("Date"), utc=True))
-
-                        # Leg 1: Cash flow
-                        rows.append({
-                            "Date": r.get("Date"), "Account": r.get("Account", "Manual"), "Counterparty": r.get("Counterparty", "Bank"),
-                            "Asset": "EUR", "Amount": me if "Vente" in f_type else -me,
-                            "Value ($)": ((me if "Vente" in f_type else -me)/rt) if rt>0 else 0,
-                            "Network": "Fiat", "Tx Hash": r.get("Tx Hash", ""), "Source Type": "Fiat",
-                            "Category": "Flux Fiat", "Status": "Valide", "Imposable": False, "Source_File": fn
-                        })
-                        # Leg 2: Crypto flow
-                        if asset != "EUR" and qa > 0:
-                            rows.append({
-                                "Date": r.get("Date"), "Account": r.get("Account", "Manual"), "Counterparty": r.get("Counterparty", "Bank"),
-                                "Asset": asset, "Amount": qa if "Achat" in f_type else -qa,
-                                "Value ($)": (me/rt) if rt>0 else 0,
-                                "Network": "Fiat", "Tx Hash": r.get("Tx Hash", ""), "Source Type": "Fiat-to-Crypto",
-                                "Category": "Achat" if "Achat" in f_type else "Vente", "Status": "Valide",
-                                "Imposable": sl.is_imposable_robust(r.get("Imposable")), "Source_File": fn
-                            })
-                # App0 Swaps mapping
-                elif "swaps" in fn:
-                    for _, r in df_m.iterrows():
-                        rows.append({
-                            "Date": r.get("Date"), "Account": r.get("Account", ""), "Counterparty": r.get("Counterparty", ""),
-                            "Asset": r.get("Asset", ""), "Amount": float(r.get("Amount", 0)), "Value ($)": 0,
-                            "Network": "Manual", "Tx Hash": r.get("Tx Hash", ""), "Source Type": "Manual Swap",
-                            "Category": "Swap", "Status": "Valide", "Imposable": sl.is_imposable_robust(r.get("Imposable")), "Source_File": fn
-                        })
-            except: pass
-
-    # 2. Blockchain Harvests (Voies 1, 2, 3)
-    raw_files = sl.get_all_raw_files(year)
-    valid_assets = sl.load_valid_assets()
-
-    for path in raw_files:
-        fn = os.path.basename(path)
-        src = sl.extract_source_from_filename(fn)
-        sl.auto_register_owner(src)
-
+    # 1. Manual Registries
+    man_files = [f for f in os.listdir(yd) if ("manual_fiat" in f or "manual_swaps" in f) and f.endswith(".csv")]
+    for p in man_files:
+        fp = os.path.join(yd, p)
         try:
-            df = sl.pd_read_csv_safe(path)
+            df = sl.pd_read_csv_safe(fp)
             if df.empty: continue
-
-            # Discovery logic within the loop for each file
-            h_map = {str(c).lower().replace(" ","").replace("_",""): c for c in df.columns}
-
             for _, r in df.iterrows():
-                d_val = r.get(h_map.get("date"))
-                if pd.isna(d_val) or str(d_val).lower() in ["nan", "none", ""]: continue
+                if "fiat" in p:
+                    me, qa, asset, ft = float(r.get("Montant EUR", 0)), float(r.get("Quantité", 0)), str(r.get("Asset", "EUR")).upper(), str(r.get("Type", ""))
+                    rt = sl.get_fiat_rate("USD", pd.to_datetime(r.get("Date"), utc=True))
+                    rows.append({"Date": r.get("Date"), "Account": str(r.get("Account", r.get("Compte/Label", "Manual"))), "Counterparty": str(r.get("Counterparty", r.get("Plateforme", "Bank"))), "Asset": "EUR", "Amount": me if "Vente" in ft else -me, "Value ($)": ((me if "Vente" in ft else -me)/rt) if rt>0 else 0, "Network": "Fiat", "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Fiat", "Category": "Flux Fiat", "Status": "Valide", "Imposable": False, "Source_File": p})
+                    if asset != "EUR" and qa > 0:
+                        rows.append({"Date": r.get("Date"), "Account": str(r.get("Account", r.get("Compte/Label", "Manual"))), "Counterparty": str(r.get("Counterparty", r.get("Plateforme", "Bank"))), "Asset": asset, "Amount": qa if "Achat" in ft else -qa, "Value ($)": me/rt if rt>0 else 0, "Network": "Fiat", "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Fiat-to-Crypto", "Category": "Achat" if "Achat" in ft else "Vente", "Status": "Valide", "Imposable": sl.is_imposable_robust(r.get("Imposable")), "Source_File": p})
+                else:
+                    rows.append({"Date": r.get("Date"), "Account": str(r.get("Account", "")), "Counterparty": str(r.get("Counterparty", "")), "Asset": str(r.get("Asset", "")), "Amount": float(r.get("Amount", 0)), "Value ($)": 0, "Network": "Manual", "Tx Hash": str(r.get("Tx Hash", "")), "Source Type": "Manual", "Category": "Swap", "Status": "Valide", "Imposable": sl.is_imposable_robust(r.get("Imposable", False)), "Source_File": p})
+        except: pass
+
+    # 2. Blockchain
+    valid_assets = sl.load_valid_assets()
+    all_raw_files = sl.get_all_raw_files(year)
+    for f_p in all_raw_files:
+        fn = os.path.basename(f_p)
+        src = sl.extract_source_from_filename(fn); sl.auto_register_owner(src)
+        try:
+            df_raw = sl.pd_read_csv_safe(f_p)
+            if df_raw.empty: continue
+            df_raw.columns = [str(c).strip() for c in df_raw.columns]
+            h_map = {str(c).lower().replace(" ","").replace("_",""): c for c in df_raw.columns}
+
+            for _, r in df_raw.iterrows():
+                dt_val = r.get(h_map.get("date"))
+                if pd.isna(dt_val) or str(dt_val).lower() in ["nan", "none", ""]: continue
 
                 acc = str(r.get(h_map.get("account"), src)).lower()
                 tx_h = str(r.get(h_map.get("txhash"), r.get(h_map.get("hash"), "")))
                 asset = str(r.get(h_map.get("asset"), r.get(h_map.get("tokensymbol"), r.get(h_map.get("chain"), "ETH")))).upper()
 
-                # Amount
                 amt = r.get(h_map.get("amount"))
                 if amt is None: amt = r.get(h_map.get("valueeth"))
                 if amt is None: amt = r.get(h_map.get("value"))
-                if amt is None: amt = r.get(h_map.get("quantity"))
-                amt = float(amt) if amt is not None else 0.0
+                if amt is None: amt = r.get(h_map.get("quantity"), 0)
+                amt = float(amt)
 
-                if "amount" not in h_map:
-                    fr = str(r.get(h_map.get("from"), "")).lower()
-                    if fr == acc: amt = -amt
+                if fn.startswith("raw_portfolio_"):
+                    rows.append({"Date": datetime(year, 12, 31), "Account": acc, "Counterparty": "Blockchain Snapshot", "Asset": asset, "Amount": amt, "Value ($)": float(r.get(h_map.get("value($)"), 0)), "Network": str(r.get(h_map.get("chain"), asset)), "Tx Hash": f"PORT-{src}-{asset}", "Source Type": "Portfolio", "Category": "Inventaire", "Status": "Valide", "Imposable": False})
+                    continue
 
+                fa = sl.resolve_raw_addr(r.get(h_map.get("from"), ""))
                 cp = str(r.get(h_map.get("counterparty"), ""))
                 if not cp or cp == "nan":
-                    fr = str(r.get(h_map.get("from"), "")).lower()
-                    cp = r.get(h_map.get("to")) if fr == acc else r.get(h_map.get("from"))
+                    cp = r.get(h_map.get("to"), "") if fa == acc else r.get(h_map.get("from"), "")
+
+                if "amount" not in h_map and fa == acc: amt = -amt
 
                 rows.append({
-                    "Date": d_val, "Account": acc, "Counterparty": cp, "Asset": asset, "Amount": amt,
+                    "Date": dt_val, "Account": acc, "Counterparty": cp, "Asset": asset, "Amount": amt,
                     "Value ($)": float(r.get(h_map.get("value($)"), 0)),
-                    "Network": str(r.get(h_map.get("chain"), asset)), "Tx Hash": tx_h,
-                    "Source Type": str(r.get(h_map.get("type"), "Blockchain")),
+                    "Network": str(r.get(h_map.get("chain"), asset)),
+                    "Tx Hash": tx_h, "Source Type": str(r.get(h_map.get("type"), "Blockchain")),
                     "Category": "A vérifier", "Status": "Valide" if asset in valid_assets else "A vérifier",
                     "Imposable": sl.is_imposable_robust(r.get(h_map.get("imposable"), False)),
                     "Source_File": fn
                 })
         except: pass
 
-    res_df = ensure_v4_columns(pd.DataFrame(rows))
-    res_df = sl.standardize_df_addresses(res_df)
-    res_df = res_df.sort_values("Date", ascending=False).drop_duplicates().reset_index(drop=True)
-    res_df = sl.apply_spam_filter(res_df, drop=False)
+    dff = ensure_columns(pd.DataFrame(rows))
+    dff = sl.standardize_df_addresses(dff)
+    dff = dff.sort_values("Date", ascending=False).drop_duplicates().reset_index(drop=True)
+    dff = sl.apply_spam_filter(dff, drop=False)
 
-    return res_df
+    return dff
 
-def run_fidelity_engine(new_df, old_df):
-    """Preserves user qualifications using fingerprints."""
-    if old_df.empty: return new_df
-
-    f_cols = ["Category", "Status", "Imposable", "VGP (EUR)", "Linked_ID", "Link_Status"]
-
-    new_df["_f"] = get_robust_fingerprint(new_df)
-    old_df["_f"] = get_robust_fingerprint(old_df)
-
-    # Map from Fingerprint to Edits
-    edit_map = old_df.drop_duplicates("_f").set_index("_f")[f_cols].to_dict('index')
-
-    def apply_edits(row):
-        f = row["_f"]
-        if f in edit_map:
-            m = edit_map[f]
-            for k in f_cols:
-                if k in ["Category", "Status"]:
-                    if str(m[k]) != "A vérifier": row[k] = m[k]
-                elif k == "Imposable": row[k] = sl.is_imposable_robust(m[k])
-                else: row[k] = m[k]
-        return row
-
-    merged = new_df.apply(apply_edits, axis=1)
-
-    # Keep historical items from old journal not present in new harvest
-    new_f_set = set(merged["_f"])
-    only_old = old_df[~old_df["_f"].isin(new_f_set)]
-
-    final = pd.concat([merged, only_old]).sort_values("Date", ascending=False).drop(columns=["_f"]).reset_index(drop=True)
-    return ensure_v4_columns(final)
-
-def sync_session(year):
+def sync_data(year):
     QUAL_KEY = "_hub_journal_qualifie"
-    disk_path = sl.get_file_path(year, 'qualified')
-    harvest_df = merge_raw_sources(year)
+    qp = sl.get_file_path(year, 'qualified')
+    ndf = merge_raw_data(year)
 
-    old_df = pd.DataFrame()
+    odf = pd.DataFrame()
     if QUAL_KEY in st.session_state and not st.session_state[QUAL_KEY].empty:
-        # Year check
-        if pd.to_datetime(st.session_state[QUAL_KEY]["Date"].iloc[0]).year == year:
-            old_df = st.session_state[QUAL_KEY]
+        # Filter for same year
+        temp_odf = st.session_state[QUAL_KEY]
+        if not temp_odf.empty:
+            try:
+                if pd.to_datetime(temp_odf["Date"]).dt.year.iloc[0] == year:
+                    odf = temp_odf
+            except: pass
 
-    if old_df.empty and os.path.exists(disk_path):
-        old_df = sl.pd_read_csv_safe(disk_path)
+    if odf.empty and os.path.exists(qp) and os.path.getsize(qp) > 0:
+        odf = sl.pd_read_csv_safe(qp)
 
-    st.session_state[QUAL_KEY] = run_fidelity_engine(harvest_df, old_df)
-    st.session_state["_hub_last_loaded_year"] = year
+    if not odf.empty:
+        odf = ensure_columns(odf)
+        odf = sl.standardize_df_addresses(odf)
 
-# --- SIDEBAR ---
+        f_cols = ["Category", "Status", "Imposable", "VGP (EUR)", "Linked_ID", "Link_Status"]
+        ndf["_d"], odf["_d"] = ndf["Date"].dt.date, odf["Date"].dt.date
 
+        h_map = odf[odf["Tx Hash"] != ""].drop_duplicates("Tx Hash").set_index("Tx Hash")[f_cols].to_dict('index')
+        m_map = odf[odf["Tx Hash"] == ""].drop_duplicates(["_d", "Account", "Asset", "Amount"]).set_index(["_d", "Account", "Asset", "Amount"])[f_cols].to_dict('index')
+
+        def reap(r):
+            h, fm = str(r["Tx Hash"]), None
+            if h and h in h_map: fm = h_map[h]
+            elif (r["_d"], r["Account"], r["Asset"], r["Amount"]) in m_map:
+                 fm = m_map[(r["_d"], r["Account"], r["Asset"], r["Amount"])]
+            if fm:
+                for k in f_cols:
+                    if k in ["Category", "Status"] and str(fm[k]) != "A vérifier": r[k] = fm[k]
+                    elif k == "Imposable": r[k] = sl.is_imposable_robust(fm[k])
+                    else: r[k] = fm[k]
+            return r
+
+        res = ndf.apply(reap, axis=1)
+        nh = set(res["Tx Hash"].unique()); nk = set(zip(ndf["_d"], ndf["Account"], ndf["Asset"], ndf["Amount"]))
+        only_o = odf[~odf.apply(lambda r: (r["Tx Hash"] != "" and r["Tx Hash"] in nh) or ((r["_d"], r["Account"], r["Asset"], r["Amount"]) in nk), axis=1)]
+
+        final_df = pd.concat([res, only_o]).drop(columns=["_d"])
+        # Final ensure_columns to fix date types before sorting
+        final_df = ensure_columns(final_df).sort_values("Date", ascending=False).reset_index(drop=True)
+        st.session_state[QUAL_KEY] = final_df
+    else:
+        st.session_state[QUAL_KEY] = ndf
+
+# --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Configuration")
-    conf = sl.load_global_config()
+    g_conf = sl.load_global_config()
+    target_year = st.number_input("Année de traitement d'activité", 2015, 2030, value=int(g_conf.get("processing_year", 2025)), key="_hub_target_year")
+    if target_year != g_conf.get("processing_year"):
+        g_conf["processing_year"] = int(target_year); sl.save_global_config(g_conf); st.cache_data.clear()
 
-    cur_year = st.number_input("Année de traitement", 2015, 2030, value=int(conf.get("processing_year", 2025)), key="_hub_app2_year")
-    if cur_year != conf.get("processing_year"):
-        conf["processing_year"] = int(cur_year)
-        sl.save_global_config(conf)
-        st.cache_data.clear()
+    start_year_val = g_conf.get("start_year")
+    start_year_input = st.text_input("Année de début d'activité", value=str(start_year_val) if start_year_val else "", placeholder="ex: 2025")
+    if st.button("💾 Fixer l'année de début", width='stretch'):
+        g_conf["start_year"] = int(start_year_input) if start_year_input.strip() else None
+        sl.save_global_config(g_conf); st.success("Réglage enregistré."); st.rerun()
 
-    start_year_input = st.text_input("Année de début d'activité", value=str(conf.get("start_year", "")), placeholder="ex: 2025")
-    if st.button("💾 Enregistrer Début", width='stretch'):
-        conf["start_year"] = int(start_year_input) if start_year_input.strip() else None
-        sl.save_global_config(conf)
-        st.success("Config enregistrée."); st.rerun()
-
-    st.divider()
     QUAL_KEY = "_hub_journal_qualifie"
-    if QUAL_KEY not in st.session_state or st.session_state.get("_hub_last_loaded_year") != cur_year:
-        sync_session(cur_year)
+    if QUAL_KEY not in st.session_state or st.session_state.get("_hub_last_loaded_year") != target_year:
+        sync_data(target_year); st.session_state["_hub_last_loaded_year"] = target_year
 
-    st.button("🔄 Sync / Fusion (Harvest)", on_click=sync_session, args=(cur_year,), width='stretch', type="primary")
+    st.button("🔄 Sync / Fusion", on_click=sync_data, args=(target_year,), width='stretch', type="primary")
 
-    st.header("📊 Filtres")
+    c_auto1, c_auto2 = st.columns(2)
+    if c_auto1.button("🛡️ Spam Auto", width='stretch', help="Qualifie comme Spam selon la Blacklist."):
+        st.session_state[QUAL_KEY] = sl.apply_spam_filter(st.session_state[QUAL_KEY], drop=False); st.rerun()
+    if c_auto2.button("✅ Valide Auto", width='stretch', help="Qualifie comme Valide selon la Whitelist."):
+        v_list = sl.load_valid_assets()
+        st.session_state[QUAL_KEY].loc[st.session_state[QUAL_KEY]["Asset"].isin(v_list), "Status"] = "Valide"; st.rerun()
+
+    st.divider(); st.header("📊 Filtres")
     if QUAL_KEY in st.session_state:
         df_f = st.session_state[QUAL_KEY]
-        f_assets = st.multiselect("Assets", options=sl.get_safe_opts(df_f, "Asset"))
-        f_accs = st.multiselect("Comptes", options=sl.get_owner_display_list(df_f))
-        f_status = st.multiselect("Statuts", options=["A vérifier", "Valide", "Spam"])
+        fa = st.multiselect("Asset", options=sl.get_safe_opts(df_f, "Asset"))
+        fac = st.multiselect("Account", options=sl.get_owner_display_list(df_f))
+        fst = st.multiselect("Statut", options=["A vérifier", "Valide", "Spam", "Injecté"])
         show_spams = st.toggle("Afficher les Spams", value=False)
-        if st.button("⚡ Appliquer Filtres"): st.rerun()
+        if st.button("⚡ Appliquer"): st.rerun()
 
-    st.divider()
-    with st.expander("👥 Registres"):
-        owners = sl.load_owner_accounts()
-        new_acc = st.text_input("Ajouter Compte (0x...)", key="sidebar_add_acc")
-        new_lbl = st.text_input("Label", key="sidebar_add_lbl")
-        if st.button("➕ Ajouter"):
-            if new_acc: owners[new_acc.lower()] = new_lbl; sl.save_owner_accounts(owners); st.rerun()
-        st.dataframe(pd.DataFrame(list(owners.items()), columns=["Addr", "Label"]), hide_index=True)
+    st.divider(); st.header("⚙️ Référentiels")
+    # --- Unified Registration Form ---
+    with st.expander("➕ Enregistrement Unifié", expanded=True):
+        reg_addr = st.text_input("Adresse / Hash", placeholder="0x... ou Label", key="reg_addr_input")
+        reg_name = st.text_input("Nom / Label", placeholder="Nom de l'entité", key="reg_name_input")
+        reg_type = st.selectbox("Type", ["Compte Propriétaire", "Position (Protocole)", "Circuit (Bridge/Swap)", "Spam"], key="reg_type_select")
+        if st.button("💾 Enregistrer", width='stretch'):
+            if reg_addr and reg_name:
+                raw = sl.resolve_raw_addr(reg_addr)
+                if reg_type == "Compte Propriétaire": om = sl.load_owner_accounts(); om[raw] = reg_name; sl.save_owner_accounts(om)
+                elif reg_type == "Position (Protocole)": pl = sl.load_position_labels(); pl[raw] = reg_name; sl.save_position_labels(pl)
+                elif reg_type == "Circuit (Bridge/Swap)": ec = sl.load_external_circuits(); ec["labels"][raw] = reg_name; sl.save_external_circuits(ec)
+                elif reg_type == "Spam": sl.save_spam_list(sl.load_spam_list() | {raw.lower()})
+                st.success(f"Enregistré : {reg_name}"); st.rerun()
 
-# --- MAIN UI ---
+    with st.expander("🛡️ Blacklist Spams"):
+        s_list = sl.load_spam_list()
+        ed_sl = st.data_editor(pd.DataFrame(sorted(list(s_list)), columns=["Spam"]), num_rows="dynamic", width='stretch', key="ed_spam_sidebar")
+        if st.button("💾 Sauver Spams"): sl.save_spam_list(set(ed_sl["Spam"].dropna())); st.rerun()
 
-t_qual, t_reconc, t_audit = st.tabs(["📋 Qualification", "🤝 Réconciliation", "🔍 Audit & Restauration"])
+    with st.expander("👥 Comptes Propriétaires"):
+        om = sl.load_owner_accounts()
+        ed_om = st.data_editor(pd.DataFrame(list(om.items()), columns=["Addr", "Label"]), num_rows="dynamic", width='stretch', key="ed_owners_sidebar")
+        if st.button("💾 Sauver Propriétaires"): sl.save_owner_accounts({str(r["Addr"]).lower(): r["Label"] for _, r in ed_om.iterrows()}); st.rerun()
 
-with t_qual:
-    st.subheader(f"Journal {cur_year}")
-    if QUAL_KEY in st.session_state:
-        df_v = st.session_state[QUAL_KEY].copy()
-        if not show_spams: df_v = df_v[df_v["Status"] != "Spam"]
-        if f_assets: df_v = df_v[df_v["Asset"].isin(f_assets)]
-        if f_accs: df_v = sl.filter_df_by_owner_display(df_v, f_accs)
-        if f_status: df_v = df_v[df_v["Status"].isin(f_status)]
+    with st.expander("🌐 Circuits & Externes"):
+        ec = sl.load_external_circuits(); lb = ec.get("labels", {})
+        ed_lb = st.data_editor(pd.DataFrame(list(lb.items()), columns=["Addr", "Label"]), num_rows="dynamic", width='stretch', key="ed_circ_sidebar")
+        if st.button("💾 Sauver Circuits"): ec["labels"] = {str(r["Addr"]).lower(): r["Label"] for _, r in ed_lb.iterrows()}; sl.save_external_circuits(ec); st.rerun()
+        disc = sl.get_external_circuits_discovery(st.session_state.get(QUAL_KEY))
+        if disc: st.write("**Découvertes :**"); st.dataframe(pd.DataFrame(disc), hide_index=True)
 
-        if st.button("🔍 Auto-détection Transferts Internes", width='stretch'):
-            df_upd, _ = sl.detect_internal_transfers(st.session_state[QUAL_KEY])
-            st.session_state[QUAL_KEY] = df_upd; st.rerun()
+    with st.expander("✅ Whitelist Assets"):
+        v_assets = sl.load_valid_assets()
+        ed_vl = st.data_editor(pd.DataFrame(sorted(list(v_assets)), columns=["Asset Valid"]), num_rows="dynamic", width='stretch', key="ed_valid_sidebar")
+        if st.button("💾 Sauver Whitelist"): sl.save_valid_assets(set(ed_vl["Asset Valid"].dropna().str.upper().str.strip())); st.rerun()
 
-        if "Sel." not in df_v.columns: df_v.insert(0, "Sel.", False)
-        cat_list = sorted(list(set(["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense", "Frais", "Doublon à ignorer"] + [str(c) for c in st.session_state[QUAL_KEY]["Category"].unique() if not pd.isna(c)])))
+    with st.expander("🏦 Positions (Protocoles)"):
+        pl = sl.load_position_labels()
+        ed_pl = st.data_editor(pd.DataFrame(list(pl.items()), columns=["Addr", "Label"]), num_rows="dynamic", width='stretch', key="ed_prot_sidebar")
+        if st.button("💾 Sauver Positions"): sl.save_position_labels({str(r["Addr"]).lower(): r["Label"] for _, r in ed_pl.iterrows()}); st.rerun()
+
+# --- Main App ---
+t_q, t_r, t_audit = st.tabs(["📋 Qualification", "🤝 Réconciliation", "🔍 Audit & Récupération"])
+
+with t_q:
+    st.subheader(f"Journal de Qualification {target_year}")
+    if QUAL_KEY in st.session_state and not st.session_state[QUAL_KEY].empty:
+        # Detect Suspect Duplicates
+        df_full = st.session_state[QUAL_KEY]; df_full["_d"] = df_full["Date"].dt.date
+        sd_mask = (df_full.get("Category") != "Doublon à ignorer") & (df_full.get("Category") != "Doublon (Fusionné)")
+        dups = df_full[sd_mask][df_full[sd_mask].duplicated(subset=["Asset", "Amount", "Account", "_d"], keep=False)]
+        real_s = dups.groupby(["Asset", "Amount", "Account", "_d"]).filter(lambda x: x["Tx Hash"].nunique() > 1) if not dups.empty else pd.DataFrame()
+
+        if not real_s.empty:
+            with st.expander(f"⚠️ {len(real_s.groupby(['Asset','Amount','Account','_d']))} Doublons suspects", expanded=True):
+                st.dataframe(real_s[["Date", "Account", "Asset", "Amount", "Tx Hash"]], hide_index=True)
+                if st.button("🤝 Fusion Auto", width='stretch'):
+                    for n, g in real_s.groupby(["Asset", "Amount", "Account", "_d"]):
+                        sorted_idx = g.sort_values(by=["Category", "Source Type"], ascending=[False, True]).index
+                        df_full.loc[sorted_idx[1:], "Category"] = "Doublon (Fusionné)"
+                        df_full.loc[sorted_idx[1:], "Status"] = "Spam"
+                    st.session_state[QUAL_KEY] = df_full; st.success("Fusion terminée."); st.rerun()
+
+        dfd = st.session_state[QUAL_KEY].copy()
+        if not show_spams: dfd = dfd[dfd["Status"] != "Spam"]
+        if fa: dfd = dfd[dfd["Asset"].isin(fa)]
+        if fac: dfd = sl.filter_df_by_owner_display(dfd, fac)
+        if fst: dfd = dfd[dfd["Status"].isin(fst)]
+
+        if "Sel." not in dfd.columns: dfd.insert(0, "Sel.", False)
+        if st.button("🔍 Détecter Transferts Internes", width='stretch'):
+            df, _ = sl.detect_internal_transfers(st.session_state[QUAL_KEY]); st.session_state[QUAL_KEY] = df; st.rerun()
+
+        cats = sorted(list(set(["A vérifier", "Achat", "Vente", "Swap", "Transfert Interne", "Récompense", "Frais", "Doublon à ignorer"] + [str(c) for c in st.session_state[QUAL_KEY]["Category"].unique() if not pd.isna(c)])))
+
+        def on_editor_change():
+            if "qual_editor_v2" in st.session_state:
+                main_j = st.session_state[QUAL_KEY]
+                for idx_str, row in st.session_state["qual_editor_v2"].get("edited_rows", {}).items():
+                    idx = int(idx_str)
+                    if idx in main_j.index:
+                        for col, val in row.items():
+                             if col == "Imposable": val = sl.is_imposable_robust(val)
+                             main_j.at[idx, col] = val
+                st.session_state[QUAL_KEY] = main_j
 
         col_cfg = {
             "Sel.": st.column_config.CheckboxColumn("Sel."),
-            "Category": st.column_config.SelectboxColumn("Catégorie", options=cat_list),
-            "Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam"]),
+            "Category": st.column_config.SelectboxColumn("Catégorie", options=cats),
+            "Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam", "Injecté"]),
             "Imposable": st.column_config.CheckboxColumn("Imposable"),
             "Amount": st.column_config.NumberColumn(format="%.6f", disabled=True),
             "Date": st.column_config.DatetimeColumn(disabled=True),
-            "Source_File": None, "Linked_ID": None, "Link_Status": None
+            "Source_File": None, "Linked_ID": None, "Link_Status": None, "_d": None
         }
 
-        def on_edit():
-            if "main_editor" in st.session_state:
-                for idx_str, row in st.session_state.main_editor.get("edited_rows", {}).items():
-                    idx = int(idx_str)
-                    if idx in st.session_state[QUAL_KEY].index:
-                        for col, val in row.items():
-                            if col == "Imposable": val = sl.is_imposable_robust(val)
-                            st.session_state[QUAL_KEY].at[idx, col] = val
+        # Highlight suspect duplicates in table
+        suspect_hashes = set(real_s["Tx Hash"].unique()) if not real_s.empty else set()
+        def highlight_dups(row):
+            return ['background-color: #ffcccc'] * len(row) if row["Tx Hash"] in suspect_hashes else [''] * len(row)
 
-        st.data_editor(df_v, column_config=col_cfg, key="main_editor", on_change=on_edit, width='stretch')
+        edf = st.data_editor(dfd.style.apply(highlight_dups, axis=1), column_config=col_cfg, width='stretch', key="qual_editor_v2", on_change=on_editor_change)
 
         c1, c2, c3 = st.columns(3)
-        if c1.button("💶 Vers Flux Fiat (App 0)", width='stretch'):
-            sel = df_v[df_v["Sel."]]
+        if c1.button("💶 Injecter vers Flux Fiat", width='stretch'):
+            sel = edf[edf["Sel."]]
             if not sel.empty:
-                count = sl.inject_to_app0(sel.drop(columns="Sel.").to_dict('records'), "Fiat", cur_year)
+                count = sl.inject_to_app0(sel.drop(columns="Sel.").to_dict('records'), "Fiat", target_year)
                 st.session_state[QUAL_KEY].loc[sel.index, "Status"] = "Injecté"; st.success(f"{count} lignes injectées."); st.rerun()
 
-        if c3.button("💾 Sanctuariser (Générer Journal)", width='stretch', type="primary"):
-            st.session_state[QUAL_KEY].to_csv(sl.get_file_path(cur_year, 'qualified'), index=False, encoding="utf-8-sig")
-            clean_df = sl.apply_spam_filter(st.session_state[QUAL_KEY], drop=True)
-            mapping = sl.get_all_labels()
-            def resolve(x):
-                r = sl.resolve_raw_addr(x)
-                return sl.format_owner_display(r, mapping[r]) if r in mapping else x
-            clean_df["Account"] = clean_df["Account"].apply(resolve)
-            clean_df["Counterparty"] = clean_df["Counterparty"].apply(resolve)
-            clean_df.to_csv(sl.get_file_path(cur_year, 'qualified_clean'), index=False, encoding="utf-8-sig")
-            st.balloons(); st.success("Sanctuarisation réussie.")
+        with c3.popover("🗑️ Supprimer / Restaurer", width='stretch'):
+            if st.button("⏪ Restaurer vers État RAW", width='stretch'):
+                sel_idx = edf[edf["Sel."]].index
+                if not sel_idx.empty: st.session_state[QUAL_KEY].drop(index=sel_idx, inplace=True); st.rerun()
+            if st.button("🔥 Éliminer DÉFINITIVEMENT du RAW", width='stretch'):
+                sel_rows = edf[edf["Sel."]]
+                for _, r in sel_rows.iterrows():
+                    if r.get("Source_File"): sl.remove_row_from_csv(os.path.join(EXPORT_BASE_DIR, str(target_year), r["Source_File"]), r)
+                st.session_state[QUAL_KEY].drop(index=sel_rows.index, inplace=True); st.rerun()
+
+        if st.button("💾 Sanctuariser (Générer CLEAN)", type="primary", width='stretch'):
+            st.session_state[QUAL_KEY].to_csv(sl.get_file_path(target_year, 'qualified'), index=False, encoding="utf-8-sig")
+            clean_j = apply_position_labels(sl.apply_spam_filter(st.session_state[QUAL_KEY], drop=True))
+            clean_j.to_csv(sl.get_file_path(target_year, 'qualified_clean'), index=False, encoding="utf-8-sig")
+            st.balloons(); st.success("Sanctuarisation réussie !"); time.sleep(1); st.rerun()
+
+with t_r:
+    st.subheader("🤝 Réconciliation")
+    if QUAL_KEY in st.session_state:
+        df_r = st.session_state[QUAL_KEY]
+        if st.button("🚀 Rechercher Maillons", width='stretch'):
+            df_upd, count = sl.find_reconciliation_matches(df_r)
+            st.session_state[QUAL_KEY] = df_upd; st.success(f"{count} maillons trouvés."); st.rerun()
+        prop = df_r[df_r["Link_Status"] == "Proposed"].groupby("Linked_ID")
+        for lid, gp in prop:
+            with st.container(border=True):
+                cols = st.columns([3, 1])
+                cols[0].write(f"🔗 Maillon `{lid}`")
+                if cols[1].button("✅ Confirmer", key=f"conf_{lid}"):
+                    st.session_state[QUAL_KEY].loc[st.session_state[QUAL_KEY]["Linked_ID"] == lid, "Link_Status"] = "Confirmed"; st.rerun()
+                st.dataframe(gp[["Date", "Account", "Asset", "Amount", "Counterparty"]], hide_index=True)
 
 with t_audit:
-    st.subheader("🔍 Audit & Restauration")
-    if st.button("🚀 Comparer avec le Sanctuaire", width='stretch'):
-        sanct_df = sl.get_sanctuary_transactions(cur_year)
-        if sanct_df.empty: st.warning("Dossier sanctuary vide.")
+    st.subheader("🔍 Audit & Récupération")
+    if st.button("🚀 Analyse du Sanctuaire", width='stretch'):
+        sanct = sl.get_sanctuary_transactions(target_year)
+        if sanct.empty: st.warning("Sanctuaire vide.")
         else:
-            work_df = st.session_state.get(QUAL_KEY, pd.DataFrame())
-            work_keys = set(get_robust_fingerprint(work_df))
-            sanct_df["_f"] = get_robust_fingerprint(sanct_df)
-            orphans = sanct_df[~sanct_df["_f"].isin(work_keys)].copy()
-
+            def get_f(df):
+                if df.empty: return pd.Series()
+                d = pd.to_datetime(df["Date"], utc=True, errors='coerce').dt.strftime('%Y%m%d')
+                acc = df["Account"].apply(sl.resolve_raw_addr).str.lower()
+                h = df.get("Tx_Hash", df.get("Tx Hash", df.get("hash", ""))).astype(str).str.lower()
+                return d + "_" + acc + "_" + h
+            s_f = get_f(sanct); w_f = set(get_f(st.session_state[QUAL_KEY]))
+            orphans = sanct[~s_f.isin(w_f)].copy()
             if orphans.empty: st.success("✅ Intégrité parfaite.")
             else:
-                st.error(f"⚠️ {len(orphans)} orphelins détectés.")
+                st.error(f"⚠️ {len(orphans)} orphelins.")
                 if st.button("📥 Restaurer TOUT", type="primary", width='stretch'):
                     rows = []
                     for _, r in orphans.iterrows():
-                        # Discovery maps for the row itself
-                        m = {str(c).lower().replace(" ","").replace("_",""): c for c in r.index}
-                        def gv(keys, default=""):
-                            for k in keys:
-                                if k in m: return str(r[m[k]])
-                            return default
-                        def ga():
-                            for k in ["amount", "valueeth", "value", "quantity"]:
-                                if k in m:
-                                    try: return float(r[m[k]])
-                                    except: pass
-                            return 0.0
-                        rows.append({
-                            "Date": gv(["date"]), "Account": gv(["account"]), "Asset": gv(["asset", "tokensymbol"], "ETH").upper(),
-                            "Amount": ga(), "Counterparty": gv(["counterparty", "to", "from"]),
-                            "Tx Hash": gv(["txhash", "hash"]), "Network": gv(["chain"], "Blockchain"),
-                            "Source Type": "Restored", "Category": "A vérifier", "Status": "A vérifier",
-                            "Source_File": r.get("_orig_file", "Sanctuary")
-                        })
-                    new_data = ensure_v4_columns(pd.DataFrame(rows))
-                    st.session_state[QUAL_KEY] = pd.concat([st.session_state[QUAL_KEY], new_data]).drop_duplicates(subset=["Date", "Account", "Asset", "Amount", "Tx Hash"]).reset_index(drop=True)
-                    st.success("Restauration effectuée."); st.rerun()
-                st.dataframe(orphans.drop(columns=["_f"]), hide_index=True)
+                        rows.append({"Date": r.get("Date"), "Account": r.get("Account"), "Asset": r.get("Asset", "ETH"), "Amount": float(r.get("Amount", r.get("value eth", 0))), "Counterparty": r.get("Counterparty", r.get("To", r.get("From", ""))), "Tx Hash": r.get("Tx Hash", r.get("hash", "")), "Source Type": "Restored", "Status": "A vérifier", "Category": "A vérifier", "Source_File": r.get("_orig_file", "Sanctuary")})
+                    st.session_state[QUAL_KEY] = pd.concat([st.session_state[QUAL_KEY], ensure_columns(pd.DataFrame(rows))]).drop_duplicates().reset_index(drop=True)
+                    st.rerun()
+                st.dataframe(orphans, hide_index=True)
 
 sl.show_status()
