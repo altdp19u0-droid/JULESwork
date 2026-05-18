@@ -40,14 +40,18 @@ Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce sc
 C'est l'étape critique de transformation des données brutes en journal comptable.
 
 1. **Agrégation Exhaustive & Fidelity Engine :**
-    - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP) déjà présentes dans le journal qualifié en utilisant un quintuplet de correspondance (Date, Account, Asset, Amount, Hash).
-    - **Architecture Clean Gateway :** `app2.py` génère impérativement un second fichier : `qualified_journal_CLEAN_{year}.csv`. Ce fichier est purgé des spams/doublons et contient les labels résolus. C'est l'unique source de vérité pour les applications avals.
+    - **Ingestion Robuste :** Utilisation de `discover_col` pour identifier dynamiquement les colonnes critiques (Date, Compte, Asset, Montant, Hash) dans divers formats CSV (Blockchain V4, Legacy, Portfolio, Imports tiers).
+    - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP) déjà présentes dans le journal qualifié en utilisant un UID composite `(Tx_Hash, Asset, Account)`.
+    - **Architecture Clean Gateway :** `app2.py` produit deux versions du journal : `qualif_journal_{year}_FULL.csv` (Audit complet incluant les spams) et `qualif_journal_{year}.csv` (Version nettoyée, labels résolus, prête pour la fiscalité).
 2. **Gestion des Référentiels (Sidebar) :**
     - **Enregistrement Unifié :** Formulaire sidebar pour assigner une adresse/label à un registre (Propriétaire, Position, Circuit, Spam).
     - **CRUD Manuel :** Chaque registre (Spams, Propriétaires, Circuits, Positions) doit disposer de fonctions individuelles de **Modification** et **Suppression**.
 3. **Audit & Récupération :**
     - Comparaison systématique avec le `sanctuary/`. Restauration par bloc ou sélection.
     - Utilisation d'empreintes temporelles et techniques pour identifier les orphelins.
+4. **Outils d'Injection :**
+    - **Flux Fiat :** Injection simplifiée vers `manual_fiat_{year}.csv` avec contrepartie par défaut "banq fiat".
+    - **Swaps & Internes :** Injection multi-jambes vers `manual_swaps_{year}.csv` pour lier les flux crypto-to-crypto.
 
 ---
 
@@ -64,4 +68,4 @@ Utilisation des données nettoyées pour le reporting final.
 - **Largeur Plein Écran :** `layout="wide"`.
 - **Indépendance des Modules :** `if "is_hub" not in st.session_state: st.set_page_config(...)`.
 - **Type Safety :** Conversion numérique forcée (`pd.to_numeric`) sur `Amount`, `Value ($)` et `VGP (EUR)`.
-- **UTC Timestamps :** Toutes les colonnes 'Date' doivent être en format Datetime UTC pour éviter les `TypeError` lors des tris ou comparaisons.
+- **UTC Timestamps :** Toutes les colonnes 'Date' doivent être converties en format Datetime UTC (`pd.to_datetime(..., utc=True)`) dès l'ingestion pour éviter les `TypeError` lors des tris ou comparaisons.

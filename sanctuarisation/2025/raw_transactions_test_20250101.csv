@@ -1,3 +1,0 @@
- date , account , from , to , value eth , chain , tx hash
-2025-01-01 10:00:00,0x1,0x1,0x3,1.0,ETH,0xH1
-2025-01-02 12:00:00,0x2,0x3,0x2,2.0,ETH,0xH2

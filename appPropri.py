@@ -58,22 +58,29 @@ def get_owner_history(year):
         # Check against both technical ID and label from standard resolution
         combined = combined[combined["acc_raw"].isin(owner_addrs) | combined["Account"].isin(owners_map.values())]
 
-            combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
-            # --- CRITICAL FIX: Filter out rows with None dates ---
-            combined = combined[combined["Date"].notna()]
+        combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
+        # --- CRITICAL FIX: Filter out rows with None dates ---
+        combined = combined[combined["Date"].notna()]
 
-            combined["_day"] = combined["Date"].dt.date
-            combined["_amt"] = combined["Amount"].astype(float).round(8)
-            combined["_acc"] = combined["Account"].astype(str).str.lower()
-            combined["_asset"] = combined["Asset"].astype(str).str.upper()
+        # Deduplication logic (similar to how history was merged before)
+        combined["_day"] = combined["Date"].dt.date
+        combined["_amt"] = combined["Amount"].astype(float).round(8)
+        combined["_acc"] = combined["Account"].astype(str).str.lower()
+        combined["_asset"] = combined["Asset"].astype(str).str.upper()
 
-            combined["_src_pri"] = combined["Source Type"].apply(lambda x: 0 if "Manual" not in str(x) else 1)
+        # We assume Source_Way or Source Type exists
+        src_col = "Source_Way" if "Source_Way" in combined.columns else "Source Type"
+        if src_col in combined.columns:
+            combined["_src_pri"] = combined[src_col].apply(lambda x: 0 if "Manual" not in str(x) else 1)
             combined = combined.sort_values("_src_pri").drop_duplicates(subset=["_day", "_acc", "_asset", "_amt"], keep="first")
-            combined = combined.drop(columns=["_day", "_amt", "_acc", "_asset", "_src_pri", "acc_raw"])
-            all_txs.append(combined)
+            combined = combined.drop(columns=["_day", "_amt", "_acc", "_asset", "_src_pri"])
 
-    if not all_txs: return pd.DataFrame()
-    return pd.concat(all_txs).sort_values("Date", ascending=False).reset_index(drop=True)
+        if "acc_raw" in combined.columns:
+            combined = combined.drop(columns=["acc_raw"])
+
+        return combined.sort_values("Date", ascending=False).reset_index(drop=True)
+
+    return pd.DataFrame()
 
 @st.cache_data
 def get_acquisition_history(year):
@@ -95,11 +102,14 @@ def get_acquisition_history(year):
                     # --- CRITICAL FIX: Filter out rows with None dates ---
                     df_acq = df_acq[df_acq["Date"].notna()]
                     # Map to requested structure
-                    df_acq = df_acq.rename(columns={
-                        "Montant EUR": "Fiat Mobilisé (EUR)",
-                        "Compte/Label": "Compte",
-                        "Plateforme": "Provenance"
-                    })
+                    # Handle renaming safely
+                    renames = {}
+                    if "Montant EUR" in df_acq.columns: renames["Montant EUR"] = "Fiat Mobilisé (EUR)"
+                    if "Account" in df_acq.columns: renames["Account"] = "Compte"
+                    if "Counterparty" in df_acq.columns: renames["Counterparty"] = "Provenance"
+
+                    df_acq = df_acq.rename(columns=renames)
+
                     # Add requested 'Blockchain' column (default to 'Fiat/CEX')
                     if "Network" not in df_acq.columns:
                         df_acq["Blockchain"] = "Fiat/CEX"
@@ -120,32 +130,44 @@ def get_cessions_history(year):
 
     if not combined.empty:
         # Filter for cessions
-        mask_cess = (combined['Imposable'].apply(sl.is_imposable_robust) |
+        # Imposable flag or Vente category
+        combined["_is_imp"] = combined['Audit_Status'].fillna("").str.contains("Valide", case=False) # Simplified check if imposable is not explicit
+        if 'Imposable' in combined.columns:
+            combined["_is_imp"] = combined['Imposable'].apply(sl.is_imposable_robust)
+
+        mask_cess = (combined["_is_imp"] |
                      combined['Category'].fillna("").str.contains("Vente", case=False)) & (combined['Asset'] != 'EUR')
-        combined = combined[mask_cess].copy()
 
-            combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
+        cessions = combined[mask_cess].copy()
+
+        if not cessions.empty:
+            cessions["Date"] = pd.to_datetime(cessions["Date"], utc=True, errors="coerce")
             # --- CRITICAL FIX: Filter out rows with None dates ---
-            combined = combined[combined["Date"].notna()]
+            cessions = cessions[cessions["Date"].notna()]
 
-            combined["_day"] = combined["Date"].dt.date
-            combined["_amt"] = combined["Amount"].astype(float).round(8)
-            combined["_acc"] = combined["Account"].astype(str).str.lower()
-            combined["_asset"] = combined["Asset"].astype(str).str.upper()
+            cessions["_day"] = cessions["Date"].dt.date
+            cessions["_amt"] = cessions["Amount"].astype(float).round(8)
+            cessions["_acc"] = cessions["Account"].astype(str).str.lower()
+            cessions["_asset"] = cessions["Asset"].astype(str).str.upper()
 
-            # Drop duplicates keeping the one from qualified journal if possible
-            # We sort such that df_q rows (which usually have more metadata) are first
-            combined["_src_pri"] = combined["Source Type"].apply(lambda x: 0 if x not in ["Manual Fiat", "Manual Swap"] else 1)
-            combined = combined.sort_values("_src_pri").drop_duplicates(subset=["_day", "_acc", "_asset", "_amt"], keep="first")
-            combined = combined.drop(columns=["_day", "_amt", "_acc", "_asset", "_src_pri"])
-            all_cessions.append(combined)
+            # Drop duplicates
+            src_col = "Source_Way" if "Source_Way" in cessions.columns else "Source Type"
+            if src_col in cessions.columns:
+                cessions["_src_pri"] = cessions[src_col].apply(lambda x: 0 if "Manual" not in str(x) else 1)
+                cessions = cessions.sort_values("_src_pri").drop_duplicates(subset=["_day", "_acc", "_asset", "_amt"], keep="first")
+                cessions = cessions.drop(columns=["_day", "_amt", "_acc", "_asset", "_src_pri"])
 
-    if not all_cessions: return pd.DataFrame()
-    res = pd.concat(all_cessions)
-    # Final type safety
-    res["Prix de Cession (EUR)"] = pd.to_numeric(res.get("Prix de Cession (EUR)", 0.0), errors="coerce").fillna(0.0)
-    res["VGP (EUR)"] = pd.to_numeric(res.get("VGP (EUR)", 0.0), errors="coerce").fillna(0.0)
-    return res.sort_values("Date", ascending=True).reset_index(drop=True)
+            # Final type safety
+            # Check for column existence before numeric conversion
+            for col in ["Prix de Cession (EUR)", "VGP (EUR)"]:
+                if col in cessions.columns:
+                    cessions[col] = pd.to_numeric(cessions[col], errors="coerce").fillna(0.0)
+                else:
+                    cessions[col] = 0.0
+
+            return cessions.sort_values("Date", ascending=True).reset_index(drop=True)
+
+    return pd.DataFrame()
 
 @st.cache_data
 def get_complementary_history(year):
@@ -158,8 +180,8 @@ def get_complementary_history(year):
 
     all_txs = []
     if not combined.empty:
-        # 1. Manual Positions (Source Type check)
-        mask_m = combined["Source Type"].fillna("").str.contains("Manual Position", case=False, na=False)
+        # 1. Manual Positions
+        mask_m = combined["Type"].fillna("").str.contains("Position", case=False, na=False)
         if mask_m.any():
             df_m = combined[mask_m].copy()
             df_m["Category"] = "Position Manuelle"
@@ -167,15 +189,16 @@ def get_complementary_history(year):
 
         # 2. Receivables from Internal Transfers to unknown accounts
         mask_int = (combined["Category"] == "Transfert Interne")
-        combined["cp_raw"] = combined["Counterparty"].apply(sl.resolve_raw_addr)
-        df_receivable = combined[mask_int & (~combined["cp_raw"].isin(owner_addrs))].copy()
+        if "Counterparty" in combined.columns:
+            combined["cp_raw"] = combined["Counterparty"].apply(sl.resolve_raw_addr)
+            df_receivable = combined[mask_int & (~combined["cp_raw"].isin(owner_addrs))].copy()
 
-        if not df_receivable.empty:
-            # In VGP calculation, the receivable is the negative of the leg
-            df_receivable["Amount"] = -df_receivable["Amount"]
-            df_receivable["Account"] = df_receivable["Counterparty"]
-            df_receivable["Category"] = "Créance (Transfert Interne Sortant)"
-            all_txs.append(df_receivable)
+            if not df_receivable.empty:
+                # In VGP calculation, the receivable is the negative of the leg
+                df_receivable["Amount"] = -df_receivable["Amount"]
+                df_receivable["Account"] = df_receivable["Counterparty"]
+                df_receivable["Category"] = "Créance (Transfert Interne Sortant)"
+                all_txs.append(df_receivable)
 
     if not all_txs: return pd.DataFrame()
     res = pd.concat(all_txs).sort_values("Date", ascending=False).reset_index(drop=True)
@@ -215,6 +238,7 @@ notes_db = sl.load_manual_notes()
 
 def apply_notes(df):
     if df.empty: return df
+    df = df.copy()
     df["Notes"] = df.apply(lambda r: notes_db.get(sl.get_note_key(r), ""), axis=1)
     return df
 
@@ -238,11 +262,13 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                 for _, r in unique_pairs.iterrows():
                     prices_map[(r["Asset"], r["Date_Only"])] = sl.get_price_eur(r["Asset"], r["Date_Only"], cache=global_cache)
 
+                amt_col = "Quantité" if "Quantité" in acq_history.columns else "Amount"
                 acq_history["Valeur EUR (Date)"] = acq_history.apply(
-                    lambda r: float(r["Quantité"]) * prices_map.get((r["Asset"], r["Date_Only"]), 0.0), axis=1
+                    lambda r: float(r[amt_col]) * prices_map.get((r["Asset"], r["Date_Only"]), 0.0), axis=1
                 )
 
-                total_a = acq_history["Fiat Mobilisé (EUR)"].sum()
+                fiat_col = "Fiat Mobilisé (EUR)" if "Fiat Mobilisé (EUR)" in acq_history.columns else "Amount"
+                total_a = acq_history[fiat_col].sum() if fiat_col in acq_history.columns else 0.0
                 st.metric("Total Prix d'Acquisition (A)", f"{total_a:,.2f} €")
 
                 # We pass the full dataframe to preserve hidden columns (Account, Tx Hash, Amount) for the key generator
@@ -272,7 +298,7 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                     for idx, r in ed_acq.iterrows():
                         r_proxy = r.to_dict()
                         if "Tx Hash" not in r_proxy or not r_proxy["Tx Hash"]:
-                            r_proxy["Tx Hash"] = acq_history.at[idx, "Tx Hash"] if "Tx Hash" in acq_history.columns else ""
+                            r_proxy["Tx Hash"] = acq_history.at[idx, "Tx_Hash"] if "Tx_Hash" in acq_history.columns else (acq_history.at[idx, "Tx Hash"] if "Tx Hash" in acq_history.columns else "")
                         key = sl.get_note_key(r_proxy)
                         if r["Notes"]: new_notes[key] = str(r["Notes"])
                         elif key in new_notes: del new_notes[key]
@@ -287,7 +313,6 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
         else:
             with st.spinner("Calcul des plus-values unitaires..."):
                 # VALORIZATION: ensure 'Prix de Cession (EUR)' is filled if missing (0.0)
-                # This fixes the issue of zero results in calculation
                 mask_no_price = (cess_history["Prix de Cession (EUR)"].fillna(0.0) == 0.0)
                 if mask_no_price.any():
                     for idx, row in cess_history[mask_no_price].iterrows():
@@ -336,7 +361,7 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                     "Asset": "Asset Vendu",
                     "Amount": "Quantité",
                     "Account": "Compte",
-                    "Network": "Blockchain",
+                    "Chain": "Blockchain",
                     "Gain/Perte": "Valeur gain/perte"
                 })
                 # Re-sign quantity for display
@@ -365,11 +390,8 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
 
                 if st.button("💾 Enregistrer les Notes (Cessions)", key="btn_save_notes_cess"):
                     new_notes = notes_db.copy()
-                    # We must use original technical columns for key generator
-                    # Cessions are negative in journal
                     for idx, r in ed_cess.iterrows():
-                        # Recover original Tx Hash if present in technical df
-                        orig_h = cess_history.at[idx, "Tx Hash"] if "Tx Hash" in cess_history.columns else ""
+                        orig_h = cess_history.at[idx, "Tx_Hash"] if "Tx_Hash" in cess_history.columns else (cess_history.at[idx, "Tx Hash"] if "Tx Hash" in cess_history.columns else "")
 
                         proxy = {
                             "Date": r["Date"], "Account": r["Compte"], "Asset": r["Asset Vendu"],
@@ -394,7 +416,6 @@ else:
 
     # Portfolio Value (VGP) at EOY
     eoy_date = datetime(target_year, 12, 31)
-    # get_portfolio_snapshot handles historical carryover
     snapshot_df, vgp_eoy = sl.get_portfolio_snapshot(target_year, eoy_date)
 
     c1, c2, c3 = st.columns(3)
@@ -404,18 +425,12 @@ else:
     perf_net = vgp_eoy - total_acq
     c3.metric("Performance Latente Globale", f"{perf_net:,.2f} €", delta=perf_net, delta_color="normal")
 
-    # Sign Helper
-    def signed_format(val):
-        if pd.isna(val): return "0.00"
-        return f"{val:,.2f} €" if val >= 0 else f"- {abs(val):,.2f} €"
-
     # 2. TABLE 1: Transactions de l'année (Comptes Propriétaires)
     st.divider()
     st.subheader(f"📑 Mouvements des Comptes Propriétaires ({target_year})")
 
     global_cache = sl.load_price_cache()
 
-    # Filter for current year only
     if not history.empty:
         mask_year = history["Date"].dt.year == target_year
         df_year = history[mask_year].copy()
@@ -453,10 +468,9 @@ else:
             if st.button("💾 Enregistrer les Notes (Mouvements Propriétaires)", key="btn_save_notes_owners"):
                 new_notes = notes_db.copy()
                 for idx, r in ed_year.iterrows():
-                    # Preserve original row technical data
                     r_proxy = r.to_dict()
                     if "Tx Hash" not in r_proxy or not r_proxy["Tx Hash"]:
-                        r_proxy["Tx Hash"] = df_year.at[idx, "Tx Hash"] if "Tx Hash" in df_year.columns else ""
+                        r_proxy["Tx Hash"] = df_year.at[idx, "Tx_Hash"] if "Tx_Hash" in df_year.columns else (df_year.at[idx, "Tx Hash"] if "Tx Hash" in df_year.columns else "")
 
                     key = sl.get_note_key(r_proxy)
                     if r["Notes"]: new_notes[key] = str(r["Notes"])
@@ -465,7 +479,7 @@ else:
                 st.success("Notes enregistrées.")
                 st.rerun()
 
-    # 2b. TABLE 1b: Mouvements Complémentaires (Positions Manuelles & Créances)
+    # 2b. TABLE 1b: Mouvements Complémentaires
     st.subheader(f"📑 Mouvements Complémentaires - Manuels & Créances ({target_year})")
     if not comp_history.empty and "Date" in comp_history.columns:
         mask_year_comp = comp_history["Date"].dt.year == target_year
@@ -506,7 +520,7 @@ else:
                 for idx, r in ed_comp.iterrows():
                     r_proxy = r.to_dict()
                     if "Tx Hash" not in r_proxy or not r_proxy["Tx Hash"]:
-                        r_proxy["Tx Hash"] = df_year_comp.at[idx, "Tx Hash"] if "Tx Hash" in df_year_comp.columns else ""
+                        r_proxy["Tx Hash"] = df_year_comp.at[idx, "Tx_Hash"] if "Tx_Hash" in df_year_comp.columns else (df_year_comp.at[idx, "Tx Hash"] if "Tx Hash" in df_year_comp.columns else "")
 
                     key = sl.get_note_key(r_proxy)
                     if r["Notes"]: new_notes[key] = str(r["Notes"])
@@ -522,31 +536,25 @@ else:
     if snapshot_df.empty:
         st.info("Aucun solde à afficher.")
     else:
-        # 1. Filter snapshot for Owners
-        mask_owner = snapshot_df["Location"].str.startswith("Account:", na=False)
-        df_balances = snapshot_df[mask_owner].copy()
-        def map_owner_bal(loc):
-            addr = loc.replace("Account: ", "")
-            return sl.resolve_owner_display(addr)
-        df_balances["Compte"] = df_balances["Location"].apply(map_owner_bal)
+        # Filter for Owners (Location resolution might vary, usually standardized address)
+        # Assuming get_portfolio_snapshot returns standard display strings in 'Location'
+        df_balances = snapshot_df.copy()
+        df_balances["Compte"] = df_balances["Location"]
 
-        display_bal_cols = ["Compte", "Asset", "Entrées", "Sorties", "Solde", "Prix (EUR)", "Valeur (EUR)", "Notes"]
+        display_bal_cols = ["Compte", "Asset", "Solde", "Prix (EUR)", "Valeur (EUR)", "Notes"]
         df_balances = apply_notes(df_balances)
 
-        # We need technical columns for note persistence (Location -> Account, Solde -> Amount)
-        # We use a technical copy with hidden columns
         bal_with_tech = df_balances.copy()
         bal_with_tech["Tx Hash"] = "SNAPSHOT"
+        if "Amount" not in bal_with_tech.columns and "Solde" in bal_with_tech.columns:
+            bal_with_tech["Amount"] = bal_with_tech["Solde"]
 
         col_cfg_bal = {
             "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f"),
             "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
             "Solde": st.column_config.NumberColumn("Quantité Finale", format="%.6f"),
-            "Entrées": st.column_config.NumberColumn(format="%.6f"),
-            "Sorties": st.column_config.NumberColumn(format="%.6f"),
             "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
         }
-        # Hide technical columns that are not in display_bal_cols
         for c in bal_with_tech.columns:
             if c not in display_bal_cols:
                 col_cfg_bal[c] = None
@@ -562,68 +570,15 @@ else:
         if st.button("💾 Enregistrer les Notes (Balances Propriétaires)", key="btn_save_notes_bal_owners"):
             new_notes = notes_db.copy()
             for _, r in ed_bal.iterrows():
-                # We use fixed date for snapshots
                 r_proxy = r.to_dict()
                 r_proxy["Date"] = datetime(target_year, 12, 31)
+                r_proxy["Account"] = r["Compte"]
                 key = sl.get_note_key(r_proxy)
                 if r["Notes"]: new_notes[key] = str(r["Notes"])
                 elif key in new_notes: del new_notes[key]
             sl.save_manual_notes(new_notes)
             st.success("Notes enregistrées.")
             st.rerun()
-
-        # 3b. TABLE 2b: Balances Complémentaires (Manuelles & Créances)
-        st.subheader(f"🏦 Positions Complémentaires - Manuelles & Créances (au 31/12/{target_year})")
-
-        # Filter for non-owners (Manual Positions and Receivables)
-        # Receivables in snapshot usually have labels like "External/CEX: ..." or derived from position_labels
-        # Manual Positions start with "Manual Position:"
-        # So complementary balances = (Everything except Account:) AND Is_Circuit != True
-        mask_comp_bal = (~mask_owner) & (snapshot_df["Is_Circuit"] != True)
-
-        df_comp_bal = snapshot_df[mask_comp_bal].copy()
-        # Ensure model matches exactly by using 'Compte' as column name
-        df_comp_bal["Compte"] = df_comp_bal["Location"].str.replace("Manual Position: ", "")
-
-        if df_comp_bal.empty:
-            st.info("Aucune position complémentaire détectée.")
-        else:
-            df_comp_bal = apply_notes(df_comp_bal)
-
-            comp_bal_tech = df_comp_bal.copy()
-            comp_bal_tech["Tx Hash"] = "SNAPSHOT"
-
-            col_cfg_comp_bal = {
-                "Valeur (EUR)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f"),
-                "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.4f €"),
-                "Solde": st.column_config.NumberColumn("Quantité Finale", format="%.6f"),
-                "Entrées": st.column_config.NumberColumn(format="%.6f"),
-                "Sorties": st.column_config.NumberColumn(format="%.6f"),
-                "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
-            }
-            for c in comp_bal_tech.columns:
-                if c not in display_bal_cols:
-                    col_cfg_comp_bal[c] = None
-
-            ed_comp_bal = st.data_editor(
-                comp_bal_tech,
-                column_config=col_cfg_comp_bal,
-                width='stretch',
-                hide_index=True,
-                key="comp_bal_editor"
-            )
-
-            if st.button("💾 Enregistrer les Notes (Balances Complémentaires)", key="btn_save_notes_bal_comp"):
-                new_notes = notes_db.copy()
-                for _, r in ed_comp_bal.iterrows():
-                    r_proxy = r.to_dict()
-                    r_proxy["Date"] = datetime(target_year, 12, 31)
-                    key = sl.get_note_key(r_proxy)
-                    if r["Notes"]: new_notes[key] = str(r["Notes"])
-                    elif key in new_notes: del new_notes[key]
-                sl.save_manual_notes(new_notes)
-                st.success("Notes enregistrées.")
-                st.rerun()
 
 st.sidebar.divider()
 st.sidebar.caption("Dashboard Patrimoine v1.0 - appPropri")
