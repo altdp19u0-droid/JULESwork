@@ -164,7 +164,9 @@ def apply_auto_labels(df):
         r["To_Label"] = t_l if t_l != r["To"] else r["To_Label"]
 
         # Auto-Status
-        if r["Asset"] in spams or r["Counterparty"] in spams:
+        asset_norm = str(r["Asset"]).lower().strip()
+        cp_norm = sl.resolve_raw_addr(r["Counterparty"]).lower()
+        if asset_norm in spams or cp_norm in spams:
             r["Audit_Status"] = "Spam"
         elif r["Asset"] in valides:
             if r["Audit_Status"] == "A vérifier":
@@ -179,6 +181,15 @@ def main():
     sl.show_status()
 
     year = st.sidebar.selectbox("Année", [2025, 2024], key="_hub_app2_year")
+
+    # Persistent toggle for Spams
+    g_conf = sl.load_global_config()
+    show_spams_default = g_conf.get("app2_show_spams", False)
+    show_spams = st.sidebar.toggle("Afficher les Spams", value=show_spams_default, key="app2_show_spams_toggle")
+
+    if show_spams != show_spams_default:
+        g_conf["app2_show_spams"] = show_spams
+        sl.save_global_config(g_conf)
 
     # Chemin Journal
     j_path = f"sanctuarisation/{year}/qualif_journal_{year}.csv"
@@ -244,7 +255,7 @@ def main():
                     st.rerun()
             n_addr = st.text_input("Adresse", key="n_own_addr")
             n_lab = st.text_input("Label", key="n_own_lab")
-            if st.button("Ajouter Propri\303\251taire"):
+            if st.button("Ajouter Propriétaire"):
                 if n_addr and n_lab:
                     owners[n_addr.lower()] = n_lab
                     sl.save_owner_accounts(owners)
@@ -291,7 +302,7 @@ def main():
                 if disc:
                     st.table(pd.DataFrame(disc))
                 else:
-                    st.info("Aucun nouveau circuit d\303\251tect\303\251.")
+                    st.info("Aucun nouveau circuit détecté.")
 
     # --- MAIN UI ---
     tab1, tab2, tab3 = st.tabs(["📝 Qualification Journal", "🔍 Audit & Recovery", "📊 Statistiques"])
@@ -311,6 +322,9 @@ def main():
             f_imp = f_cols2[1].selectbox("Imposable", ["Tous", "Oui", "Non"])
 
         view_df = df.copy()
+        if not show_spams:
+            view_df = view_df[view_df["Audit_Status"] != "Spam"]
+
         if f_status: view_df = view_df[view_df["Audit_Status"].isin(f_status)]
         if f_acc:
             acc_set = {sl.resolve_raw_addr(x) for x in f_acc}
@@ -329,13 +343,12 @@ def main():
                 "Imposable": st.column_config.CheckboxColumn("Imposable"),
             },
             disabled=["Date", "Chain", "Tx_Hash", "Account", "Asset", "Amount", "Source_Way"],
-            num_rows="fixed", # Avoid "dynamic" if it breaks sorting in some streamlit versions
+            num_rows="fixed",
             width='stretch',
             key="qualif_editor"
         )
 
         if st.button("🐾 Sauvegarder Journal"):
-            # Update local state
             st.session_state.df_qualif.update(edited_df)
             final_save = ensure_columns(st.session_state.df_qualif)
             # Full for Audit
@@ -409,8 +422,11 @@ def main():
             st.success("Journal en phase avec les sources RAW.")
 
     with tab3:
-        st.metric("Volume Qualifié", f"{len(df[df['Audit_Status']=='Valide'])} tx")
-        st.metric("Spams Identifiés", f"{len(df[df['Audit_Status']=='Spam'])} tx")
+        stats_df = st.session_state.df_qualif
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Volume Qualifié", f"{len(stats_df[stats_df['Audit_Status']=='Valide'])} tx")
+        c2.metric("Spams Identifiés", f"{len(stats_df[stats_df['Audit_Status']=='Spam'])} tx")
+        c3.metric("À vérifier", f"{len(stats_df[stats_df['Audit_Status']=='A vérifier'])} tx")
 
 if __name__ == "__main__":
     main()
