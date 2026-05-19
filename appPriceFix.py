@@ -71,9 +71,11 @@ def scan_needed_prices(target_years, exclude_spams=True):
         clean_path = sl.get_file_path(y_int, 'qualified_clean')
         qual_path = sl.get_file_path(y_int, 'qualified')
 
-        path_to_scan = clean_path if os.path.exists(clean_path) else qual_path
+        path_to_scan = None
+        if clean_path and os.path.exists(clean_path): path_to_scan = clean_path
+        elif qual_path and os.path.exists(qual_path): path_to_scan = qual_path
 
-        if os.path.exists(path_to_scan):
+        if path_to_scan:
             df_q = sl.pd_read_csv_safe(path_to_scan)
             if not df_q.empty:
                 # --- ZÉRO SPAM ---

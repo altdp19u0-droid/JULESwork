@@ -129,6 +129,7 @@ def get_safe_opts(df, col):
 def get_file_path(year, category):
     base = os.path.join(EXPORT_BASE_DIR, str(year))
     if category == 'qualified': return os.path.join(base, f"qualif_journal_{year}.csv")
+    if category == 'qualified_clean': return os.path.join(base, f"qualif_journal_{year}.csv")
     if category == 'qualified_full': return os.path.join(base, f"qualif_journal_{year}_FULL.csv")
     if category == 'fiat': return os.path.join(base, f"manual_fiat_{year}.csv")
     if category == 'swaps': return os.path.join(base, f"manual_swaps_{year}.csv")
