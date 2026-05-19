@@ -127,15 +127,28 @@ def run_fidelity_engine(raw_df, existing_df):
     if existing_df.empty:
         return raw_df
 
-    # On identifie les lignes par (Tx_Hash, Asset, Account)
-    existing_df["_uid"] = existing_df["Tx_Hash"].astype(str) + "_" + existing_df["Asset"].astype(str) + "_" + existing_df["Account"].astype(str)
-    raw_df["_uid"] = raw_df["Tx_Hash"].astype(str) + "_" + raw_df["Asset"].astype(str) + "_" + raw_df["Account"].astype(str)
+    def generate_uid(row):
+        # UID composite plus granulaire pour éviter les collisions (Hash, Asset, Account, Amount arrondi, Date brute)
+        dt = str(row.get("Date", "NODATE"))
+        h = str(row.get("Tx_Hash", "NOHASH"))
+        ast = str(row.get("Asset", "NOAST"))
+        acc = str(row.get("Account", "NOACC"))
+        amt = f"{float(row.get('Amount', 0)):.8f}"
+        return f"{h}_{ast}_{acc}_{amt}_{dt}"
+
+    # On identifie les lignes
+    existing_df["_uid"] = existing_df.apply(generate_uid, axis=1)
+    raw_df["_uid"] = raw_df.apply(generate_uid, axis=1)
 
     # Les colonnes à préserver (celles que l'utilisateur modifie)
     preservable = ["Audit_Status", "Category", "From_Label", "To_Label", "Counterparty", "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable"]
 
+    # Dédoublonnage de l'existant sur l'UID pour éviter ValueError orient='index'
+    # On garde le premier (le plus qualifié normalement)
+    clean_existing = existing_df.drop_duplicates(subset=["_uid"], keep="first")
+
     # Map de l'existant
-    qualif_map = existing_df.set_index("_uid")[preservable].to_dict('index')
+    qualif_map = clean_existing.set_index("_uid")[preservable].to_dict('index')
 
     def apply_fidelity(row):
         uid = row["_uid"]

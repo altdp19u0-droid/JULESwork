@@ -41,7 +41,7 @@ C'est l'étape critique de transformation des données brutes en journal comptab
 
 1. **Agrégation Exhaustive & Fidelity Engine :**
     - **Ingestion Robuste :** Utilisation de `discover_col` pour identifier dynamiquement les colonnes critiques (Date, Compte, Asset, Montant, Hash) dans divers formats CSV (Blockchain V4, Legacy, Portfolio, Imports tiers).
-    - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP) déjà présentes dans le journal qualifié en utilisant un UID composite `(Tx_Hash, Asset, Account)`.
+    - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP) déjà présentes dans le journal qualifié en utilisant un UID composite exhaustif `(Tx_Hash, Asset, Account, Amount, Date)` pour éviter toute collision sur des transactions identiques (ex: swaps de même montant à la même seconde).
     - **Architecture Clean Gateway :** `app2.py` produit deux versions du journal : `qualif_journal_{year}_FULL.csv` (Audit complet incluant les spams) et `qualif_journal_{year}.csv` (Version nettoyée, labels résolus, prête pour la fiscalité).
 2. **Gestion des Référentiels (Sidebar) :**
     - **Enregistrement Unifié :** Formulaire sidebar pour assigner une adresse/label à un registre (Propriétaire, Position, Circuit, Spam).
