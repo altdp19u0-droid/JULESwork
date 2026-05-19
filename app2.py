@@ -405,26 +405,38 @@ def main():
                 }
                 </style>""", unsafe_allow_html=True)
 
-        if st.button(save_label, type=btn_type):
-            st.session_state.df_qualif.update(edited_df)
-            final_save = ensure_columns(st.session_state.df_qualif)
+        sc1, sc2 = st.columns([1, 1])
 
-            # Sauvegarde Physique
-            os.makedirs(os.path.dirname(j_full_path), exist_ok=True)
+        with sc1:
+            if st.button(save_label, type=btn_type, width='stretch'):
+                st.session_state.df_qualif.update(edited_df)
+                final_save = ensure_columns(st.session_state.df_qualif)
 
-            # 1. FULL for Audit
-            final_save.to_csv(j_full_path, index=False)
+                # Sauvegarde Physique
+                os.makedirs(os.path.dirname(j_full_path), exist_ok=True)
 
-            # 2. CLEAN (No Spams, strictly real positions)
-            clean_save = final_save[final_save["Audit_Status"] != "Spam"].copy()
-            # On retire aussi les colonnes de statut interne qui n'ont plus lieu d'être dans le clean
-            # Mais on garde Category et Imposable qui sont utiles en aval
-            clean_save.to_csv(j_path, index=False)
+                # 1. FULL for Audit
+                final_save.to_csv(j_full_path, index=False)
 
-            st.session_state.has_unsaved_changes = False
-            st.toast("✅ Sanctuarisation réussie !", icon="🟢")
-            st.success("Journal synchronisé avec Sanctuarisation (Fichiers FULL et CLEAN à jour).")
-            st.rerun()
+                # 2. CLEAN (No Spams, strictly real positions)
+                clean_save = final_save[final_save["Audit_Status"] != "Spam"].copy()
+                # On retire aussi les colonnes de statut interne qui n'ont plus lieu d'être dans le clean
+                # Mais on garde Category et Imposable qui sont utiles en aval
+                clean_save.to_csv(j_path, index=False)
+
+                st.session_state.has_unsaved_changes = False
+                st.toast("✅ Sanctuarisation réussie !", icon="🟢")
+                st.success("Journal synchronisé avec Sanctuarisation (Fichiers FULL et CLEAN à jour).")
+                st.rerun()
+
+        with sc2:
+            st.download_button(
+                label="📥 Exporter la vue actuelle (CSV)",
+                data=edited_df.to_csv(index=False, encoding="utf-8-sig"),
+                file_name=f"export_qualif_{year}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                width='stretch'
+            )
 
         # --- INJECTION TOOLS ---
         st.divider()
