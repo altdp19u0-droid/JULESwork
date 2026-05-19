@@ -38,7 +38,7 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 
 ### 2. Standard de Données Cible (SCHEMA RAW V4)
 Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma de 23 colonnes :
-- **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount**, **Valeur $**, **USD prix asset reçu**, **USD prix asset envoyé**, **USD prix de fee asset**, **Fee_Asset**, **Fee_Amount**, **Source_Way**, **Audit_Status**, **Fee_Audit_Alert**, **Source_Exchange_Rate**.
+- **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount**, **Valeur $**, **USD prix asset reçu**, **USD prix asset envoyé**, **USD prix de fée asset**, **Fee_Asset**, **Fee_Amount**, **Source_Way**, **Audit_Status**, **Fee_Audit_Alert**, **Source_Exchange_Rate**.
 - **Zéro Valorisation :** Les fichiers RAW ne contiennent aucune conversion EUR/USD externe.
 
 ---

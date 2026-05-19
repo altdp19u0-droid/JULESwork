@@ -9,7 +9,7 @@ from datetime import datetime
 QUALIFIED_V4_COLUMNS = [
     "Date", "Chain", "Tx_Hash", "Type", "Method", "Account", "From", "To",
     "From_Label", "To_Label", "Counterparty", "Asset", "Amount",
-    "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fee asset",
+    "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset",
     "Fee_Asset", "Fee_Amount", "Source_Way", "Audit_Status", "Fee_Audit_Alert",
     "Source_Exchange_Rate", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable"
 ]
@@ -28,7 +28,7 @@ def ensure_columns(df):
     df["VGP (EUR)"] = pd.to_numeric(df["VGP (EUR)"], errors="coerce").fillna(0.0)
 
     # New USD columns numeric conversion
-    for usd_col in ["Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fee asset"]:
+    for usd_col in ["Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset"]:
         if usd_col in df.columns:
             df[usd_col] = pd.to_numeric(df[usd_col], errors="coerce").fillna(0.0)
 
@@ -90,7 +90,7 @@ def merge_raw_data(year):
         v_usd_c = discover_col(df_raw, ["valeur$", "valueusd", "totalusd", "usdvalue"])
         p_rec_c = discover_col(df_raw, ["usdprixassetreçu", "usdpriceofassetreceived", "usdprixreçu"])
         p_sent_c = discover_col(df_raw, ["usdprixassetenvoyé", "usdpriceofassetsent", "usdprixenvoyé"])
-        p_fee_c = discover_col(df_raw, ["usdprixdefeeasset", "usdpriceoffeeasset", "usdprixfee"])
+        p_fee_c = discover_col(df_raw, ["usdprixdeféeasset", "usdprixdefeeasset", "usdpriceoffeeasset", "usdprixfee"])
 
         from_c = discover_col(df_raw, ["from", "expediteur"])
         to_c = discover_col(df_raw, ["to", "destinataire"])
@@ -116,7 +116,7 @@ def merge_raw_data(year):
                     "Valeur $": float(r.get(v_usd_c, 0.0)) if v_usd_c else 0.0,
                     "USD prix asset reçu": float(r.get(p_rec_c, 0.0)) if p_rec_c else 0.0,
                     "USD prix asset envoyé": float(r.get(p_sent_c, 0.0)) if p_sent_c else 0.0,
-                    "USD prix de fee asset": float(r.get(p_fee_c, 0.0)) if p_fee_c else 0.0,
+                    "USD prix de fée asset": float(r.get(p_fee_c, 0.0)) if p_fee_c else 0.0,
                     "From": sl.standardize_address_string(r.get(from_c, "")),
                     "To": sl.standardize_address_string(r.get(to_c, "")),
                     "Counterparty": str(r.get(cp_c, "")),
@@ -174,7 +174,7 @@ def run_fidelity_engine(raw_df, existing_df):
     raw_df["_uid"] = raw_df.apply(generate_uid, axis=1)
 
     # Les colonnes à préserver (celles que l'utilisateur modifie)
-    preservable = ["Audit_Status", "Category", "From_Label", "To_Label", "Counterparty", "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable", "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fee asset"]
+    preservable = ["Audit_Status", "Category", "From_Label", "To_Label", "Counterparty", "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable", "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset"]
 
     # Dédoublonnage de l'existant sur l'UID pour éviter ValueError orient='index'
     # On garde le premier (le plus qualifié normalement)
@@ -253,6 +253,11 @@ def main():
                 existing = sl.pd_read_csv_safe(old_path_2) if os.path.exists(old_path_2) else pd.DataFrame()
         else:
             existing = sl.pd_read_csv_safe(j_full_path)
+
+        # Robustesse : s'assurer que l'existant a bien toutes les colonnes cibles avant le Fidelity Engine
+        if not existing.empty:
+            existing = ensure_columns(existing)
+
         raw = merge_raw_data(year)
         final = run_fidelity_engine(raw, existing)
         st.session_state.df_qualif = apply_auto_labels(final)
