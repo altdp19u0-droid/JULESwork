@@ -29,8 +29,9 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 - **appNomplateforme.py (ex: appNeverless.py, appBleap.py) :** Modules spécialisés pour les imports CSV locaux/spécifiques.
 
 #### Architecture du Moteur à 3 Voies (app.py)
-- **VOIE 1 (Blockscout Deep Scan) :** Priorité sémantique (extraction des étiquettes From_Label/To_Label et types de processus).
+- **VOIE 1 (Blockscout Deep Scan) :** Priorité sémantique (extraction des étiquettes From_Label/To_Label et types de processus) et extraction des valuations USD (via `value_usd`, `total_usd`).
 - **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2 via Etherscan API V2 avec Smart Fallback).
+- **ROBUSTESSE TX_HASH :** L'extraction des hashes de transaction doit vérifier systématiquement les clés `hash`, `tx_hash`, `txHash`, `transaction_hash`, et `transactionHash` pour éviter les valeurs 'none'.
 - **VOIE 3 (Imports CEX/Offline) :** Intégration automatique des fichiers `raw_*.csv` locaux.
 - **FUSION INTELLIGENTE :** Dédoublonnage scrupuleux par le quadruplet **`(Tx_Hash, Asset, Account, Chain)`**. La fusion doit préserver les labels de la Voie 1 et injecter les frais/méthodes de la Voie 2.
 - **NOMMAGE CONSOLIDÉ :** Le fichier final doit impérativement porter le suffixe `_consolidated_` (ex: `raw_transactions_consolidated_*.csv`) pour indiquer le traitement multivoie.

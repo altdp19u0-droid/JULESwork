@@ -182,13 +182,16 @@ if harvest_btn:
             bs_tok = fetch_blockscout_v2(cfg["bs_v2"], addr_c, max_txs, target_year, "token-transfers")
             for t in (bs_nat + bs_int):
                 dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
-                h_val = t.get("hash") or t.get("tx_hash") or t.get("txHash")
-                tx_h = str(h_val).lower().strip() if h_val else "none"
+                # FORCE ROBUST HASH EXTRACTION: Check multiple fields
+                h_val = t.get("hash") or t.get("tx_hash") or t.get("txHash") or t.get("transaction_hash")
+                tx_h = str(h_val).lower().strip() if (h_val and str(h_val).lower() != "none") else "none"
+
                 f_r, t_r = str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()
                 val = float(t.get("value", 0)) / 1e18
                 # Blockscout often provides USD value in the 'value' or 'total' object for some versions
                 val_usd = float(t.get("value_usd", 0.0))
                 all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native" if "method" in t else "Internal", "Method": t.get("method", "Internal"), "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": native, "Amount": val if t_r == addr_c else -val, "Valeur $": val_usd, "USD prix asset reçu": 0.0, "USD prix asset envoyé": 0.0, "USD prix de fée asset": 0.0, "Fee_Asset": native, "Fee_Amount": (int(t.get("gas_used", 0)) * int(t.get("gas_price", 0))) / 1e18 if f_r == addr_c else 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
+
             for t in bs_tok:
                 dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
                 tok = t.get("token") or {}
@@ -196,8 +199,10 @@ if harvest_btn:
                 val = float(t.get("total", {}).get("value") or t.get("value", 0)) / (10**dec)
                 # Extract USD value if available in 'total' or 'total_usd'
                 val_usd = float(t.get("total", {}).get("value_usd") or t.get("total_usd", 0.0))
-                # Blockscout V2 API for token-transfers uses 'tx_hash' at the root
-                tx_h = str(t.get("tx_hash", "none")).lower().strip()
+                # ROBUST HASH EXTRACTION FOR TOKENS
+                h_val = t.get("tx_hash") or t.get("txHash") or t.get("hash") or t.get("transaction_hash")
+                tx_h = str(h_val).lower().strip() if (h_val and str(h_val).lower() != "none") else "none"
+
                 f_r, t_r = str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()
                 all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Token", "Method": "", "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": asset, "Amount": val if t_r == addr_c else -val, "Valeur $": val_usd, "USD prix asset reçu": 0.0, "USD prix asset envoyé": 0.0, "USD prix de fée asset": 0.0, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
             chains_status[chain]["bs"] = True; f1.caption(f"✅ Way_1 (BS) : {len(bs_nat)+len(bs_int)+len(bs_tok)} lignes")
@@ -209,8 +214,8 @@ if harvest_btn:
             chains_status[chain]["eth"] = stat_v2
             if res_v2:
                 for t, label, dt in res_v2:
-                    h_val = t.get("hash") or t.get("txHash") or t.get("tx_hash")
-                    tx_h = str(h_val).lower().strip() if h_val else "none"
+                    h_val = t.get("hash") or t.get("txHash") or t.get("tx_hash") or t.get("transactionHash")
+                    tx_h = str(h_val).lower().strip() if (h_val and str(h_val).lower() != "none") else "none"
                     f_r, t_r = str(t.get("from") or "").lower().strip(), str(t.get("to") or "").lower().strip()
                     amt = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal", 18) or 18))
                     asset_v2 = str(t.get("tokenSymbol") or native).upper().strip()
@@ -258,12 +263,16 @@ if harvest_btn:
                 res["Fee_Amount"], res["Method"], res["Source_Way"] = w2.iloc[0]["Fee_Amount"], w2.iloc[0]["Method"], "Way_1+2"
             return res
         df_f = df_m.groupby(["Tx_Hash", "Asset", "Chain", "_amt_round", "From", "To", "_occ"], as_index=False).apply(cons).reset_index(drop=True)
+        # Ensure all columns are present after consolidation
+        for col in RAW_V4_COLUMNS:
+            if col not in df_f.columns: df_f[col] = ""
+        df_f = df_f[RAW_V4_COLUMNS]
 
         # Filter Portfolio spams too
         df_port = pd.DataFrame(all_port, columns=RAW_V4_COLUMNS)
         df_port = sl.apply_spam_filter(df_port, drop=False)
 
-        st.session_state.harvest_data[addr_c] = {"port": df_port, "tx": df_f.sort_values("Date", ascending=False).drop(columns=["_amt_round", "_occ"]), "status": chains_status}
+        st.session_state.harvest_data[addr_c] = {"port": df_port, "tx": df_f.sort_values("Date", ascending=False), "status": chains_status}
     else:
         st.session_state.harvest_data[addr_c] = {"port": pd.DataFrame(all_port, columns=RAW_V4_COLUMNS), "tx": pd.DataFrame(columns=RAW_V4_COLUMNS), "status": chains_status}
         if not all_port:
