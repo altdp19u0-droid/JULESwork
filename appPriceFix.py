@@ -229,13 +229,17 @@ if "price_explorer_df" in st.session_state:
             st.success("Aucun prix manquant à collecter.")
         else:
             pbar = st.progress(0)
-            cache = sl.load_price_cache()
             updated_count = 0
             fail_count = 0
 
+            # Reload cache once before batch
+            cache = sl.load_price_cache()
+
             for idx, (i, row) in enumerate(to_fetch.iterrows()):
                 dt_obj = datetime.combine(row["Date"], datetime.min.time())
-                new_price = sl.get_price_eur(row["Asset"], dt_obj)
+
+                # Use central logic with shared cache to avoid redundant API calls
+                new_price = sl.get_price_eur(row["Asset"], dt_obj, cache=cache)
 
                 if new_price > 0:
                     ed_prices.at[i, "Prix (EUR)"] = new_price
@@ -246,6 +250,10 @@ if "price_explorer_df" in st.session_state:
                     fail_count += 1
 
                 pbar.progress((idx + 1) / len(to_fetch))
+
+                # Simple throttling for CoinGecko free tier if many prices
+                if updated_count % 5 == 0:
+                    time.sleep(0.5)
 
             st.session_state.price_explorer_df = ed_prices
             if fail_count > 0:

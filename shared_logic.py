@@ -23,7 +23,7 @@ GLOBAL_CONFIG_FILE = "global_config.json"
 def load_global_config():
     """Loads global settings like activity start year and current processing year."""
     defaults = {
-        "start_year": None,
+        "start_year": 2025, # Default for test reality
         "processing_year": datetime.now().year
     }
     if os.path.exists(GLOBAL_CONFIG_FILE):
@@ -128,9 +128,10 @@ def get_safe_opts(df, col):
 
 def get_file_path(year, category):
     base = os.path.join(EXPORT_BASE_DIR, str(year))
-    if category == 'qualified': return os.path.join(base, f"qualif_journal_{year}.csv")
-    if category == 'qualified_clean': return os.path.join(base, f"qualif_journal_{year}.csv")
-    if category == 'qualified_full': return os.path.join(base, f"qualif_journal_{year}_FULL.csv")
+    # Standardised naming convention for CLEAN Gateway
+    if category == 'qualified': return os.path.join(base, f"qualified_journal_CLEAN_{year}.csv")
+    if category == 'qualified_clean': return os.path.join(base, f"qualified_journal_CLEAN_{year}.csv")
+    if category == 'qualified_full': return os.path.join(base, f"qualified_journal_FULL_{year}.csv")
     if category == 'fiat': return os.path.join(base, f"manual_fiat_{year}.csv")
     if category == 'swaps': return os.path.join(base, f"manual_swaps_{year}.csv")
     if category == 'positions': return os.path.join(base, f"manual_positions_{year}.csv")
@@ -174,7 +175,7 @@ def check_file_freshness(filepath, last_load):
 def load_clean_history(year):
     """GATEWAY: Loads all clean journals from start_year up to year."""
     config = load_global_config()
-    start = config.get("start_year") or 2020
+    start = int(config.get("start_year", 2025))
     all_dfs = []
     for y in range(start, year + 1):
         p = get_file_path(y, 'qualified')
@@ -231,6 +232,10 @@ def load_spam_list():
 
 def save_spam_list(spam_set):
     with open(SPAM_FILE, "w", encoding="utf-8") as f: json.dump(sorted(list(spam_set)), f, indent=4)
+
+def save_price_cache(cache):
+    with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, indent=4)
 
 def load_valid_assets():
     if os.path.exists(VALID_ASSETS_FILE):
@@ -331,16 +336,78 @@ def load_price_cache():
         except: pass
     return {}
 
+def get_coingecko_id(asset):
+    """Maps common assets to CoinGecko IDs."""
+    mapping = {
+        "BTC": "bitcoin", "ETH": "ethereum", "BNB": "binancecoin", "SOL": "solana",
+        "XRP": "ripple", "ADA": "cardano", "AVAX": "avalanche-2", "DOT": "polkadot",
+        "MATIC": "matic-network", "LINK": "chainlink", "UNI": "uniswap", "LTC": "litecoin",
+        "BCH": "bitcoin-cash", "XLM": "stellar", "NEAR": "near", "ATOM": "cosmos",
+        "OP": "optimism", "ARB": "arbitrum", "FTM": "fantom", "EGLD": "elrond-erd-2",
+        "CRO": "crypto-com-chain", "AAVE": "aave", "SNX": "havven", "GRT": "the-graph",
+        "SAND": "the-sandbox", "MANA": "decentraland", "CHZ": "chiliz", "CRV": "curve-dao-token",
+        "MKR": "maker", "RUNE": "thorchain", "GALA": "gala", "STX": "blockstack",
+        "RNDR": "render-token", "INJ": "injective-protocol", "IMX": "immutable-x",
+        "FET": "fetch-ai", "FIL": "filecoin", "HBAR": "hedera-hashgraph", "HNT": "helium",
+        "ROSE": "oasis-network", "KAVA": "kava", "MINA": "mina-protocol", "CAKE": "pancakeswap-token",
+        "WBNB": "binancecoin", "WETH": "ethereum", "WBTC": "bitcoin", "WAVAX": "avalanche-2",
+        "EUR": "euro", "USD": "united-states-dollar"
+    }
+    return mapping.get(str(asset).upper().strip())
+
 def get_price_eur(asset, date_obj, cache=None):
+    """Fetches historical price in EUR with multi-source fallback (Cache -> CG -> Fiat)."""
     if not isinstance(date_obj, datetime):
-        date_obj = datetime.combine(date_obj, datetime.min.time()).replace(tzinfo=None)
+        # Ensure it's a datetime object for strftime and tz handling
+        date_obj = datetime.combine(date_obj, datetime.min.time())
+
+    # Standardize to naive UTC for consistency in cache keys
+    if date_obj.tzinfo is not None:
+        date_obj = date_obj.astimezone(None).replace(tzinfo=None)
+
     asset_clean = str(asset).upper().strip()
-    if asset_clean in ["EUR", "EURA", "AGEUR"]: return 1.0
-    if asset_clean in ["USD", "USDC", "USDT", "DAI"]: return get_fiat_rate("USD", date_obj)
+    if asset_clean in ["EUR", "EURA", "AGEUR", "EURT", "EURC"]: return 1.0
 
     d_str = date_obj.strftime("%d-%m-%Y")
     cache = cache if cache is not None else load_price_cache()
-    if f"{asset_clean}_{d_str}" in cache: return float(cache[f"{asset_clean}_{d_str}"])
+    cache_key = f"{asset_clean}_{d_str}"
+
+    # 1. Cache Priority
+    if cache_key in cache: return float(cache[cache_key])
+
+    # 2. Stablecoin Fast-Path (USD Peg)
+    usd_pegs = ["USD", "USDC", "USDT", "DAI", "BUSD", "PYUSD", "FRAX", "LUSD", "GUSD", "TUSD", "USDD"]
+    if asset_clean in usd_pegs:
+        rate = get_fiat_rate("USD", date_obj)
+        if rate > 0:
+            cache[cache_key] = rate
+            save_price_cache(cache)
+            return rate
+
+    # Stablecoin Fast-Path (EUR Peg)
+    eur_pegs = ["EUR", "EURA", "AGEUR", "EURT", "EURC", "EURCV", "EURE"]
+    if asset_clean in eur_pegs:
+        cache[cache_key] = 1.0
+        save_price_cache(cache)
+        return 1.0
+
+    # 3. External Lookup: CoinGecko
+    cg_id = get_coingecko_id(asset_clean)
+    if cg_id:
+        try:
+            # CoinGecko Historical API: /coins/{id}/history?date=dd-mm-yyyy
+            url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/history?date={d_str}&localization=false"
+            res = requests.get(url, timeout=10).json()
+            if "market_data" in res and "current_price" in res["market_data"]:
+                price_eur = float(res["market_data"]["current_price"].get("eur", 0))
+                if price_eur > 0:
+                    cache[cache_key] = price_eur
+                    save_price_cache(cache)
+                    return price_eur
+        except Exception as e:
+            # Silence errors in background lookup to avoid UI crashes
+            pass
+
     return 0.0
 
 def get_total_acquisition_value(year):

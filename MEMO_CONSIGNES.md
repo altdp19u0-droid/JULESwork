@@ -10,21 +10,28 @@ Ce document est le référentiel unique de la structure, des fonctions critiques
 1. **Sanctuarisation Annuelle :** Chaque année fiscale est isolée dans `/sanctuarisation/{year}/`. Les fichiers `.csv` qualifiés sont la source de vérité absolue.
 2. **Continuité Historique :** Les soldes de fin d'année (EOY) sont portés à l'année suivante comme point de départ.
 3. **Logique Centralisée :** Toute logique partagée (Calculs Art. 150 VH bis, valorisation EUR, normalisation d'adresses, indexation exhaustive) doit résider exclusivement dans `shared_logic.py`.
-4. **Non-Régression Fonctionnelle :** Ne jamais supprimer une fonctionnalité UI (expanders, filtres, outils de détection ou de gestion) lors d'une refactorisation.
-5. **Zéro Spam Universel :** Tout actif ou transaction marqué comme 'Spam' dans `app2.py` ou via la blacklist globale doit être **strictement exclu** de tous les calculs (VGP, Portefeuille, Bilan Fiscal) et affichages avals.
+4. **Protection du Code Réussi :** Il est strictement interdit de modifier les modules désignés comme "code fonctionnel réussi" par l'utilisateur sans une décision de modification concertée et un accord formel.
+    - **Modules Sanctuarisés :** `app.py`, `appNeverless.py`.
+5. **Non-Régression Fonctionnelle :** Ne jamais supprimer une fonctionnalité UI (expanders, filtres, outils de détection ou de gestion) lors d'une refactorisation.
+6. **Zéro Spam Universel :** Tout actif ou transaction marqué comme 'Spam' dans `app2.py` ou via la blacklist globale doit être **strictement exclu** de tous les calculs (VGP, Portefeuille, Bilan Fiscal) et affichages avals.
     - **Procédure :** Utiliser systématiquement `sl.apply_spam_filter(df, drop=True)` lors du chargement des données dans les modules de calcul ou de reporting.
 
 ---
 
-## II. PHASE 1 : RÉCOLTE & STANDARD "RAW" (app.py)
+## II. MODULES APPLICATIFS & PHASES DU PROCESSUS
+
+### 1. PHASE 1 : RÉCOLTE & STANDARD "RAW" (app.py)
 Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de tout calcul fiscal ou de prix**.
 
-**ALERTE CRITIQUE : IL EST STRICTEMENT INTERDIT DE MODIFIER LE FICHIER `app.py`.** Ce fichier a atteint un niveau de fiabilité complexe à obtenir et toute modification risque de dégrader la qualité de la récolte.
+**ALERTE CRITIQUE : IL EST STRICTEMENT INTERDIT DE MODIFIER LES FICHIERS `app.py` ET `appNeverless.py`.** Ces fichiers ont atteint un niveau de fiabilité complexe à obtenir et toute modification risque de dégrader la qualité du traitement.
 
-### 1. Architecture du Moteur à 3 Voies
+- **app.py (Harvest) :** Moteur de récolte à 3 voies (Blockscout, Etherscan API V2).
+- **appNomplateforme.py (ex: appNeverless.py, appBleap.py) :** Modules spécialisés pour les imports CSV locaux/spécifiques.
+
+#### Architecture du Moteur à 3 Voies (app.py)
 - **VOIE 1 (Blockscout Deep Scan) :** Priorité sémantique (extraction des étiquettes From_Label/To_Label et types de processus).
-- **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2 via Etherscan/BscScan).
-- **VOIE 3 (Imports CEX/Offline) :** Intégration automatique des fichiers `raw_*.csv` locaux (ex: Neverless, Bleap).
+- **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2 via Etherscan API V2 avec Smart Fallback).
+- **VOIE 3 (Imports CEX/Offline) :** Intégration automatique des fichiers `raw_*.csv` locaux.
 - **FUSION INTELLIGENTE :** Dédoublonnage scrupuleux par le quadruplet **`(Tx_Hash, Asset, Account, Chain)`**. La fusion doit préserver les labels de la Voie 1 et injecter les frais/méthodes de la Voie 2.
 - **NOMMAGE CONSOLIDÉ :** Le fichier final doit impérativement porter le suffixe `_consolidated_` (ex: `raw_transactions_consolidated_*.csv`) pour indiquer le traitement multivoie.
 - **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `standardize_address_string` pour discriminer et unifier les identités. Le standard absolu est le format : **`Identifiant_Technique (Nom_Amical)`**.

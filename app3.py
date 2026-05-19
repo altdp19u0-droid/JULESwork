@@ -104,12 +104,11 @@ def pdf_safe_str(val, use_unicode=True):
     return s.encode('latin-1', 'replace').decode('latin-1')
 
 def load_data(year):
-    # GATEWAY ARCHITECTURE: Prefer CLEAN journal
+    # GATEWAY ARCHITECTURE: Use EXCLUSIVELY CLEAN journal for downstream apps
     clean_path = sl.get_file_path(year, 'qualified_clean')
-    qual_path = sl.get_file_path(year, 'qualified')
 
     paths = {
-        'journal': clean_path if os.path.exists(clean_path) else qual_path,
+        'journal': clean_path,
         'fiat': sl.get_file_path(year, 'fiat'),
         'positions': sl.get_file_path(year, 'positions')
     }
@@ -291,9 +290,11 @@ with tab_accounts:
     derived_local = pd.DataFrame()
     df_protocols = pd.DataFrame()
 
-    # NEW: Accumulate manual positions from all years
+    # NEW: Accumulate manual positions from all years (respecting start_year)
+    g_conf = sl.load_global_config()
+    start_y = int(g_conf.get("start_year", 2025))
     manual_all = []
-    for y in range(2020, target_year + 1):
+    for y in range(start_y, target_year + 1):
         p_path = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")
         if os.path.exists(p_path):
             try:
@@ -359,7 +360,7 @@ with tab_accounts:
     # Check for missing inventory N-1
     prev_year = target_year - 1
     inv_path = sl.get_file_path(prev_year, 'inventory_eoy')
-    if not os.path.exists(inv_path) and not force_full and target_year > 2020:
+    if not os.path.exists(inv_path) and not force_full and target_year > start_y:
         st.error(f"🚨 **Inventaire manquant :** Le fichier `inventory_EOY_{prev_year}.csv` est introuvable.")
         st.warning("Veuillez soit générer l'inventaire N-1 dans l'app2VGP, soit cocher 'Recalculer tout l'historique'.")
 

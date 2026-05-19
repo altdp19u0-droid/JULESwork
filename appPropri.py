@@ -43,6 +43,12 @@ with st.sidebar:
     sl.show_status()
 
 # --- Logic: Loading and Filtering ---
+def ensure_dt(df):
+    if df.empty: return df
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
+    return df.dropna(subset=["Date"])
+
 @st.cache_data
 def get_owner_history(year):
     """Loads consolidated clean history up to 'year' and filters for owner accounts."""
@@ -84,9 +90,11 @@ def get_owner_history(year):
 
 @st.cache_data
 def get_acquisition_history(year):
-    """Loads all fiat acquisitions from 2020 to 'year'."""
+    """Loads all fiat acquisitions from start_year to 'year'."""
+    g_conf = sl.load_global_config()
+    start_y = int(g_conf.get("start_year", 2025))
     all_acq = []
-    for y in range(2020, year + 1):
+    for y in range(start_y, year + 1):
         path = sl.get_file_path(y, 'fiat')
         if os.path.exists(path):
             try:
@@ -180,6 +188,9 @@ def get_complementary_history(year):
 
     all_txs = []
     if not combined.empty:
+        combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
+        combined = combined.dropna(subset=["Date"])
+
         # 1. Manual Positions
         mask_m = combined["Type"].fillna("").str.contains("Position", case=False, na=False)
         if mask_m.any():
@@ -200,8 +211,9 @@ def get_complementary_history(year):
                 df_receivable["Category"] = "Créance (Transfert Interne Sortant)"
                 all_txs.append(df_receivable)
 
-    if not all_txs: return pd.DataFrame()
+    if not all_txs: return pd.DataFrame(columns=["Date", "Account", "Asset", "Amount"])
     res = pd.concat(all_txs).sort_values("Date", ascending=False).reset_index(drop=True)
+    res["Date"] = pd.to_datetime(res["Date"], utc=True)
     return res
 
 # --- Helpers for UI ---
@@ -481,7 +493,8 @@ else:
 
     # 2b. TABLE 1b: Mouvements Complémentaires
     st.subheader(f"📑 Mouvements Complémentaires - Manuels & Créances ({target_year})")
-    if not comp_history.empty and "Date" in comp_history.columns:
+    comp_history = ensure_dt(comp_history)
+    if not comp_history.empty:
         mask_year_comp = comp_history["Date"].dt.year == target_year
         df_year_comp = comp_history[mask_year_comp].copy()
     else:

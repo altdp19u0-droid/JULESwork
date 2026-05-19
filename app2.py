@@ -106,17 +106,30 @@ def merge_raw_data(year):
             except: continue
 
     # 2. Source Manuelle (Flux Fiat)
-    f_fiat = f"sanctuarisation/{year}/manual_fiat_{year}.csv"
-    if os.path.exists(f_fiat):
+    f_fiat = sl.get_file_path(year, 'fiat')
+    if f_fiat and os.path.exists(f_fiat):
         df_fiat = sl.pd_read_csv_safe(f_fiat)
         for _, r in df_fiat.iterrows():
             rows.append({
                 "Date": pd.to_datetime(r.get("Date"), utc=True),
-                "Chain": "Fiat", "Tx_Hash": str(r.get("Tx_Hash", "MANUAL")),
+                "Chain": "Fiat", "Tx_Hash": str(r.get("Tx_Hash", "MANUAL_FIAT")),
                 "Account": str(r.get("Account", "banq fiat")),
                 "Asset": str(r.get("Asset", "EUR")), "Amount": float(r.get("Amount", 0)),
                 "Counterparty": str(r.get("Counterparty", "Banque")),
                 "Type": "Fiat Move", "Source_Way": "Manuel", "Audit_Status": "Valide"
+            })
+
+    # 3. Source Manuelle (Positions Initiales / Snapshot)
+    f_pos = sl.get_file_path(year, 'positions')
+    if f_pos and os.path.exists(f_pos):
+        df_pos = sl.pd_read_csv_safe(f_pos)
+        for _, r in df_pos.iterrows():
+            rows.append({
+                "Date": pd.to_datetime(r.get("Date", f"{year}-01-01"), utc=True),
+                "Chain": "Manual", "Tx_Hash": str(r.get("Tx_Hash", f"MANUAL_POS_{_}")),
+                "Account": str(r.get("Account", "Portefeuille")),
+                "Asset": str(r.get("Asset", "UNKNOWN")), "Amount": float(r.get("Amount", r.get("Quantité", 0))),
+                "Type": "Position Manuelle", "Source_Way": "Manuel", "Audit_Status": "Valide"
             })
 
     df = pd.DataFrame(rows)
@@ -204,13 +217,22 @@ def main():
         g_conf["app2_show_spams"] = show_spams
         sl.save_global_config(g_conf)
 
-    # Chemin Journal
-    j_path = f"sanctuarisation/{year}/qualif_journal_{year}.csv"
-    j_full_path = f"sanctuarisation/{year}/qualif_journal_{year}_FULL.csv"
+    # Chemin Journal (Gateway Clean Architecture)
+    j_path = sl.get_file_path(year, 'qualified_clean')
+    j_full_path = sl.get_file_path(year, 'qualified_full')
 
     # Chargement
     if "df_qualif" not in st.session_state:
-        existing = sl.pd_read_csv_safe(j_full_path)
+        # Tentative de récupération depuis l'ancien nom si le nouveau n'existe pas
+        if not os.path.exists(j_full_path):
+            old_path = f"sanctuarisation/{year}/qualif_journal_{year}_FULL.csv"
+            if os.path.exists(old_path):
+                existing = sl.pd_read_csv_safe(old_path)
+            else:
+                old_path_2 = f"sanctuarisation/{year}/qualif_journal_{year}.csv"
+                existing = sl.pd_read_csv_safe(old_path_2) if os.path.exists(old_path_2) else pd.DataFrame()
+        else:
+            existing = sl.pd_read_csv_safe(j_full_path)
         raw = merge_raw_data(year)
         final = run_fidelity_engine(raw, existing)
         st.session_state.df_qualif = apply_auto_labels(final)
@@ -348,6 +370,9 @@ def main():
         elif f_imp == "Non": view_df = view_df[~view_df["Imposable"].apply(sl.is_imposable_robust)]
 
         # Editor
+        if "has_unsaved_changes" not in st.session_state:
+            st.session_state.has_unsaved_changes = False
+
         edited_df = st.data_editor(
             view_df,
             column_config={
@@ -361,15 +386,43 @@ def main():
             key="qualif_editor"
         )
 
-        if st.button("🐾 Sauvegarder Journal"):
+        # Détection de modifications
+        if not edited_df.equals(view_df):
+            st.session_state.has_unsaved_changes = True
+
+        save_label = "🚨 Sauvegarder Journal (Modifications en cours)" if st.session_state.has_unsaved_changes else "🐾 Sauvegarder Journal"
+        btn_type = "primary" if st.session_state.has_unsaved_changes else "secondary"
+
+        # CSS pour colorer le bouton en rouge si modifications
+        if st.session_state.has_unsaved_changes:
+            st.markdown("""
+                <style>
+                div.stButton > button:first-child {
+                    background-color: #ff4b4b !important;
+                    color: white !important;
+                }
+                </style>""", unsafe_with_html=True)
+
+        if st.button(save_label, type=btn_type):
             st.session_state.df_qualif.update(edited_df)
             final_save = ensure_columns(st.session_state.df_qualif)
-            # Full for Audit
+
+            # Sauvegarde Physique
+            os.makedirs(os.path.dirname(j_full_path), exist_ok=True)
+
+            # 1. FULL for Audit
             final_save.to_csv(j_full_path, index=False)
-            # Clean (No Spams) for app3
-            clean_save = final_save[final_save["Audit_Status"] != "Spam"]
+
+            # 2. CLEAN (No Spams, strictly real positions)
+            clean_save = final_save[final_save["Audit_Status"] != "Spam"].copy()
+            # On retire aussi les colonnes de statut interne qui n'ont plus lieu d'être dans le clean
+            # Mais on garde Category et Imposable qui sont utiles en aval
             clean_save.to_csv(j_path, index=False)
-            st.success("Journal synchronisé avec Sanctuarisation.")
+
+            st.session_state.has_unsaved_changes = False
+            st.toast("✅ Sanctuarisation réussie !", icon="🟢")
+            st.success("Journal synchronisé avec Sanctuarisation (Fichiers FULL et CLEAN à jour).")
+            st.rerun()
 
         # --- INJECTION TOOLS ---
         st.divider()
