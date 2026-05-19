@@ -9,6 +9,7 @@ from datetime import datetime
 QUALIFIED_V4_COLUMNS = [
     "Date", "Chain", "Tx_Hash", "Type", "Method", "Account", "From", "To",
     "From_Label", "To_Label", "Counterparty", "Asset", "Amount",
+    "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fee asset",
     "Fee_Asset", "Fee_Amount", "Source_Way", "Audit_Status", "Fee_Audit_Alert",
     "Source_Exchange_Rate", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable"
 ]
@@ -25,6 +26,12 @@ def ensure_columns(df):
     df = df.dropna(subset=["Date"])
     df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0.0)
     df["VGP (EUR)"] = pd.to_numeric(df["VGP (EUR)"], errors="coerce").fillna(0.0)
+
+    # New USD columns numeric conversion
+    for usd_col in ["Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fee asset"]:
+        if usd_col in df.columns:
+            df[usd_col] = pd.to_numeric(df[usd_col], errors="coerce").fillna(0.0)
+
     # Conversion stricte de Imposable en booléen pour l'éditeur Streamlit
     df["Imposable"] = df["Imposable"].apply(sl.is_imposable_robust)
     return df[QUALIFIED_V4_COLUMNS]
@@ -78,6 +85,13 @@ def merge_raw_data(year):
         tx_c = discover_col(df_raw, ["txhash", "hash", "transaction"])
         ast_c = discover_col(df_raw, ["asset", "tokensymbol", "symbol", "token"])
         amt_c = discover_col(df_raw, ["amount", "valueeth", "value", "quantity", "montant"])
+
+        # New USD Column Discovery
+        v_usd_c = discover_col(df_raw, ["valeur$", "valueusd", "totalusd", "usdvalue"])
+        p_rec_c = discover_col(df_raw, ["usdprixassetreçu", "usdpriceofassetreceived", "usdprixreçu"])
+        p_sent_c = discover_col(df_raw, ["usdprixassetenvoyé", "usdpriceofassetsent", "usdprixenvoyé"])
+        p_fee_c = discover_col(df_raw, ["usdprixdefeeasset", "usdpriceoffeeasset", "usdprixfee"])
+
         from_c = discover_col(df_raw, ["from", "expediteur"])
         to_c = discover_col(df_raw, ["to", "destinataire"])
         cp_c = discover_col(df_raw, ["counterparty", "contrepartie"])
@@ -99,6 +113,10 @@ def merge_raw_data(year):
                 rows.append({
                     "Date": dt, "Chain": str(r.get(net_c, "Unknown")), "Tx_Hash": tx,
                     "Account": acc, "Asset": ast, "Amount": amt,
+                    "Valeur $": float(r.get(v_usd_c, 0.0)) if v_usd_c else 0.0,
+                    "USD prix asset reçu": float(r.get(p_rec_c, 0.0)) if p_rec_c else 0.0,
+                    "USD prix asset envoyé": float(r.get(p_sent_c, 0.0)) if p_sent_c else 0.0,
+                    "USD prix de fee asset": float(r.get(p_fee_c, 0.0)) if p_fee_c else 0.0,
                     "From": sl.standardize_address_string(r.get(from_c, "")),
                     "To": sl.standardize_address_string(r.get(to_c, "")),
                     "Counterparty": str(r.get(cp_c, "")),
@@ -156,7 +174,7 @@ def run_fidelity_engine(raw_df, existing_df):
     raw_df["_uid"] = raw_df.apply(generate_uid, axis=1)
 
     # Les colonnes à préserver (celles que l'utilisateur modifie)
-    preservable = ["Audit_Status", "Category", "From_Label", "To_Label", "Counterparty", "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable"]
+    preservable = ["Audit_Status", "Category", "From_Label", "To_Label", "Counterparty", "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable", "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fee asset"]
 
     # Dédoublonnage de l'existant sur l'UID pour éviter ValueError orient='index'
     # On garde le premier (le plus qualifié normalement)

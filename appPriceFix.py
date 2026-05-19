@@ -224,7 +224,7 @@ if "price_explorer_df" in st.session_state:
     col_btn1, col_btn2 = st.columns(2)
 
     if col_btn1.button("🤖 Collecte Automatique (Manquants)", width='stretch', type="primary"):
-        to_fetch = ed_prices[ed_prices["Prix (EUR)"] == 0]
+        to_fetch = ed_prices[ed_prices["Prix (EUR)"] == 0].copy()
         if to_fetch.empty:
             st.success("Aucun prix manquant à collecter.")
         else:
@@ -235,11 +235,42 @@ if "price_explorer_df" in st.session_state:
             # Reload cache once before batch
             cache = sl.load_price_cache()
 
+            # Pre-load all available journals to look for harvested USD prices
+            all_dfs = []
+            for y in selected_years:
+                p = sl.get_file_path(int(y), 'qualified_full')
+                if os.path.exists(p):
+                    all_dfs.append(sl.pd_read_csv_safe(p))
+
+            harvested_prices = pd.concat(all_dfs) if all_dfs else pd.DataFrame()
+
             for idx, (i, row) in enumerate(to_fetch.iterrows()):
                 dt_obj = datetime.combine(row["Date"], datetime.min.time())
+                asset = str(row["Asset"]).upper().strip()
 
-                # Use central logic with shared cache to avoid redundant API calls
-                new_price = sl.get_price_eur(row["Asset"], dt_obj, cache=cache)
+                new_price = 0.0
+
+                # 1. Look for Harvested USD price first
+                if not harvested_prices.empty:
+                    # Look for match on Asset and Date
+                    mask = (harvested_prices["Asset"].str.upper() == asset) & (pd.to_datetime(harvested_prices["Date"]).dt.date == row["Date"])
+                    matches = harvested_prices[mask]
+                    if not matches.empty:
+                        # Prioritize 'USD prix asset reçu' or 'USD prix asset envoyé' or 'Valeur $' / 'Amount'
+                        p_rec = float(matches.iloc[0].get("USD prix asset reçu", 0.0))
+                        p_sent = float(matches.iloc[0].get("USD prix asset envoyé", 0.0))
+                        v_usd = float(matches.iloc[0].get("Valeur $", 0.0))
+                        amt = abs(float(matches.iloc[0].get("Amount", 1.0))) or 1.0
+
+                        harvest_usd = p_rec or p_sent or (v_usd / amt if v_usd > 0 else 0.0)
+
+                        if harvest_usd > 0:
+                            fiat_rate = sl.get_fiat_rate("USD", dt_obj)
+                            new_price = harvest_usd * fiat_rate
+
+                # 2. Fallback to central API logic
+                if new_price <= 0:
+                    new_price = sl.get_price_eur(row["Asset"], dt_obj, cache=cache)
 
                 if new_price > 0:
                     ed_prices.at[i, "Prix (EUR)"] = new_price

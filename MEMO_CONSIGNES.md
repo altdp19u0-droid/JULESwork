@@ -37,8 +37,8 @@ Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de to
 - **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `standardize_address_string` pour discriminer et unifier les identités. Le standard absolu est le format : **`Identifiant_Technique (Nom_Amical)`**.
 
 ### 2. Standard de Données Cible (SCHEMA RAW V4)
-Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma de 19 colonnes :
-- **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount** (Valeur algébrique avec signe géré dès la récolte), **Fee_Asset**, **Fee_Amount**, **Source_Way**, **Audit_Status**, **Fee_Audit_Alert**, **Source_Exchange_Rate**.
+Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma de 23 colonnes :
+- **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount**, **Valeur $**, **USD prix asset reçu**, **USD prix asset envoyé**, **USD prix de fee asset**, **Fee_Asset**, **Fee_Amount**, **Source_Way**, **Audit_Status**, **Fee_Audit_Alert**, **Source_Exchange_Rate**.
 - **Zéro Valorisation :** Les fichiers RAW ne contiennent aucune conversion EUR/USD externe.
 
 ---
@@ -47,8 +47,8 @@ Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce sc
 C'est l'étape critique de transformation des données brutes en journal comptable.
 
 1. **Agrégation Exhaustive & Fidelity Engine :**
-    - **Ingestion Robuste :** Utilisation de `discover_col` pour identifier dynamiquement les colonnes critiques (Date, Compte, Asset, Montant, Hash) dans divers formats CSV (Blockchain V4, Legacy, Portfolio, Imports tiers).
-    - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP) déjà présentes dans le journal qualifié en utilisant un UID composite exhaustif `(Tx_Hash, Asset, Account, Amount, Date)` pour éviter toute collision sur des transactions identiques (ex: swaps de même montant à la même seconde).
+    - **Ingestion Robuste :** Utilisation de `discover_col` pour identifier dynamiquement les colonnes critiques (Date, Compte, Asset, Montant, Hash, Valuations USD) dans divers formats CSV (Blockchain V4, Legacy, Portfolio, Imports tiers).
+    - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP, Valuations USD) déjà présentes dans le journal qualifié en utilisant un UID composite exhaustif `(Tx_Hash, Asset, Account, Amount, Date)` pour éviter toute collision sur des transactions identiques (ex: swaps de même montant à la même seconde).
     - **Architecture Clean Gateway :** `app2.py` produit deux versions du journal : `qualif_journal_{year}_FULL.csv` (Audit complet incluant les spams) et `qualif_journal_{year}.csv` (Version nettoyée, labels résolus, prête pour la fiscalité).
 2. **Gestion des Référentiels (Sidebar) :**
     - **Enregistrement Unifié :** Formulaire sidebar pour assigner une adresse/label à un registre (Propriétaire, Position, Circuit, Spam).

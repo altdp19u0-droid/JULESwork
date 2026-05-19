@@ -91,7 +91,8 @@ with st.sidebar:
 RAW_V4_COLUMNS = [
     "Date", "Chain", "Tx_Hash", "Type", "Method", "Account",
     "From", "To", "From_Label", "To_Label", "Counterparty",
-    "Asset", "Amount", "Fee_Asset", "Fee_Amount",
+    "Asset", "Amount", "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fee asset",
+    "Fee_Asset", "Fee_Amount",
     "Source_Way", "Audit_Status", "Fee_Audit_Alert", "Source_Exchange_Rate"
 ]
 
@@ -185,16 +186,20 @@ if harvest_btn:
                 tx_h = str(h_val).lower().strip() if h_val else "none"
                 f_r, t_r = str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()
                 val = float(t.get("value", 0)) / 1e18
-                all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native" if "method" in t else "Internal", "Method": t.get("method", "Internal"), "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": native, "Amount": val if t_r == addr_c else -val, "Fee_Asset": native, "Fee_Amount": (int(t.get("gas_used", 0)) * int(t.get("gas_price", 0))) / 1e18 if f_r == addr_c else 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
+                # Blockscout often provides USD value in the 'value' or 'total' object for some versions
+                val_usd = float(t.get("value_usd", 0.0))
+                all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native" if "method" in t else "Internal", "Method": t.get("method", "Internal"), "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": native, "Amount": val if t_r == addr_c else -val, "Valeur $": val_usd, "USD prix asset reçu": 0.0, "USD prix asset envoyé": 0.0, "USD prix de fee asset": 0.0, "Fee_Asset": native, "Fee_Amount": (int(t.get("gas_used", 0)) * int(t.get("gas_price", 0))) / 1e18 if f_r == addr_c else 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
             for t in bs_tok:
                 dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
                 tok = t.get("token") or {}
                 asset, dec = str(tok.get("symbol", "TOKEN")).upper().strip(), int(tok.get("decimals") or 18)
                 val = float(t.get("total", {}).get("value") or t.get("value", 0)) / (10**dec)
-                h_val = t.get("tx_hash") or t.get("hash") or t.get("txHash")
-                tx_h = str(h_val).lower().strip() if h_val else "none"
+                # Extract USD value if available in 'total' or 'total_usd'
+                val_usd = float(t.get("total", {}).get("value_usd") or t.get("total_usd", 0.0))
+                # Blockscout V2 API for token-transfers uses 'tx_hash' at the root
+                tx_h = str(t.get("tx_hash", "none")).lower().strip()
                 f_r, t_r = str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()
-                all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Token", "Method": "", "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": asset, "Amount": val if t_r == addr_c else -val, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
+                all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Token", "Method": "", "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": asset, "Amount": val if t_r == addr_c else -val, "Valeur $": val_usd, "USD prix asset reçu": 0.0, "USD prix asset envoyé": 0.0, "USD prix de fee asset": 0.0, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
             chains_status[chain]["bs"] = True; f1.caption(f"✅ Way_1 (BS) : {len(bs_nat)+len(bs_int)+len(bs_tok)} lignes")
         except: chains_status[chain]["bs"] = False; f1.error("❌ Way_1 : Échec")
 
@@ -209,7 +214,7 @@ if harvest_btn:
                     f_r, t_r = str(t.get("from") or "").lower().strip(), str(t.get("to") or "").lower().strip()
                     amt = float(t.get("value", 0)) / (10**int(t.get("tokenDecimal", 18) or 18))
                     asset_v2 = str(t.get("tokenSymbol") or native).upper().strip()
-                    all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": label, "Method": t.get("functionName", ""), "Account": addr_c, "From": f_r, "To": t_r, "From_Label": "", "To_Label": "", "Counterparty": t_r if f_r == addr_c else f_r, "Asset": asset_v2, "Amount": amt if t_r == addr_c else -amt, "Fee_Asset": native if f_r == addr_c else "", "Fee_Amount": (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 1e18 if f_r == addr_c else 0.0, "Source_Way": "Way_2", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
+                    all_txs.append({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": label, "Method": t.get("functionName", ""), "Account": addr_c, "From": f_r, "To": t_r, "From_Label": "", "To_Label": "", "Counterparty": t_r if f_r == addr_c else f_r, "Asset": asset_v2, "Amount": amt if t_r == addr_c else -amt, "Valeur $": 0.0, "USD prix asset reçu": 0.0, "USD prix asset envoyé": 0.0, "USD prix de fee asset": 0.0, "Fee_Asset": native if f_r == addr_c else "", "Fee_Amount": (int(t.get('gasUsed', 0)) * int(t.get('gasPrice', 0))) / 1e18 if f_r == addr_c else 0.0, "Source_Way": "Way_2", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
                 f2.caption(f"✅ Way_2 (V2 REST) : {len(res_v2)} lignes")
             else: f2.caption(f"ℹ️ Way_2 : {stat_v2}")
 
@@ -220,7 +225,7 @@ if harvest_btn:
             if addr_data and "coin_balance" in addr_data:
                 nat_bal = float(addr_data["coin_balance"]) / 1e18
                 if nat_bal > 0:
-                    all_port.append({"Date": datetime(target_year,12,31).isoformat(), "Chain": chain, "Tx_Hash": f"PORT-{addr_c}-{native}-{chain}", "Type": "Portfolio", "Method": "Snapshot", "Account": addr_c, "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "", "Counterparty": "Snapshot", "Asset": native, "Amount": nat_bal, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
+                    all_port.append({"Date": datetime(target_year,12,31).isoformat(), "Chain": chain, "Tx_Hash": f"PORT-{addr_c}-{native}-{chain}", "Type": "Portfolio", "Method": "Snapshot", "Account": addr_c, "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "", "Counterparty": "Snapshot", "Asset": native, "Amount": nat_bal, "Valeur $": float(addr_data.get("exchange_rate", 0.0)) * nat_bal, "USD prix asset reçu": 0.0, "USD prix asset envoyé": 0.0, "USD prix de fee asset": 0.0, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
 
             # 3b. Token Balances (Blockscout)
             p_tokens = call_api(f"{cfg['bs_v2']}/addresses/{addr_c}/token-balances")
@@ -230,7 +235,8 @@ if harvest_btn:
                     sym, dec = str(tok.get("symbol", "TOKEN")).upper().strip(), int(tok.get("decimals", 18) or 18)
                     qty = float(b.get("value", 0)) / (10**dec)
                     if qty > 0:
-                        all_port.append({"Date": datetime(target_year,12,31).isoformat(), "Chain": chain, "Tx_Hash": f"PORT-{addr_c}-{sym}-{chain}", "Type": "Portfolio", "Method": "Snapshot", "Account": addr_c, "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "", "Counterparty": "Snapshot", "Asset": sym, "Amount": qty, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
+                        val_usd = float(b.get("value_usd") or 0.0)
+                        all_port.append({"Date": datetime(target_year,12,31).isoformat(), "Chain": chain, "Tx_Hash": f"PORT-{addr_c}-{sym}-{chain}", "Type": "Portfolio", "Method": "Snapshot", "Account": addr_c, "From": "Blockchain", "To": addr_c, "From_Label": "", "To_Label": "", "Counterparty": "Snapshot", "Asset": sym, "Amount": qty, "Valeur $": val_usd, "USD prix asset reçu": 0.0, "USD prix asset envoyé": 0.0, "USD prix de fee asset": 0.0, "Fee_Asset": "", "Fee_Amount": 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW", "Fee_Audit_Alert": "", "Source_Exchange_Rate": 0.0})
         except: pass
         pbar.progress((idx + 1) / len(chains_to_scan))
 

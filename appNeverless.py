@@ -20,7 +20,8 @@ EXPORT_BASE_DIR = "sanctuarisation"
 RAW_V4_COLUMNS = [
     "Date", "Chain", "Tx_Hash", "Type", "Method", "Account",
     "From", "To", "From_Label", "To_Label", "Counterparty",
-    "Asset", "Amount", "Fee_Asset", "Fee_Amount",
+    "Asset", "Amount", "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fee asset",
+    "Fee_Asset", "Fee_Amount",
     "Source_Way", "Audit_Status", "Fee_Audit_Alert", "Source_Exchange_Rate"
 ]
 
@@ -151,6 +152,10 @@ def process_neverless_csv(df):
                 "Counterparty": cp,
                 "Asset": str(asset_sent).upper(),
                 "Amount": -amt_sent,
+                "Valeur $": amt_sent * price_sent,
+                "USD prix asset reçu": 0.0,
+                "USD prix asset envoyé": price_sent,
+                "USD prix de fee asset": 0.0,
                 "Fee_Asset": "",
                 "Fee_Amount": 0.0,
                 "Source_Way": "Way_3",
@@ -194,6 +199,10 @@ def process_neverless_csv(df):
                 "Counterparty": cp,
                 "Asset": str(asset_rec).upper(),
                 "Amount": amt_rec,
+                "Valeur $": amt_rec * price_rec,
+                "USD prix asset reçu": price_rec,
+                "USD prix asset envoyé": 0.0,
+                "USD prix de fee asset": 0.0,
                 "Fee_Asset": "",
                 "Fee_Amount": 0.0,
                 "Source_Way": "Way_3",
@@ -222,6 +231,10 @@ def process_neverless_csv(df):
                 "Counterparty": "Neverless_Fees",
                 "Asset": fee_asset.upper(),
                 "Amount": -fee_amt,
+                "Valeur $": fee_amt * price_fee,
+                "USD prix asset reçu": 0.0,
+                "USD prix asset envoyé": 0.0,
+                "USD prix de fee asset": price_fee,
                 "Fee_Asset": fee_asset.upper(),
                 "Fee_Amount": fee_amt,
                 "Source_Way": "Way_3",
