@@ -44,16 +44,24 @@ with st.sidebar:
 
 # --- Logic: Loading and Filtering ---
 def ensure_dt(df):
-    if df.empty: return df
+    """Garantit que la colonne Date est de type datetime64[ns, UTC] pour éviter AttributeError .dt"""
+    if df is None: return pd.DataFrame(columns=["Date"])
     df = df.copy()
+    if "Date" not in df.columns:
+        df["Date"] = pd.NaT
     df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
+    if df.empty:
+        return df
     return df.dropna(subset=["Date"])
 
 @st.cache_data
 def get_owner_history(year):
-    """Loads consolidated clean history up to 'year' and filters for owner accounts."""
+    """Loads consolidated clean history up to 'year' and filters for owner accounts + protocol positions."""
     owners_map = sl.load_owner_accounts()
-    owner_addrs = set(owners_map.keys())
+    pos_map = sl.load_position_labels()
+
+    # We include both personal wallets and identified protocol positions
+    authorized_ids = set(list(owners_map.keys()) + list(pos_map.keys()))
 
     # GATEWAY ARCHITECTURE: Use consolidated clean history
     combined = sl.load_clean_history(year)
@@ -62,7 +70,9 @@ def get_owner_history(year):
         # Resolve owner addresses for filtering
         combined["acc_raw"] = combined["Account"].apply(sl.resolve_raw_addr)
         # Check against both technical ID and label from standard resolution
-        combined = combined[combined["acc_raw"].isin(owner_addrs) | combined["Account"].isin(owners_map.values())]
+        combined = combined[combined["acc_raw"].isin(authorized_ids) |
+                            combined["Account"].isin(owners_map.values()) |
+                            combined["Account"].isin(pos_map.values())]
 
         combined["Date"] = pd.to_datetime(combined["Date"], utc=True, errors="coerce")
         # --- CRITICAL FIX: Filter out rows with None dates ---
@@ -138,13 +148,18 @@ def get_cessions_history(year):
 
     if not combined.empty:
         # Filter for cessions
-        # Imposable flag or Vente category
-        combined["_is_imp"] = combined['Audit_Status'].fillna("").str.contains("Valide", case=False) # Simplified check if imposable is not explicit
-        if 'Imposable' in combined.columns:
-            combined["_is_imp"] = combined['Imposable'].apply(sl.is_imposable_robust)
+        # RECOGNITION LOGIC: Consistent with app3.py
+        def is_imposable_logic(r):
+            # Imposable flag is the primary truth
+            if sl.is_imposable_robust(r.get("Imposable")): return True
+            # 'Vente' category is a strong secondary signal
+            cat = str(r.get("Category", "")).lower()
+            if "vente" in cat: return True
+            return False
 
-        mask_cess = (combined["_is_imp"] |
-                     combined['Category'].fillna("").str.contains("Vente", case=False)) & (combined['Asset'] != 'EUR')
+        combined["_is_imp"] = combined.apply(is_imposable_logic, axis=1)
+
+        mask_cess = (combined["_is_imp"]) & (combined['Asset'] != 'EUR')
 
         cessions = combined[mask_cess].copy()
 
@@ -494,7 +509,8 @@ else:
     # 2b. TABLE 1b: Mouvements Complémentaires
     st.subheader(f"📑 Mouvements Complémentaires - Manuels & Créances ({target_year})")
     comp_history = ensure_dt(comp_history)
-    if not comp_history.empty:
+
+    if not comp_history.empty and "Date" in comp_history.columns:
         mask_year_comp = comp_history["Date"].dt.year == target_year
         df_year_comp = comp_history[mask_year_comp].copy()
     else:
