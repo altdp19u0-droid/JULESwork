@@ -25,6 +25,8 @@ def ensure_columns(df):
     df = df.dropna(subset=["Date"])
     df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0.0)
     df["VGP (EUR)"] = pd.to_numeric(df["VGP (EUR)"], errors="coerce").fillna(0.0)
+    # Conversion stricte de Imposable en booléen pour l'éditeur Streamlit
+    df["Imposable"] = df["Imposable"].apply(sl.is_imposable_robust)
     return df[QUALIFIED_V4_COLUMNS]
 
 def discover_col(df, candidates):
@@ -401,7 +403,7 @@ def main():
                     background-color: #ff4b4b !important;
                     color: white !important;
                 }
-                </style>""", unsafe_with_html=True)
+                </style>""", unsafe_allow_html=True)
 
         if st.button(save_label, type=btn_type):
             st.session_state.df_qualif.update(edited_df)
