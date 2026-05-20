@@ -105,43 +105,23 @@ def pdf_safe_str(val, use_unicode=True):
 
 def load_data(year):
     # GATEWAY ARCHITECTURE: Use EXCLUSIVELY CLEAN journal for downstream apps
-    # No direct access to fiat or positions registries.
-    clean_path = sl.get_file_path(year, 'qualified_clean')
-
-    paths = {
-        'journal': clean_path
-    }
-
     # Track load time for freshness
     st.session_state.last_app3_sync_time = time.time()
 
-    data = {}
-    for key, path in paths.items():
-        if os.path.exists(path) and os.path.getsize(path) > 0:
-            df = sl.pd_read_csv_safe(path)
+    # Centralized Gateway Loader (enforces date conversion and strict spam filtering)
+    df_j = sl.load_clean_history(year)
 
-            # Standardisation Date
-            if 'Date' in df.columns:
-                df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
+    if not df_j.empty:
+        # Type Safety: Force numeric types to avoid pyarrow string errors
+        num_cols = ["Amount", "Valeur $", "VGP (EUR)", "Prix de Cession (EUR)", "Montant EUR", "Quantité"]
+        for col in num_cols:
+            if col in df_j.columns:
+                df_j[col] = pd.to_numeric(df_j[col], errors='coerce').fillna(0.0)
 
-            # Type Safety: Force numeric types to avoid pyarrow string errors
-            num_cols = ["Amount", "Value ($)", "VGP (EUR)", "Prix de Cession (EUR)", "Montant EUR", "Quantité"]
-            for col in num_cols:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+        # Apply labels for report display
+        df_j = apply_position_labels(df_j)
 
-            if key == 'journal':
-                # If we are using the non-clean file, we apply filters
-                if "CLEAN" not in path:
-                    df = sl.standardize_df_addresses(df)
-                    df = sl.apply_spam_filter(df, drop=True)
-                    df = apply_position_labels(df)
-                # If CLEAN, data is already filtered and labeled by app2 Gateway
-
-            data[key] = df
-        else:
-            data[key] = pd.DataFrame()
-    return data
+    return {'journal': df_j}
 
 # --- Sidebar ---
 with st.sidebar:

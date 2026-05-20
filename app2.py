@@ -477,6 +477,7 @@ def main():
 
         with sc1:
             if st.button(save_label, type=btn_type, width='stretch'):
+                # Prioritize edited values back into main state
                 st.session_state.df_qualif.update(edited_df)
                 final_save = ensure_columns(st.session_state.df_qualif)
 
@@ -487,7 +488,8 @@ def main():
                 final_save.to_csv(j_full_path, index=False, encoding="utf-8-sig")
 
                 # 2. CLEAN (No Spams, strictly real positions)
-                # Double-tap spam filter to ensure consistency with global blacklist
+                # EXCLUSIVITY RULE: No Spam allowed in CLEAN journal.
+                # We apply the filter with drop=True to strictly exclude qualified or blacklisted spams.
                 clean_save = sl.apply_spam_filter(final_save, drop=True)
                 clean_save.to_csv(j_path, index=False, encoding="utf-8-sig")
 

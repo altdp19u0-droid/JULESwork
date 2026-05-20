@@ -181,11 +181,29 @@ def load_clean_history(year):
         p = get_file_path(y, 'qualified_clean')
         if os.path.exists(p):
             df = pd_read_csv_safe(p)
-            if not df.empty: all_dfs.append(df)
-    if not all_dfs: return pd.DataFrame()
+            if not df.empty:
+                # CRITICAL: Ensure Date is datetime for all downstream apps
+                if "Date" in df.columns:
+                    df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
+                    df = df.dropna(subset=["Date"])
+                all_dfs.append(df)
 
-    # Blind trust: app2.py is the gatekeeper. Downstream apps work on what they receive.
-    return pd.concat(all_dfs).reset_index(drop=True)
+    if not all_dfs:
+        # Return empty df with schema and correct types to avoid .dt crashes
+        empty_df = pd.DataFrame(columns=["Date", "Asset", "Amount", "Account", "Audit_Status", "Category", "Imposable", "Counterparty"])
+        empty_df["Date"] = pd.to_datetime([])
+        return empty_df
+
+    # Blind trust: app2.py is the gatekeeper.
+    # But we apply a safety spam filter just in case app2.py leaked something.
+    res = pd.concat(all_dfs, ignore_index=True)
+    res = apply_spam_filter(res, drop=True)
+
+    # Final safety: force Date type even if filtering made it empty
+    if "Date" in res.columns:
+        res["Date"] = pd.to_datetime(res["Date"], utc=True, errors="coerce")
+
+    return res
 
 # --- Registry Management ---
 
@@ -293,20 +311,47 @@ def get_owner_display_list(df=None):
 # --- Spam & Transfers ---
 
 def apply_spam_filter(df, drop=True):
+    """Strictly identifies and optionally removes spams based on Audit_Status and Blacklist."""
     if df is None or df.empty: return df
     spams = load_spam_list(); valides = load_valid_assets(); df = df.copy()
-    status_col = "Audit_Status" if "Audit_Status" in df.columns else "Status"
-    def is_spam(r):
+
+    # Identification of the status column
+    status_col = "Audit_Status" if "Audit_Status" in df.columns else ("Status" if "Status" in df.columns else None)
+
+    def is_row_spam(r):
+        # 1. Check explicit status FIRST (Highest Priority: Manual Qualification)
+        if status_col:
+            st_val = str(r.get(status_col, "")).strip().lower()
+            if st_val == "spam": return True
+
+        # 2. Check Blacklist (Asset or Counterparty) - High Priority
         asset = str(r.get("Asset", "")).upper().strip()
+        if asset.lower() in spams: return True
+
+        cp = str(r.get("Counterparty", "")).strip().lower()
+        if cp and cp not in ["nan", "none"]:
+            if cp in spams: return True
+            cp_raw = resolve_raw_addr(cp).lower()
+            if cp_raw in spams: return True
+            # Partial match for "Label (Addr)" or "Addr (Label)"
+            if "(" in cp:
+                parts = cp.replace(")", "").split("(")
+                for p in parts:
+                    if p.strip().lower() in spams: return True
+
+        # 3. Check Whitelist (Protection for valid assets if not explicitly spammed or blacklisted)
         if asset in valides: return False
-        if status_col in r and str(r.get(status_col)) == "Spam": return True
-        cp = resolve_raw_addr(r.get("Counterparty", "")).lower()
-        if cp in spams or asset.lower() in spams: return True
+
+        # Default behavior: not automatically a spam unless caught above
         return False
-    mask = df.apply(is_spam, axis=1)
+
+    mask = df.apply(is_row_spam, axis=1)
+
     if drop:
         return df[~mask].reset_index(drop=True)
-    if status_col in df.columns: df.loc[mask, status_col] = "Spam"
+
+    if status_col:
+        df.loc[mask, status_col] = "Spam"
     return df
 
 def validate_spam_exclusion(df):

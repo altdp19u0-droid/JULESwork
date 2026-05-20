@@ -68,8 +68,13 @@ def scan_needed_prices(target_years, exclude_spams=True):
 
         # 1. Use the Gateway standard loader (already filters spams if they leaked into CLEAN)
         df_q = sl.load_clean_history(y_int)
-        # Filter for only THIS year for the scanner
-        df_q = df_q[df_q["Date"].dt.year == y_int]
+
+        if not df_q.empty and "Date" in df_q.columns:
+            # Robust conversion before using .dt accessor
+            df_q["Date"] = pd.to_datetime(df_q["Date"], utc=True, errors='coerce')
+            df_q = df_q.dropna(subset=["Date"])
+            # Filter for only THIS year for the scanner
+            df_q = df_q[df_q["Date"].dt.year == y_int]
 
         if not df_q.empty:
             # Identify assets held (includes those from manual positions if merged into journal)
@@ -204,13 +209,12 @@ if "price_explorer_df" in st.session_state:
             cache = sl.load_price_cache()
 
             # Pre-load available CLEAN journals to look for harvested USD prices
+            # Use Gateway loader to ensure data quality and datetime types
             all_dfs = []
             for y in selected_years:
-                p = sl.get_file_path(int(y), 'qualified_clean')
-                if os.path.exists(p):
-                    all_dfs.append(sl.pd_read_csv_safe(p))
+                all_dfs.append(sl.load_clean_history(int(y)))
 
-            harvested_prices = pd.concat(all_dfs) if all_dfs else pd.DataFrame()
+            harvested_prices = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
 
             for idx, (i, row) in enumerate(to_fetch.iterrows()):
                 dt_obj = datetime.combine(row["Date"], datetime.min.time())
@@ -219,9 +223,10 @@ if "price_explorer_df" in st.session_state:
                 new_price = 0.0
 
                 # 1. Look for Harvested USD price first
-                if not harvested_prices.empty:
+                if not harvested_prices.empty and "Date" in harvested_prices.columns:
                     # Look for match on Asset and Date
-                    mask = (harvested_prices["Asset"].str.upper() == asset) & (pd.to_datetime(harvested_prices["Date"]).dt.date == row["Date"])
+                    # Date is already datetime thanks to sl.load_clean_history
+                    mask = (harvested_prices["Asset"].str.upper() == asset) & (harvested_prices["Date"].dt.date == row["Date"])
                     matches = harvested_prices[mask]
                     if not matches.empty:
                         # Prioritize 'USD prix asset reçu' or 'USD prix asset envoyé' or 'Valeur $' / 'Amount'
