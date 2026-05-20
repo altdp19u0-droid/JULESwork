@@ -6,74 +6,72 @@ Ce document est le référentiel unique de la structure, des fonctions critiques
 
 ---
 
-## I. GOUVERNANCE & PRINCIPES FONDAMENTAUX
-1. **Sanctuarisation Annuelle :** Chaque année fiscale est isolée dans `/sanctuarisation/{year}/`. Les fichiers `.csv` qualifiés sont la source de vérité absolue.
-2. **Continuité Historique :** Les soldes de fin d'année (EOY) sont portés à l'année suivante comme point de départ.
-3. **Logique Centralisée :** Toute logique partagée (Calculs Art. 150 VH bis, valorisation EUR, normalisation d'adresses, indexation exhaustive) doit résider exclusivement dans `shared_logic.py`.
-4. **Protection du Code Réussi :** Il est strictement interdit de modifier les modules désignés comme "code fonctionnel réussi" par l'utilisateur sans une décision de modification concertée et un accord formel.
-    - **Modules Sanctuarisés :** `app.py`, `appNeverless.py`.
-5. **Non-Régression Fonctionnelle :** Ne jamais supprimer une fonctionnalité UI (expanders, filtres, outils de détection ou de gestion) lors d'une refactorisation.
-6. **Zéro Spam Universel :** Tout actif ou transaction marqué comme 'Spam' dans `app2.py` ou via la blacklist globale doit être **strictement exclu** de tous les calculs (VGP, Portefeuille, Bilan Fiscal) et affichages avals.
-    - **Procédure :** Utiliser systématiquement `sl.apply_spam_filter(df, drop=True)` lors du chargement des données dans les modules de calcul ou de reporting.
+## I. GOUVERNANCE & ARCHITECTURE "CLEAN GATEWAY"
+
+1. **Architecture Gateway Absolute :** Le module `app2.py` est l'unique autorité de certification des données. Il doit produire un fichier `qualified_journal_CLEAN_{year}.csv` **strictement et certifié sans spam**.
+2. **Principe de Confiance Aveugle (Blind Trust) :** Les applications en aval (`app3`, `appPropri`, `appDiagCoh`, `appPriceFix`) sont interdites d'accès direct aux fichiers RAW. Elles doivent consommer exclusivement le journal CLEAN via le chargeur centralisé `sl.load_clean_history`.
+3. **Sécurité de Chargement :** La fonction `sl.load_clean_history` agit comme une barrière de sécurité ultime en forçant la conversion des dates en UTC et en appliquant un second filtre anti-spam systématique.
+4. **Sanctuarisation Annuelle :** Chaque année fiscale est isolée dans `/sanctuarisation/{year}/`. Les fichiers qualifiés dans ce dossier sont la source de vérité absolue.
+5. **Protection du Code Réussi :** Il est strictement interdit de modifier les modules moteurs sans accord formel.
+    - **Modules Sanctuarisés :** `app.py` (Harvest engine), `appNeverless.py`.
 
 ---
 
-## II. MODULES APPLICATIFS & PHASES DU PROCESSUS
+## II. PHASE 1 : RÉCOLTE & STANDARD "RAW V4" (app.py)
 
-### 1. PHASE 1 : RÉCOLTE & STANDARD "RAW" (app.py)
-Le fichier `app.py` est le sanctuaire de la récolte. Il doit rester **pur de tout calcul fiscal ou de prix**.
+### 1. Standard de Données (23 Colonnes)
+Tout fichier produit par le moteur ou les importeurs doit respecter scrupuleusement ce schéma :
+- **Identification :** `Date` (UTC), `Chain`, `Tx_Hash`, `Type`, `Method`, `Account`, `From`, `To`, `From_Label`, `To_Label`, `Counterparty`, `Asset`, `Amount`.
+- **Valuations USD (Nouveau Standard) :** `Valeur $`, `USD prix asset reçu`, `USD prix asset envoyé`, `USD prix de fée asset`.
+- **Audit & Frais :** `Fee_Asset`, `Fee_Amount`, `Source_Way`, `Audit_Status`, `Fee_Audit_Alert`, `Source_Exchange_Rate`.
 
-**ALERTE CRITIQUE : IL EST STRICTEMENT INTERDIT DE MODIFIER LES FICHIERS `app.py` ET `appNeverless.py`.** Ces fichiers ont atteint un niveau de fiabilité complexe à obtenir et toute modification risque de dégrader la qualité du traitement.
-
-- **app.py (Harvest) :** Moteur de récolte à 3 voies (Blockscout, Etherscan API V2).
-- **appNomplateforme.py (ex: appNeverless.py, appBleap.py) :** Modules spécialisés pour les imports CSV locaux/spécifiques.
-
-#### Architecture du Moteur à 3 Voies (app.py)
-- **VOIE 1 (Blockscout Deep Scan) :** Priorité sémantique (extraction des étiquettes From_Label/To_Label et types de processus) et extraction des valuations USD (via `value_usd`, `total_usd`).
-- **VOIE 2 (API Scans) :** Contrôle comptable (Internal Transactions, précision des frais L1/L2 via Etherscan API V2 avec Smart Fallback).
-- **ROBUSTESSE TX_HASH :** L'extraction des hashes de transaction doit vérifier systématiquement les clés `hash`, `tx_hash`, `txHash`, `transaction_hash`, et `transactionHash` pour éviter les valeurs 'none'.
-- **VOIE 3 (Imports CEX/Offline) :** Intégration automatique des fichiers `raw_*.csv` locaux.
-- **FUSION INTELLIGENTE :** Dédoublonnage scrupuleux par le quadruplet **`(Tx_Hash, Asset, Account, Chain)`**. La fusion doit préserver les labels de la Voie 1 et injecter les frais/méthodes de la Voie 2.
-- **NOMMAGE CONSOLIDÉ :** Le fichier final doit impérativement porter le suffixe `_consolidated_` (ex: `raw_transactions_consolidated_*.csv`) pour indiquer le traitement multivoie.
-- **IDENTIFICATION DES COMPTES :** Utiliser systématiquement `standardize_address_string` pour discriminer et unifier les identités. Le standard absolu est le format : **`Identifiant_Technique (Nom_Amical)`**.
-
-### 2. Standard de Données Cible (SCHEMA RAW V4)
-Tout fichier produit (moteur ou importeur Voie 3) doit utiliser exactement ce schéma de 23 colonnes :
-- **Date** (UTC ISO 8601), **Chain**, **Tx_Hash** (ID unique), **Type** (Native, Token, Internal, CEX_Mvt), **Method**, **Account**, **From**, **To**, **From_Label**, **To_Label**, **Counterparty**, **Asset**, **Amount**, **Valeur $**, **USD prix asset reçu**, **USD prix asset envoyé**, **USD prix de fée asset**, **Fee_Asset**, **Fee_Amount**, **Source_Way**, **Audit_Status**, **Fee_Audit_Alert**, **Source_Exchange_Rate**.
-- **Zéro Valorisation :** Les fichiers RAW ne contiennent aucune conversion EUR/USD externe.
+### 2. Robustesse du Moteur (app.py)
+- **Multi-Voies :** Voie 1 (Blockscout - Labels & USD), Voie 2 (API Scans - Frais & Internes), Voie 3 (Imports CSV locaux).
+- **Zéro 'NONE' sur Tx_Hash :** Le moteur doit inspecter récursivement les clés `hash`, `tx_hash`, `txHash`, `transaction_hash`, et `transactionHash`.
+- **Dédoublonnage :** Groupement strict par le quadruplet **`(Tx_Hash, Asset, Account, Chain)`**.
 
 ---
 
-## III. PHASE 2 : QUALIFICATION & NETTOYAGE (app2.py)
-C'est l'étape critique de transformation des données brutes en journal comptable.
+## III. PHASE 2 : QUALIFICATION & CERTIFICATION (app2.py)
 
-1. **Agrégation Exhaustive & Fidelity Engine :**
-    - **Ingestion Robuste :** Utilisation de `discover_col` pour identifier dynamiquement les colonnes critiques (Date, Compte, Asset, Montant, Hash, Valuations USD) dans divers formats CSV (Blockchain V4, Legacy, Portfolio, Imports tiers).
-    - **Fidelity Engine :** Lors de la synchronisation, le système doit impérativement préserver les modifications manuelles de l'utilisateur (Statut, Catégorie, Imposable, VGP, Valuations USD) déjà présentes dans le journal qualifié en utilisant un UID composite exhaustif `(Tx_Hash, Asset, Account, Amount, Date)` pour éviter toute collision sur des transactions identiques (ex: swaps de même montant à la même seconde).
-    - **Architecture Clean Gateway :** `app2.py` produit deux versions du journal : `qualif_journal_{year}_FULL.csv` (Audit complet incluant les spams) et `qualif_journal_{year}.csv` (Version nettoyée, labels résolus, prête pour la fiscalité).
-2. **Gestion des Référentiels (Sidebar) :**
-    - **Enregistrement Unifié :** Formulaire sidebar pour assigner une adresse/label à un registre (Propriétaire, Position, Circuit, Spam).
-    - **CRUD Manuel :** Chaque registre (Spams, Propriétaires, Circuits, Positions) doit disposer de fonctions individuelles de **Modification** et **Suppression**.
-3. **Audit & Récupération :**
-    - Comparaison systématique avec le `sanctuary/`. Restauration par bloc ou sélection.
-    - Utilisation d'empreintes temporelles et techniques pour identifier les orphelins.
-4. **Outils d'Injection :**
-    - **Flux Fiat :** Injection simplifiée vers `manual_fiat_{year}.csv` avec contrepartie par défaut "banq fiat".
-    - **Swaps & Internes :** Injection multi-jambes vers `manual_swaps_{year}.csv` pour lier les flux crypto-to-crypto.
+### 1. "Fidelity Engine" de Synchronisation
+Lors de l'intégration de nouvelles données RAW, le système doit impérativement préserver les décisions de l'utilisateur déjà enregistrées :
+- **UID Composite :** La correspondance se fait sur `(Tx_Hash, Asset, Account, Amount, Date)`.
+- **Priorité Numérique :** Une valeur existante n'est écrasée que si elle est "vide". Pour les prix et USD, **0.00 est considéré comme vide**, permettant aux nouvelles récoltes Step 1 (Blockscout) d'enrichir les anciens journaux sans perte de données.
+- **Colonnes Préservées :** `Audit_Status`, `Category`, `Imposable`, `VGP (EUR)`, `Valeur $`, et les 3 colonnes de prix USD.
 
----
+### 2. Gestion de l'Exclusion des Spams
+- **Zéro Spam CLEAN :** Le bouton "Sauvegarder" doit déclencher un `sl.apply_spam_filter(df, drop=True)` avant l'écriture du fichier CLEAN.
+- **Hiérarchie de Filtrage :**
+    1. **Statut Manuel :** Si `Audit_Status` est explicitement "Spam" (insensible à la casse), la ligne est bannie.
+    2. **Blacklist Globale :** Si l'Asset ou la Contrepartie est dans `spam_blacklist.json`.
+    3. **Protection Whitelist :** Les actifs dans `valid_assets.json` sont protégés sauf s'ils sont manuellement marqués "Spam".
 
-## IV. PHASE 3 : AUDIT, VGP & FISCALITÉ
-Utilisation des données nettoyées pour le reporting final.
-
-1. **VGP Cumulative (app2VGP) :** Calcul par sommation stricte des soldes (Comptes + Positions + Créances).
-2. **Bilan Fiscal (app3) :** Application stricte Art. 150 VH bis. Lock automatique si ruptures de stock détectées par `appDiagCoh.py`.
-3. **Diagnostic (appDiagCoh) :** Traçage chronologique et détection des soldes négatifs. Utilise `sl.load_clean_history()`.
+### 3. Interface & UX
+- **Indicateur de Modification :** Le bouton de sauvegarde doit changer de couleur (Rouge) dès qu'une modification est détectée dans l'éditeur.
+- **CRUD Registres :** Les listes (Spams, Assets Valides, Propriétaires, Positions) en sidebar doivent permettre l'ajout et la suppression individuelle via des boutons dédiés.
 
 ---
 
-## V. STANDARDS TECHNIQUES & UI
-- **Largeur Plein Écran :** `layout="wide"`.
-- **Indépendance des Modules :** `if "is_hub" not in st.session_state: st.set_page_config(...)`.
-- **Type Safety :** Conversion numérique forcée (`pd.to_numeric`) sur `Amount`, `Value ($)` et `VGP (EUR)`.
-- **UTC Timestamps :** Toutes les colonnes 'Date' doivent être converties en format Datetime UTC (`pd.to_datetime(..., utc=True)`) dès l'ingestion pour éviter les `TypeError` lors des tris ou comparaisons.
+## IV. PHASE 3 : AUDIT, VGP & PATRIMOINE
+
+1. **appPriceFix (Collecteur de Prix) :**
+    - Doit scanner exclusivement le journal CLEAN.
+    - Priorité aux valuations USD récoltées (converties via taux fiat BCE) avant de solliciter CoinGecko.
+    - **Robustesse Date :** Toujours convertir en datetime avant d'utiliser l'accesseur `.dt`.
+2. **appPropri (Dashboard) :**
+    - Affiche la synthèse des positions protocoles (selon `position_labels.json`).
+    - Consomme exclusivement les données via `sl.load_clean_history` pour garantir un affichage sans spam.
+3. **app3 (Fiscalité) :**
+    - Application stricte de l'Art. 150 VH bis.
+    - **Verrou de Sécurité :** Génération PDF interdite si `appDiagCoh` détecte des ruptures de stock (soldes négatifs) pour l'année cible.
+
+---
+
+## V. STANDARDS TECHNIQUES TRANSVERSES (shared_logic.py)
+
+1. **Persistence Globale :** Utilisation de `global_config.json` pour stocker `start_year`, `processing_year`, et les réglages persistants par application (ex: `appPropri_year`).
+2. **Encodage CSV :** Export systématique en `utf-8-sig` pour assurer la compatibilité Excel/Windows et la préservation des symboles monétaires.
+3. **Nettoyage Automatisé :** Fonction de maintenance en sidebar pour purger les fichiers de travail `raw_*.csv` anciens, en conservant uniquement les deux dates de session les plus récentes.
+4. **Type Safety Datetime :** Toute ingestion de donnée doit forcer `pd.to_datetime(..., utc=True)` pour éviter les plantages lors des tris et calculs temporels.
+5. **Identité Unifiée :** Format standard `Identifiant (Label)` imposé par `sl.standardize_address_string`.
