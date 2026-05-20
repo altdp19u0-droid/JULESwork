@@ -449,14 +449,12 @@ def main():
                 # Sauvegarde Physique
                 os.makedirs(os.path.dirname(j_full_path), exist_ok=True)
 
-                # 1. FULL for Audit
-                final_save.to_csv(j_full_path, index=False)
+                # 1. FULL for Audit (using utf-8-sig for compatibility)
+                final_save.to_csv(j_full_path, index=False, encoding="utf-8-sig")
 
                 # 2. CLEAN (No Spams, strictly real positions)
                 clean_save = final_save[final_save["Audit_Status"] != "Spam"].copy()
-                # On retire aussi les colonnes de statut interne qui n'ont plus lieu d'être dans le clean
-                # Mais on garde Category et Imposable qui sont utiles en aval
-                clean_save.to_csv(j_path, index=False)
+                clean_save.to_csv(j_path, index=False, encoding="utf-8-sig")
 
                 st.session_state.has_unsaved_changes = False
                 st.toast("✅ Sanctuarisation réussie !", icon="🟢")

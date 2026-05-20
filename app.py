@@ -193,9 +193,17 @@ if harvest_btn:
 
                 # EXTENSIVE USD VALUE DISCOVERY
                 val_usd = float(t.get("value_usd") or t.get("total", {}).get("value_usd") or t.get("total_usd") or 0.0)
+                unit_p = val_usd / val if val > 0 else 0.0
 
                 row = create_raw_row()
-                row.update({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native" if "method" in t else "Internal", "Method": t.get("method", "Internal"), "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": native, "Amount": val if t_r == addr_c else -val, "Valeur $": val_usd, "Fee_Asset": native, "Fee_Amount": (int(t.get("gas_used", 0)) * int(t.get("gas_price", 0))) / 1e18 if f_r == addr_c else 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW"})
+                row.update({
+                    "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native" if "method" in t else "Internal", "Method": t.get("method", "Internal"), "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": native, "Amount": val if t_r == addr_c else -val,
+                    "Valeur $": val_usd,
+                    "USD prix asset reçu": unit_p if t_r == addr_c else 0.0,
+                    "USD prix asset envoyé": unit_p if f_r == addr_c else 0.0,
+                    "Fee_Asset": native, "Fee_Amount": (int(t.get("gas_used", 0)) * int(t.get("gas_price", 0))) / 1e18 if f_r == addr_c else 0.0,
+                    "Source_Way": "Way_1", "Audit_Status": "RAW", "Source_Exchange_Rate": unit_p
+                })
                 all_txs.append(row)
 
             for t in bs_tok:
@@ -206,16 +214,22 @@ if harvest_btn:
                 val = float(total_obj.get("value") or t.get("value", 0)) / (10**dec)
 
                 # EXTENSIVE USD VALUE DISCOVERY FOR TOKENS
-                # Sometimes it's in total.value_usd, sometimes in total_usd, or calculated from exchange_rate
                 rate = float(tok.get("exchange_rate") or 0.0)
                 val_usd = float(total_obj.get("value_usd") or t.get("total_usd") or t.get("value_usd") or (val * rate if rate > 0 else 0.0))
+                unit_p = val_usd / val if val > 0 else rate
 
                 h_val = t.get("tx_hash") or t.get("txHash") or t.get("hash") or t.get("transaction_hash")
                 tx_h = str(h_val).lower().strip() if (h_val and str(h_val).lower() != "none") else "none"
                 f_r, t_r = str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()
 
                 row = create_raw_row()
-                row.update({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Token", "Method": "", "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": asset, "Amount": val if t_r == addr_c else -val, "Valeur $": val_usd, "Source_Way": "Way_1", "Audit_Status": "RAW"})
+                row.update({
+                    "Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Token", "Method": "", "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": asset, "Amount": val if t_r == addr_c else -val,
+                    "Valeur $": val_usd,
+                    "USD prix asset reçu": unit_p if t_r == addr_c else 0.0,
+                    "USD prix asset envoyé": unit_p if f_r == addr_c else 0.0,
+                    "Source_Way": "Way_1", "Audit_Status": "RAW", "Source_Exchange_Rate": unit_p
+                })
                 all_txs.append(row)
             chains_status[chain]["bs"] = True; f1.caption(f"✅ Way_1 (BS) : {len(bs_nat)+len(bs_int)+len(bs_tok)} lignes")
         except: chains_status[chain]["bs"] = False; f1.error("❌ Way_1 : Échec")
@@ -279,7 +293,10 @@ if harvest_btn:
             w1, w2 = g[g["Source_Way"]=="Way_1"], g[g["Source_Way"]=="Way_2"]
             res = w1.iloc[0].copy() if not w1.empty else w2.iloc[0].copy()
             if not w1.empty and not w2.empty:
-                res["Fee_Amount"], res["Method"], res["Source_Way"] = w2.iloc[0]["Fee_Amount"], w2.iloc[0]["Method"], "Way_1+2"
+                r2 = w2.iloc[0]
+                # Combine data: Fee and Method from Way_2, Valuations from Way_1
+                res["Fee_Amount"], res["Method"], res["Source_Way"] = r2["Fee_Amount"], r2["Method"], "Way_1+2"
+                # If Way_2 has higher fidelity on some valuations (usually not for USD prices on Blockscout), update them here
             return res
         df_f = df_m.groupby(["Tx_Hash", "Asset", "Chain", "_amt_round", "From", "To", "_occ"], as_index=False).apply(cons).reset_index(drop=True)
         # Ensure all columns are present after consolidation
@@ -337,13 +354,14 @@ if st.session_state.harvest_data:
                 s_dir = os.path.join(y_dir, "sanctuary"); os.makedirs(s_dir, exist_ok=True)
                 prefix = f"{addr}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
+                # Use utf-8-sig for Windows/Excel compatibility and ensuring $ signs and symbols are preserved
                 # 1. Working copy (latest raw for other apps)
-                if not data["port"].empty: data["port"].to_csv(os.path.join(y_dir, f"raw_portfolio_{prefix}.csv"), index=False)
-                if not df_t.empty: df_t.to_csv(os.path.join(y_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False)
+                if not data["port"].empty: data["port"].to_csv(os.path.join(y_dir, f"raw_portfolio_{prefix}.csv"), index=False, encoding="utf-8-sig")
+                if not df_t.empty: df_t.to_csv(os.path.join(y_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False, encoding="utf-8-sig")
 
                 # 2. SANCTUARY copy (never modified, permanent archive)
-                if not data["port"].empty: data["port"].to_csv(os.path.join(s_dir, f"raw_portfolio_{prefix}.csv"), index=False)
-                if not df_t.empty: df_t.to_csv(os.path.join(s_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False)
+                if not data["port"].empty: data["port"].to_csv(os.path.join(s_dir, f"raw_portfolio_{prefix}.csv"), index=False, encoding="utf-8-sig")
+                if not df_t.empty: df_t.to_csv(os.path.join(s_dir, f"raw_transactions_consolidated_{prefix}.csv"), index=False, encoding="utf-8-sig")
 
                 st.success(f"Récolte sanctuarisée ({prefix})")
 
