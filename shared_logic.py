@@ -173,21 +173,19 @@ def check_file_freshness(filepath, last_load):
     return mtime > last_load
 
 def load_clean_history(year):
-    """GATEWAY: Loads all clean journals from start_year up to year."""
+    """GATEWAY: Loads all clean journals from start_year up to year. BLIND TRUST in CLEAN file."""
     config = load_global_config()
     start = int(config.get("start_year", 2025))
     all_dfs = []
     for y in range(start, year + 1):
-        p = get_file_path(y, 'qualified')
+        p = get_file_path(y, 'qualified_clean')
         if os.path.exists(p):
             df = pd_read_csv_safe(p)
             if not df.empty: all_dfs.append(df)
     if not all_dfs: return pd.DataFrame()
 
-    combined = pd.concat(all_dfs).reset_index(drop=True)
-    # Layer 2 defense: re-apply spam filter on load to catch spams added to blacklist
-    # after the CLEAN journal was generated.
-    return apply_spam_filter(combined, drop=True)
+    # Blind trust: app2.py is the gatekeeper. Downstream apps work on what they receive.
+    return pd.concat(all_dfs).reset_index(drop=True)
 
 # --- Registry Management ---
 

@@ -105,12 +105,11 @@ def pdf_safe_str(val, use_unicode=True):
 
 def load_data(year):
     # GATEWAY ARCHITECTURE: Use EXCLUSIVELY CLEAN journal for downstream apps
+    # No direct access to fiat or positions registries.
     clean_path = sl.get_file_path(year, 'qualified_clean')
 
     paths = {
-        'journal': clean_path,
-        'fiat': sl.get_file_path(year, 'fiat'),
-        'positions': sl.get_file_path(year, 'positions')
+        'journal': clean_path
     }
 
     # Track load time for freshness
@@ -238,14 +237,20 @@ if 'journal' in data and not data['journal'].empty:
 
 # --- Logic: Fiscal calculations ---
 def calculate_acquisition_price(year):
-    # Somme des flux fiat entrants (Achat) depuis le début (théoriquement cumulé)
-    # Pour simplifier ici, on regarde l'année en cours + une saisie manuelle de l'historique
-    fiat_df = data['fiat']
-    if fiat_df.empty: return 0.0
+    # Somme des flux fiat entrants (Achat) extraite EXCLUSIVEMENT du journal CLEAN
+    journal = data.get('journal', pd.DataFrame())
+    if journal.empty: return 0.0
 
-    # On filtre sur les types "Achat"
-    purchases = fiat_df[fiat_df['Type'].str.contains("Achat", na=False)]
-    return purchases['Montant EUR'].sum()
+    # On filtre sur les catégories "Achat" dans le journal
+    purchases = journal[journal['Category'].fillna("").str.contains("Achat", case=False, na=False)]
+
+    # On utilise 'Montant EUR' s'il existe ou une valeur calculée
+    # Dans le CLEAN journal, on devrait avoir les valeurs EUR
+    # S'il manque, on regarde Valeur $ ou Amount (en supposant EUR pour fiat)
+    if "Montant EUR" in purchases.columns:
+        return purchases["Montant EUR"].sum()
+
+    return purchases['Amount'].sum() # Pour les flux fiat, Amount == EUR
 
 # --- Integration Diagnostic Integrity ---
 def get_critical_anomalies(year):
@@ -1104,8 +1109,12 @@ with tab_bilan:
                 if "fiscal_pdf_bytes" in st.session_state: del st.session_state.fiscal_pdf_bytes
 
                 try:
+                    # Collect fiat movements from Journal for PDF
+                    journal = data.get('journal', pd.DataFrame())
+                    fiat_movements = journal[journal['Chain'] == 'Fiat'] if not journal.empty else pd.DataFrame()
+
                     final_bytes = generate_fiscal_pdf_full(
-                        target_year, accounts, derived_local, df_protocols, pos_df, data['fiat'],
+                        target_year, accounts, derived_local, df_protocols, pd.DataFrame(), fiat_movements,
                         df_bilan, total_pv, impot
                     )
                     # Convert to bytes if it came as string/bytearray

@@ -114,45 +114,34 @@ def get_owner_history(year):
 
 @st.cache_data
 def get_acquisition_history(year):
-    """Loads all fiat acquisitions from start_year to 'year'."""
-    g_conf = sl.load_global_config()
-    start_y = int(g_conf.get("start_year", 2025))
-    all_acq = []
-    for y in range(start_y, year + 1):
-        path = sl.get_file_path(y, 'fiat')
-        if os.path.exists(path):
-            try:
-                df = sl.pd_read_csv_safe(path)
-                if df.empty or "Date" not in df.columns or "Type" not in df.columns: continue
+    """Loads all fiat acquisitions from CLEAN history from start_year to 'year'."""
+    # EXCLUSIVITY RULE: Data must come from CLEAN history journal only
+    df_h = sl.load_clean_history(year)
+    if df_h.empty: return pd.DataFrame()
 
-                # Filter for 'Achat' types (Euros moving into Crypto)
-                mask = df['Type'].str.contains("Achat", case=False, na=False)
-                df_acq = df[mask].copy()
+    # Filter for 'Achat' categories in the journal
+    mask = df_h['Category'].fillna("").str.contains("Achat", case=False, na=False)
+    df_acq = df_h[mask].copy()
 
-                if not df_acq.empty:
-                    df_acq["Date"] = pd.to_datetime(df_acq["Date"], utc=True, errors="coerce")
-                    # --- CRITICAL FIX: Filter out rows with None dates ---
-                    df_acq = df_acq[df_acq["Date"].notna()]
-                    # Map to requested structure
-                    # Handle renaming safely
-                    renames = {}
-                    if "Montant EUR" in df_acq.columns: renames["Montant EUR"] = "Fiat Mobilisé (EUR)"
-                    if "Account" in df_acq.columns: renames["Account"] = "Compte"
-                    if "Counterparty" in df_acq.columns: renames["Counterparty"] = "Provenance"
+    if df_acq.empty: return pd.DataFrame()
 
-                    df_acq = df_acq.rename(columns=renames)
+    df_acq["Date"] = pd.to_datetime(df_acq["Date"], utc=True, errors="coerce")
+    df_acq = df_acq[df_acq["Date"].notna()]
 
-                    # Add requested 'Blockchain' column (default to 'Fiat/CEX')
-                    if "Network" not in df_acq.columns:
-                        df_acq["Blockchain"] = "Fiat/CEX"
-                    else:
-                        df_acq["Blockchain"] = df_acq["Network"]
+    # Mapping to UI expected columns
+    df_acq = df_acq.rename(columns={
+        "Account": "Compte",
+        "Counterparty": "Provenance",
+        "Chain": "Blockchain"
+    })
 
-                    all_acq.append(df_acq)
-            except: pass
+    # Value detection
+    if "Montant EUR" in df_acq.columns:
+        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Montant EUR"], errors="coerce").fillna(0.0)
+    else:
+        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0)
 
-    if not all_acq: return pd.DataFrame()
-    return pd.concat(all_acq).sort_values("Date", ascending=False).reset_index(drop=True)
+    return df_acq.sort_values("Date", ascending=False).reset_index(drop=True)
 
 @st.cache_data
 def get_cessions_history(year):

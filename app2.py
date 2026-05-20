@@ -153,7 +153,8 @@ def merge_raw_data(year):
                 "Account": str(r.get("Account", "banq fiat")),
                 "Asset": str(r.get("Asset", "EUR")), "Amount": float(r.get("Amount", 0)),
                 "Counterparty": str(r.get("Counterparty", "Banque")),
-                "Type": "Fiat Move", "Source_Way": "Manuel", "Audit_Status": "Valide"
+                "Type": "Fiat Move", "Source_Way": "Manuel", "Audit_Status": "Valide",
+                "Category": str(r.get("Type", "Achat")) # Propagate manual category
             })
 
     # 3. Source Manuelle (Positions Initiales / Snapshot)
@@ -173,7 +174,8 @@ def merge_raw_data(year):
                 "Asset": str(r.get("Asset", "UNKNOWN")), "Amount": float(r.get("Amount", r.get("Quantité", 0))),
                 "Valeur $": float(r.get(v_usd_c, 0.0)) if v_usd_c else 0.0,
                 "USD prix asset reçu": float(r.get(p_rec_c, 0.0)) if p_rec_c else 0.0,
-                "Type": "Position Manuelle", "Source_Way": "Manuel", "Audit_Status": "Valide"
+                "Type": "Position Manuelle", "Source_Way": "Manuel", "Audit_Status": "Valide",
+                "Category": "Position Manuelle"
             })
 
     df = pd.DataFrame(rows)

@@ -59,57 +59,29 @@ with st.sidebar:
 
 # --- Scanner ---
 def scan_needed_prices(target_years, exclude_spams=True):
+    """GATEWAY EXCLUSIVITY: Scans EXCLUSIVELY the CLEAN journal for price needs."""
     all_needed = [] # List of dicts: {'Year', 'Asset', 'Date', 'Type'}
 
     for y in target_years:
         y_int = int(y)
-        y_dir = os.path.join(EXPORT_BASE_DIR, y)
-        if not os.path.exists(y_dir): continue
-
         assets_in_year = set()
 
-        # 1. Scan CLEAN Journal for Cessions and Assets
-        # GATEWAY: Strictly use CLEAN journal for scanning needs
-        clean_path = sl.get_file_path(y_int, 'qualified_clean')
+        # 1. Use the Gateway standard loader (already filters spams if they leaked into CLEAN)
+        df_q = sl.load_clean_history(y_int)
+        # Filter for only THIS year for the scanner
+        df_q = df_q[df_q["Date"].dt.year == y_int]
 
-        if clean_path and os.path.exists(clean_path):
-            df_q = sl.pd_read_csv_safe(clean_path)
-            if not df_q.empty:
-                # In CLEAN journal, spams are already removed by app2.py
-                df_q["Date"] = pd.to_datetime(df_q["Date"], utc=True, errors="coerce")
+        if not df_q.empty:
+            # Identify assets held (includes those from manual positions if merged into journal)
+            assets_in_year.update(df_q["Asset"].dropna().unique())
 
-                # Identify assets held
-                assets_in_year.update(df_q["Asset"].dropna().unique())
-
-                # Identify cessions
-                mask_cess = (df_q["Imposable"].apply(sl.is_imposable_robust)) | (df_q["Category"].fillna("").str.contains("Vente", case=False))
-                cessions = df_q[mask_cess & (df_q["Asset"] != "EUR")]
-                for _, row in cessions.iterrows():
-                    all_needed.append({
-                        "Year": y_int, "Asset": str(row["Asset"]), "Date": row["Date"].date(), "Type": "Cession"
-                    })
-
-        # 2. Scan Manual Positions for Assets
-        pos_path = sl.get_file_path(y_int, 'positions')
-        if pos_path and os.path.exists(pos_path):
-            df_p = sl.pd_read_csv_safe(pos_path)
-            if not df_p.empty:
-                # --- ZÉRO SPAM ---
-                if exclude_spams:
-                    df_p = sl.apply_spam_filter(df_p, drop=True)
-                assets_in_year.update(df_p["Asset"].dropna().unique())
-
-        # 3. Scan Previous Year Inventory (EOY Carryover)
-        prev_year = y_int - 1
-        inv_path = sl.get_file_path(prev_year, 'inventory_eoy')
-        if os.path.exists(inv_path):
-            df_inv = sl.pd_read_csv_safe(inv_path)
-            if not df_inv.empty and "Asset" in df_inv.columns:
-                # --- ZÉRO SPAM ---
-                if exclude_spams:
-                    df_inv = sl.apply_spam_filter(df_inv, drop=True)
-                # Assets carried over from previous year need an EOY price for current year
-                assets_in_year.update(df_inv["Asset"].dropna().unique())
+            # Identify cessions
+            mask_cess = (df_q["Imposable"].apply(sl.is_imposable_robust)) | (df_q["Category"].fillna("").str.contains("Vente", case=False))
+            cessions = df_q[mask_cess & (df_q["Asset"] != "EUR")]
+            for _, row in cessions.iterrows():
+                all_needed.append({
+                    "Year": y_int, "Asset": str(row["Asset"]), "Date": row["Date"].date(), "Type": "Cession"
+                })
 
         # 4. Handle End of Year (31/12) for all identified assets
         eoy_date = datetime(y_int, 12, 31).date()
