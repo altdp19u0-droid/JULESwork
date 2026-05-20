@@ -42,8 +42,10 @@ with st.sidebar:
     if exclude_spam:
         total_leaked = 0
         for y in selected_years:
-            q_path = os.path.join(EXPORT_BASE_DIR, y, f"qualified_journal_{y}.csv")
-            if os.path.exists(q_path):
+            # We check the FULL journal for leaked spams that shouldn't be there
+            # But the scanner will only work on CLEAN.
+            q_path = sl.get_file_path(int(y), 'qualified_full')
+            if q_path and os.path.exists(q_path):
                 try:
                     df_q = sl.pd_read_csv_safe(q_path)
                     leaked = sl.validate_spam_exclusion(df_q)
@@ -67,22 +69,13 @@ def scan_needed_prices(target_years, exclude_spams=True):
         assets_in_year = set()
 
         # 1. Scan CLEAN Journal for Cessions and Assets
-        # GATEWAY: Prefer CLEAN journal for scanning needs
+        # GATEWAY: Strictly use CLEAN journal for scanning needs
         clean_path = sl.get_file_path(y_int, 'qualified_clean')
-        qual_path = sl.get_file_path(y_int, 'qualified')
 
-        path_to_scan = None
-        if clean_path and os.path.exists(clean_path): path_to_scan = clean_path
-        elif qual_path and os.path.exists(qual_path): path_to_scan = qual_path
-
-        if path_to_scan:
-            df_q = sl.pd_read_csv_safe(path_to_scan)
+        if clean_path and os.path.exists(clean_path):
+            df_q = sl.pd_read_csv_safe(clean_path)
             if not df_q.empty:
-                # --- ZÉRO SPAM ---
-                # Only filter if not already CLEAN
-                if exclude_spams and "CLEAN" not in path_to_scan:
-                    df_q = sl.apply_spam_filter(df_q, drop=True)
-
+                # In CLEAN journal, spams are already removed by app2.py
                 df_q["Date"] = pd.to_datetime(df_q["Date"], utc=True, errors="coerce")
 
                 # Identify assets held
@@ -235,10 +228,10 @@ if "price_explorer_df" in st.session_state:
             # Reload cache once before batch
             cache = sl.load_price_cache()
 
-            # Pre-load all available journals to look for harvested USD prices
+            # Pre-load available CLEAN journals to look for harvested USD prices
             all_dfs = []
             for y in selected_years:
-                p = sl.get_file_path(int(y), 'qualified_full')
+                p = sl.get_file_path(int(y), 'qualified_clean')
                 if os.path.exists(p):
                     all_dfs.append(sl.pd_read_csv_safe(p))
 

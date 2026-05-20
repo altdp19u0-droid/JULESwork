@@ -92,6 +92,10 @@ def merge_raw_data(year):
         p_sent_c = discover_col(df_raw, ["usdprixassetenvoyé", "usdpriceofassetsent", "usdprixenvoyé"])
         p_fee_c = discover_col(df_raw, ["usdprixdeféeasset", "usdprixdefeeasset", "usdpriceoffeeasset", "usdprixfee"])
 
+        # Fee Asset/Amount Discovery
+        f_ast_c = discover_col(df_raw, ["feeasset", "tokenfrais", "devisefrais"])
+        f_amt_c = discover_col(df_raw, ["feeamount", "montantfrais", "valeurfrais", "fees"])
+
         from_c = discover_col(df_raw, ["from", "expediteur"])
         to_c = discover_col(df_raw, ["to", "destinataire"])
         cp_c = discover_col(df_raw, ["counterparty", "contrepartie"])
@@ -117,6 +121,8 @@ def merge_raw_data(year):
                     "USD prix asset reçu": float(r.get(p_rec_c, 0.0)) if p_rec_c else 0.0,
                     "USD prix asset envoyé": float(r.get(p_sent_c, 0.0)) if p_sent_c else 0.0,
                     "USD prix de fée asset": float(r.get(p_fee_c, 0.0)) if p_fee_c else 0.0,
+                    "Fee_Asset": str(r.get(f_ast_c, "")) if f_ast_c else "",
+                    "Fee_Amount": float(r.get(f_amt_c, 0.0)) if f_amt_c else 0.0,
                     "From": sl.standardize_address_string(r.get(from_c, "")),
                     "To": sl.standardize_address_string(r.get(to_c, "")),
                     "Counterparty": str(r.get(cp_c, "")),
@@ -255,8 +261,8 @@ def main():
             existing = sl.pd_read_csv_safe(j_full_path)
 
         # Robustesse : s'assurer que l'existant a bien toutes les colonnes cibles avant le Fidelity Engine
-        if not existing.empty:
-            existing = ensure_columns(existing)
+        # On force ensure_columns même si vide pour avoir le schéma complet (prévient not in index)
+        existing = ensure_columns(existing)
 
         raw = merge_raw_data(year)
         final = run_fidelity_engine(raw, existing)

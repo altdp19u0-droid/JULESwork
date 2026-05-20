@@ -15,13 +15,23 @@ EXPORT_BASE_DIR = "sanctuarisation"
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
+
+    # Load Unified Processing Year from config for persistence
+    g_conf = sl.load_global_config()
+    default_year = g_conf.get("processing_year") or datetime.now().year
+
     # Unified Hub Year
     if "_hub_target_year" not in st.session_state:
-        st.session_state["_hub_target_year"] = datetime.now().year
+        st.session_state["_hub_target_year"] = default_year
 
     target_year = st.number_input("Année de consultation", min_value=2015, max_value=2030, key="_hub_target_year")
 
-    # Year switch detection
+    # Persist change to global config
+    if target_year != g_conf.get("processing_year"):
+        g_conf["processing_year"] = int(target_year)
+        sl.save_global_config(g_conf)
+
+    # Year switch detection for session clearing
     if "last_propri_year" not in st.session_state:
         st.session_state.last_propri_year = target_year
 
@@ -253,6 +263,59 @@ def valuate_dataframe(df, cache):
     df["Valeur EUR (Date)"] = df.apply(valuate_row, axis=1)
     return df
 
+# --- Protocol Table Logic ---
+def get_protocol_summary(year):
+    """Calculates summary for protocol positions: In, Out, Balance, Price USD, Value USD, Value EUR."""
+    pos_map = sl.load_position_labels()
+    pos_addrs = set(pos_map.keys())
+
+    # Use CLEAN history
+    df_h = sl.load_clean_history(year)
+    if df_h.empty: return pd.DataFrame()
+
+    # Filter for protocol positions only
+    df_h["acc_raw"] = df_h["Account"].apply(sl.resolve_raw_addr)
+    df_proto = df_h[df_h["acc_raw"].isin(pos_addrs) | df_h["Account"].isin(pos_map.values())].copy()
+
+    if df_proto.empty: return pd.DataFrame()
+
+    # Ensure amount is numeric
+    df_proto["Amount"] = pd.to_numeric(df_proto["Amount"], errors="coerce").fillna(0.0)
+
+    # Aggregate In/Out
+    df_proto["In"] = df_proto["Amount"].apply(lambda x: x if x > 0 else 0.0)
+    df_proto["Out"] = df_proto["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+
+    # We group by the Display Name for the protocol
+    df_proto["Protocol"] = df_proto["Account"].apply(sl.resolve_owner_display)
+
+    summary = df_proto.groupby(["Protocol", "Asset"]).agg({
+        "In": "sum",
+        "Out": "sum",
+        "Amount": "sum" # Balance
+    }).reset_index()
+
+    summary = summary.rename(columns={"In": "Total Entrées", "Out": "Total Sorties", "Amount": "Solde (Qté)"})
+
+    # Pricing
+    cache = sl.load_price_cache()
+    eoy_date = datetime(year, 12, 31)
+
+    def get_valuations(row):
+        p_eur = sl.get_price_eur(row["Asset"], eoy_date, cache=cache)
+        # We need USD price too. Simple proxy: P_EUR / Rate_USD_to_EUR
+        rate_usd_eur = sl.get_fiat_rate("USD", eoy_date) or 1.0 # 1 USD = X EUR
+        p_usd = p_eur / rate_usd_eur if rate_usd_eur > 0 else 0.0
+
+        val_eur = row["Solde (Qté)"] * p_eur
+        val_usd = row["Solde (Qté)"] * p_usd
+
+        return pd.Series([p_usd, val_usd, val_eur])
+
+    summary[["Prix USD", "Valeur USD", "Valeur EUR"]] = summary.apply(get_valuations, axis=1)
+
+    return summary[summary["Solde (Qté)"].abs() > 1e-8]
+
 # --- Shared Constants ---
 DISPLAY_COLS = ["Date", "Account", "Asset", "Quantité Entrée", "Quantité Sortie", "Valeur EUR (Date)", "Category", "Counterparty", "Notes"]
 
@@ -437,6 +500,29 @@ elif history.empty and comp_history.empty:
 else:
     # 1. METRICS
     st.subheader("📊 Indicateurs Patrimoniaux")
+
+    # --- NEW: PROTOCOL POSITIONS TABLE ---
+    with st.expander("🏦 Synthèse des Positions Protocoles (Positions Qualifiées)", expanded=True):
+        df_proto_sum = get_protocol_summary(target_year)
+        if df_proto_sum.empty:
+            st.info("Aucune position protocole qualifiée détectée.")
+        else:
+            st.dataframe(
+                df_proto_sum,
+                column_config={
+                    "Total Entrées": st.column_config.NumberColumn(format="%.6f"),
+                    "Total Sorties": st.column_config.NumberColumn(format="%.6f"),
+                    "Solde (Qté)": st.column_config.NumberColumn(format="%.6f"),
+                    "Prix USD": st.column_config.NumberColumn(format="$ %.4f"),
+                    "Valeur USD": st.column_config.NumberColumn(format="$ %.2f"),
+                    "Valeur EUR": st.column_config.NumberColumn(format="%.2f €"),
+                },
+                width='stretch',
+                hide_index=True
+            )
+            st.caption("Note: Les prix et valeurs sont basés sur les cours au 31/12 de l'année de consultation.")
+
+    st.divider()
 
     # Cumulative Acquisition Price (A)
     total_acq = sl.get_total_acquisition_value(target_year)
