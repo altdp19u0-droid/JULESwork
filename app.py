@@ -190,7 +190,9 @@ if harvest_btn:
                 tx_h = str(h_val).lower().strip() if (h_val and str(h_val).lower() != "none") else "none"
                 f_r, t_r = str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()
                 val = float(t.get("value", 0)) / 1e18
-                val_usd = float(t.get("value_usd") or t.get("total", {}).get("value_usd") or 0.0)
+
+                # EXTENSIVE USD VALUE DISCOVERY
+                val_usd = float(t.get("value_usd") or t.get("total", {}).get("value_usd") or t.get("total_usd") or 0.0)
 
                 row = create_raw_row()
                 row.update({"Date": dt.isoformat(), "Chain": chain, "Tx_Hash": tx_h, "Type": "Native" if "method" in t else "Internal", "Method": t.get("method", "Internal"), "Account": addr_c, "From": f_r, "To": t_r, "From_Label": t.get("from", {}).get("name", ""), "To_Label": t.get("to", {}).get("name", ""), "Counterparty": t_r if f_r == addr_c else f_r, "Asset": native, "Amount": val if t_r == addr_c else -val, "Valeur $": val_usd, "Fee_Asset": native, "Fee_Amount": (int(t.get("gas_used", 0)) * int(t.get("gas_price", 0))) / 1e18 if f_r == addr_c else 0.0, "Source_Way": "Way_1", "Audit_Status": "RAW"})
@@ -200,8 +202,14 @@ if harvest_btn:
                 dt = datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00"))
                 tok = t.get("token") or {}
                 asset, dec = str(tok.get("symbol", "TOKEN")).upper().strip(), int(tok.get("decimals") or 18)
-                val = float(t.get("total", {}).get("value") or t.get("value", 0)) / (10**dec)
-                val_usd = float(t.get("total", {}).get("value_usd") or t.get("total_usd", 0.0))
+                total_obj = t.get("total", {})
+                val = float(total_obj.get("value") or t.get("value", 0)) / (10**dec)
+
+                # EXTENSIVE USD VALUE DISCOVERY FOR TOKENS
+                # Sometimes it's in total.value_usd, sometimes in total_usd, or calculated from exchange_rate
+                rate = float(tok.get("exchange_rate") or 0.0)
+                val_usd = float(total_obj.get("value_usd") or t.get("total_usd") or t.get("value_usd") or (val * rate if rate > 0 else 0.0))
+
                 h_val = t.get("tx_hash") or t.get("txHash") or t.get("hash") or t.get("transaction_hash")
                 tx_h = str(h_val).lower().strip() if (h_val and str(h_val).lower() != "none") else "none"
                 f_r, t_r = str(t.get("from", {}).get("hash", "")).lower().strip(), str(t.get("to", {}).get("hash", "")).lower().strip()

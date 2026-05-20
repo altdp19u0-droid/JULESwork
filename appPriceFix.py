@@ -105,6 +105,9 @@ def scan_needed_prices(target_years, exclude_spams=True):
         if os.path.exists(inv_path):
             df_inv = sl.pd_read_csv_safe(inv_path)
             if not df_inv.empty and "Asset" in df_inv.columns:
+                # --- ZÉRO SPAM ---
+                if exclude_spams:
+                    df_inv = sl.apply_spam_filter(df_inv, drop=True)
                 # Assets carried over from previous year need an EOY price for current year
                 assets_in_year.update(df_inv["Asset"].dropna().unique())
 

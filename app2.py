@@ -179,8 +179,13 @@ def run_fidelity_engine(raw_df, existing_df):
     existing_df["_uid"] = existing_df.apply(generate_uid, axis=1)
     raw_df["_uid"] = raw_df.apply(generate_uid, axis=1)
 
-    # Les colonnes à préserver (celles que l'utilisateur modifie)
-    preservable = ["Audit_Status", "Category", "From_Label", "To_Label", "Counterparty", "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable", "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset"]
+    # Les colonnes à préserver (celles que l'utilisateur modifie ou enrichies par récolte)
+    preservable = [
+        "Audit_Status", "Category", "From_Label", "To_Label", "Counterparty",
+        "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable",
+        "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset",
+        "Fee_Asset", "Fee_Amount"
+    ]
 
     # Dédoublonnage de l'existant sur l'UID pour éviter ValueError orient='index'
     # On garde le premier (le plus qualifié normalement)
