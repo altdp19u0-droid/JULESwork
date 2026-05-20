@@ -522,5 +522,40 @@ def auto_register_owner(addr):
         o = load_owner_accounts()
         if raw not in o: o[raw] = f"Auto ({raw[:6]})"; save_owner_accounts(o)
 
+def cleanup_working_files(year):
+    """Deletes old raw_*.csv files in the year root dir, keeping only the 2 most recent unique dates."""
+    year_dir = os.path.join(EXPORT_BASE_DIR, str(year))
+    if not os.path.exists(year_dir): return 0
+
+    # 1. Collect all raw files in the root year dir only (NOT in sanctuary/)
+    files = [f for f in os.listdir(year_dir) if f.endswith(".csv") and f.startswith("raw_")]
+    if not files: return 0
+
+    # 2. Extract unique dates from filenames (format: _YYYYMMDD)
+    date_pattern = re.compile(r'_(\d{8})(_\d{6})?\.csv$')
+
+    file_dates = []
+    for f in files:
+        match = date_pattern.search(f)
+        if match:
+            file_dates.append((f, match.group(1))) # (filename, date_str)
+
+    if not file_dates: return 0
+
+    # 3. Identify unique dates sorted descending
+    unique_dates = sorted(list(set(d for f, d in file_dates)), reverse=True)
+    dates_to_keep = set(unique_dates[:2])
+
+    # 4. Delete files not in the keep list
+    deleted_count = 0
+    for f, d in file_dates:
+        if d not in dates_to_keep:
+            try:
+                os.remove(os.path.join(year_dir, f))
+                deleted_count += 1
+            except: pass
+
+    return deleted_count
+
 def show_status():
     st.sidebar.success("✅ Système Opérationnel")

@@ -66,6 +66,13 @@ def merge_raw_data(year):
             ast_c = discover_col(df_raw, ["asset", "symbol"])
             amt_c = discover_col(df_raw, ["amount", "quantity", "balance"])
             acc_c = discover_col(df_raw, ["account", "address"])
+
+            # Valuations Discovery
+            v_usd_c = discover_col(df_raw, ["valeur$", "valueusd", "totalusd", "usdvalue"])
+            p_rec_c = discover_col(df_raw, ["usdprixassetreçu", "usdpriceofassetreceived", "usdprixreçu"])
+            p_sent_c = discover_col(df_raw, ["usdprixassetenvoyé", "usdpriceofassetsent", "usdprixenvoyé"])
+            p_fee_c = discover_col(df_raw, ["usdprixdeféeasset", "usdprixdefeeasset", "usdpriceoffeeasset", "usdprixfee"])
+
             for _, r in df_raw.iterrows():
                 dt_val = r.get(d_c, f"{year}-12-31")
                 rows.append({
@@ -73,6 +80,10 @@ def merge_raw_data(year):
                     "Chain": "Portfolio", "Tx_Hash": f"INIT_{fn}_{_}",
                     "Type": "Position", "Account": sl.standardize_address_string(r.get(acc_c, src)),
                     "Asset": str(r.get(ast_c, "UNKNOWN")), "Amount": float(r.get(amt_c, 0)),
+                    "Valeur $": float(r.get(v_usd_c, 0.0)) if v_usd_c else 0.0,
+                    "USD prix asset reçu": float(r.get(p_rec_c, 0.0)) if p_rec_c else 0.0,
+                    "USD prix asset envoyé": float(r.get(p_sent_c, 0.0)) if p_sent_c else 0.0,
+                    "USD prix de fée asset": float(r.get(p_fee_c, 0.0)) if p_fee_c else 0.0,
                     "Source_Way": "Voie 3", "Audit_Status": "Valide"
                 })
             continue
@@ -149,12 +160,19 @@ def merge_raw_data(year):
     f_pos = sl.get_file_path(year, 'positions')
     if f_pos and os.path.exists(f_pos):
         df_pos = sl.pd_read_csv_safe(f_pos)
+
+        # Discoveries for manual entries too
+        v_usd_c = discover_col(df_pos, ["valeur$", "valueusd", "totalusd"])
+        p_rec_c = discover_col(df_pos, ["usdprixassetreçu", "usdpriceofassetreceived"])
+
         for _, r in df_pos.iterrows():
             rows.append({
                 "Date": pd.to_datetime(r.get("Date", f"{year}-01-01"), utc=True),
                 "Chain": "Manual", "Tx_Hash": str(r.get("Tx_Hash", f"MANUAL_POS_{_}")),
                 "Account": str(r.get("Account", "Portefeuille")),
                 "Asset": str(r.get("Asset", "UNKNOWN")), "Amount": float(r.get("Amount", r.get("Quantité", 0))),
+                "Valeur $": float(r.get(v_usd_c, 0.0)) if v_usd_c else 0.0,
+                "USD prix asset reçu": float(r.get(p_rec_c, 0.0)) if p_rec_c else 0.0,
                 "Type": "Position Manuelle", "Source_Way": "Manuel", "Audit_Status": "Valide"
             })
 
@@ -198,9 +216,15 @@ def run_fidelity_engine(raw_df, existing_df):
         uid = row["_uid"]
         if uid in qualif_map:
             for col in preservable:
-                # Priorité à l'existant si non vide
                 val = qualif_map[uid].get(col)
-                if pd.notna(val) and str(val).strip() != "":
+                # Logic logic: Prioritize existing if not "empty"
+                # For strings: not empty. For numbers: not 0.0 (unless it's VGP which might be 0)
+                is_empty = False
+                if pd.isna(val): is_empty = True
+                elif isinstance(val, str) and val.strip() == "": is_empty = True
+                elif isinstance(val, (int, float)) and val == 0.0 and col != "VGP (EUR)": is_empty = True
+
+                if not is_empty:
                     row[col] = val
         return row
 
@@ -415,8 +439,16 @@ def main():
                 "Audit_Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam", "Ignoré"]),
                 "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Revenu", "Dépense", "Transfert", "Swap", "Achat", "Vente"]),
                 "Imposable": st.column_config.CheckboxColumn("Imposable"),
+                "Valeur $": st.column_config.NumberColumn(format="$ %.2f"),
+                "USD prix asset reçu": st.column_config.NumberColumn(format="$ %.4f"),
+                "USD prix asset envoyé": st.column_config.NumberColumn(format="$ %.4f"),
+                "USD prix de fée asset": st.column_config.NumberColumn(format="$ %.4f"),
             },
-            disabled=["Date", "Chain", "Tx_Hash", "Account", "Asset", "Amount", "Source_Way"],
+            disabled=[
+                "Date", "Chain", "Tx_Hash", "Account", "Asset", "Amount", "Source_Way",
+                "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset",
+                "Fee_Asset", "Fee_Amount"
+            ],
             num_rows="fixed",
             width='stretch',
             key="qualif_editor"

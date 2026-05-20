@@ -305,6 +305,13 @@ with st.sidebar:
             st.success(f"Compte '{new_acc}' ajouté au registre.")
             st.rerun()
 
+    st.divider()
+    st.subheader("🧹 Maintenance")
+    if st.button("Nettoyer fichiers de travail"):
+        year = st.session_state.get("_hub_target_year") or datetime.now().year
+        count = sl.cleanup_working_files(year)
+        st.success(f"Nettoyage terminé : {count} fichiers supprimés. (2 dates conservées)")
+
 # --- Routing Logic ---
 if menu == "home":
     st.header("Bienvenue dans votre Hub Crypto Jules")
