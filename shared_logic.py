@@ -183,7 +183,11 @@ def load_clean_history(year):
             df = pd_read_csv_safe(p)
             if not df.empty: all_dfs.append(df)
     if not all_dfs: return pd.DataFrame()
-    return pd.concat(all_dfs).reset_index(drop=True)
+
+    combined = pd.concat(all_dfs).reset_index(drop=True)
+    # Layer 2 defense: re-apply spam filter on load to catch spams added to blacklist
+    # after the CLEAN journal was generated.
+    return apply_spam_filter(combined, drop=True)
 
 # --- Registry Management ---
 

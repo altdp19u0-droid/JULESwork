@@ -19,15 +19,19 @@ with st.sidebar:
     # Load Unified Processing Year from config for persistence
     g_conf = sl.load_global_config()
     # Use a specific key for appPropri to avoid being overwritten by Step 1/Step 2 defaults if they differ
-    default_year = g_conf.get("appPropri_year") or g_conf.get("processing_year") or datetime.now().year
+    persisted_year = int(g_conf.get("appPropri_year") or g_conf.get("processing_year") or datetime.now().year)
 
-    # Use standardized hub key for persistence
-    target_year = st.number_input("Année de consultation", min_value=2015, max_value=2030, value=int(default_year), key="_hub_appPropri_year")
+    # Standardized hub key for persistence
+    # We must ensure state is initialized to avoid value/key collision
+    if "_hub_appPropri_year" not in st.session_state:
+        st.session_state["_hub_appPropri_year"] = persisted_year
 
-    # Persist change to global config immediately
+    target_year = st.number_input("Année de consultation", min_value=2015, max_value=2030, key="_hub_appPropri_year")
+
+    # Persist change to global config immediately when detected
     if target_year != g_conf.get("appPropri_year"):
         g_conf["appPropri_year"] = int(target_year)
-        # Also update the shared processing year for suite consistency if desired
+        # Also update the shared processing year for suite consistency
         g_conf["processing_year"] = int(target_year)
         sl.save_global_config(g_conf)
 

@@ -91,10 +91,10 @@ def scan_needed_prices(target_years, exclude_spams=True):
 
         # 2. Scan Manual Positions for Assets
         pos_path = sl.get_file_path(y_int, 'positions')
-        if os.path.exists(pos_path):
+        if pos_path and os.path.exists(pos_path):
             df_p = sl.pd_read_csv_safe(pos_path)
             if not df_p.empty:
-                # Manual positions don't usually have spam, but we check anyway if requested
+                # --- ZÉRO SPAM ---
                 if exclude_spams:
                     df_p = sl.apply_spam_filter(df_p, drop=True)
                 assets_in_year.update(df_p["Asset"].dropna().unique())

@@ -485,7 +485,8 @@ def main():
                 final_save.to_csv(j_full_path, index=False, encoding="utf-8-sig")
 
                 # 2. CLEAN (No Spams, strictly real positions)
-                clean_save = final_save[final_save["Audit_Status"] != "Spam"].copy()
+                # Double-tap spam filter to ensure consistency with global blacklist
+                clean_save = sl.apply_spam_filter(final_save, drop=True)
                 clean_save.to_csv(j_path, index=False, encoding="utf-8-sig")
 
                 st.session_state.has_unsaved_changes = False
