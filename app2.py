@@ -179,6 +179,16 @@ def merge_raw_data(year):
             })
 
     df = pd.DataFrame(rows)
+    if not df.empty:
+        # Dédoublonnage global des sources RAW pour éviter l'accumulation des récoltes successives
+        # On arrondit l'Amount pour éviter les micro-différences de flottants lors des imports
+        df["_amt_round"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0.0).round(8)
+        # Une transaction est identique si (Hash, Asset, Account, Amount, Date) concordent.
+        # Comme sl.get_all_raw_files renvoie les fichiers triés par nom descendant,
+        # keep="first" privilégie les fichiers avec les timestamps les plus récents.
+        df = df.drop_duplicates(subset=["Tx_Hash", "Asset", "Account", "_amt_round", "Date"], keep="first")
+        df = df.drop(columns=["_amt_round"])
+
     return ensure_columns(df)
 
 def run_fidelity_engine(raw_df, existing_df):

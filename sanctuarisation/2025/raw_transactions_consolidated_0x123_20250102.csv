@@ -1,0 +1,3 @@
+Date,Account,Asset,Amount,Tx_Hash,Chain
+2025-01-01,0x123,ETH,1.0,0xH1,ETH
+2025-01-02,0x123,USDC,100.0,0xH2,ETH
