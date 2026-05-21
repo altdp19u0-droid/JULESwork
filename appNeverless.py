@@ -297,22 +297,27 @@ if uploaded_file:
 
         st.divider()
         if st.button("💾 Sanctuariser (Enregistrer les Brutes)", width='stretch'):
-            # Chemin standard : sanctuarisation/{year}/sanctuary/
-            year_dir = os.path.join(EXPORT_BASE_DIR, str(target_year), "sanctuary")
-            os.makedirs(year_dir, exist_ok=True)
+            # Chemins : Racine pour travail immédiat ET Sanctuary pour archive
+            y_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
+            s_dir = os.path.join(y_dir, "sanctuary")
+            os.makedirs(s_dir, exist_ok=True)
 
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"raw_transactions_consolidated_neverless_app_{ts}.csv"
-            save_path = os.path.join(year_dir, filename)
 
-            # On enregistre la version éditée
+            # 1. Copie Racine (Visible pour l'utilisateur et nettoyable)
+            root_path = os.path.join(y_dir, filename)
+            edited_df.to_csv(root_path, index=False, encoding="utf-8-sig")
+
+            # 2. Copie Sanctuary (Archive permanente)
+            save_path = os.path.join(s_dir, filename)
             edited_df.to_csv(save_path, index=False, encoding="utf-8-sig")
 
             # Mise à jour de la session pour refléter les changements
             st.session_state.nvl_final = edited_df
 
             st.balloons()
-            st.success(f"Fichier enregistré avec succès dans : `{save_path}`")
+            st.success(f"Fichier sanctuarisé avec succès (Racine et Archive) : `{filename}`")
 
 st.sidebar.divider()
 st.sidebar.caption("Import Neverless v1.1 - appNeverless")
