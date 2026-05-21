@@ -258,11 +258,11 @@ def valuate_dataframe(df, cache):
 
 # --- Protocol Table Logic ---
 def get_protocol_summary(year):
-    """Calculates summary for protocol positions: In, Out, Balance, Price USD, Value USD, Value EUR."""
+    """Calculates summary for protocol positions: In, Out, Balance, Value EUR."""
     pos_map = sl.load_position_labels()
     pos_addrs = set(pos_map.keys())
 
-    # Use CLEAN history
+    # Use CLEAN history (up to consulting year)
     df_h = sl.load_clean_history(year)
     if df_h.empty: return pd.DataFrame()
 
@@ -280,32 +280,28 @@ def get_protocol_summary(year):
     df_proto["Out"] = df_proto["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
 
     # We group by the Display Name for the protocol
-    df_proto["Protocol"] = df_proto["Account"].apply(sl.resolve_owner_display)
+    df_proto["Compte (Protocol)"] = df_proto["Account"].apply(sl.resolve_owner_display)
 
-    summary = df_proto.groupby(["Protocol", "Asset"]).agg({
+    summary = df_proto.groupby(["Compte (Protocol)", "Asset"]).agg({
         "In": "sum",
         "Out": "sum",
         "Amount": "sum" # Balance
     }).reset_index()
 
-    summary = summary.rename(columns={"In": "Total Entrées", "Out": "Total Sorties", "Amount": "Solde (Qté)"})
+    summary = summary.rename(columns={
+        "In": "Quantité Entrée",
+        "Out": "Quantité Sortie",
+        "Amount": "Solde (Qté)"
+    })
 
-    # Pricing
+    # Pricing at EOY
     cache = sl.load_price_cache()
     eoy_date = datetime(year, 12, 31)
 
-    def get_valuations(row):
-        p_eur = sl.get_price_eur(row["Asset"], eoy_date, cache=cache)
-        # We need USD price too. Simple proxy: P_EUR / Rate_USD_to_EUR
-        rate_usd_eur = sl.get_fiat_rate("USD", eoy_date) or 1.0 # 1 USD = X EUR
-        p_usd = p_eur / rate_usd_eur if rate_usd_eur > 0 else 0.0
-
-        val_eur = row["Solde (Qté)"] * p_eur
-        val_usd = row["Solde (Qté)"] * p_usd
-
-        return pd.Series([p_usd, val_usd, val_eur])
-
-    summary[["Prix USD", "Valeur USD", "Valeur EUR"]] = summary.apply(get_valuations, axis=1)
+    summary["Valeur EUR"] = summary.apply(
+        lambda row: row["Solde (Qté)"] * sl.get_price_eur(row["Asset"], eoy_date, cache=cache),
+        axis=1
+    )
 
     return summary[summary["Solde (Qté)"].abs() > 1e-8]
 
@@ -495,25 +491,49 @@ else:
     st.subheader("📊 Indicateurs Patrimoniaux")
 
     # --- NEW: PROTOCOL POSITIONS TABLE ---
-    with st.expander("🏦 Synthèse des Positions Protocoles (Positions Qualifiées)", expanded=True):
-        df_proto_sum = get_protocol_summary(target_year)
-        if df_proto_sum.empty:
-            st.info("Aucune position protocole qualifiée détectée.")
-        else:
-            st.dataframe(
-                df_proto_sum,
-                column_config={
-                    "Total Entrées": st.column_config.NumberColumn(format="%.6f"),
-                    "Total Sorties": st.column_config.NumberColumn(format="%.6f"),
-                    "Solde (Qté)": st.column_config.NumberColumn(format="%.6f"),
-                    "Prix USD": st.column_config.NumberColumn(format="$ %.4f"),
-                    "Valeur USD": st.column_config.NumberColumn(format="$ %.2f"),
-                    "Valeur EUR": st.column_config.NumberColumn(format="%.2f €"),
-                },
-                width='stretch',
-                hide_index=True
-            )
-            st.caption("Note: Les prix et valeurs sont basés sur les cours au 31/12 de l'année de consultation.")
+    st.subheader(f"🏦 État des Lieux par Position Protocole (au 31/12/{target_year})")
+    df_proto_sum = get_protocol_summary(target_year)
+    if df_proto_sum.empty:
+        st.info("Aucune position protocole qualifiée détectée.")
+    else:
+        # Applying notes to protocol summary for consistency
+        df_proto_sum = apply_notes(df_proto_sum.rename(columns={"Compte (Protocol)": "Compte"}))
+
+        # Adding dummy tech columns for key generator in apply_notes
+        df_proto_sum["Tx Hash"] = "SNAPSHOT_PROTO"
+        if "Amount" not in df_proto_sum.columns:
+            df_proto_sum["Amount"] = df_proto_sum["Solde (Qté)"]
+
+        ed_proto = st.data_editor(
+            df_proto_sum,
+            column_config={
+                "Compte": "Protocole",
+                "Quantité Entrée": st.column_config.NumberColumn(format="%.6f"),
+                "Quantité Sortie": st.column_config.NumberColumn(format="%.6f"),
+                "Solde (Qté)": st.column_config.NumberColumn(format="%.6f"),
+                "Valeur EUR": st.column_config.NumberColumn(format="%.2f €"),
+                "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
+                "Tx Hash": None, "Amount": None # Hide dummy cols
+            },
+            width='stretch',
+            hide_index=True,
+            key="proto_bal_editor"
+        )
+
+        if st.button("💾 Enregistrer les Notes (Balances Protocoles)", key="btn_save_notes_bal_proto"):
+            new_notes = notes_db.copy()
+            for _, r in ed_proto.iterrows():
+                r_proxy = r.to_dict()
+                r_proxy["Date"] = datetime(target_year, 12, 31)
+                r_proxy["Account"] = r["Compte"]
+                key = sl.get_note_key(r_proxy)
+                if r["Notes"]: new_notes[key] = str(r["Notes"])
+                elif key in new_notes: del new_notes[key]
+            sl.save_manual_notes(new_notes)
+            st.success("Notes enregistrées.")
+            st.rerun()
+
+        st.caption("Note: Les prix et valeurs sont basés sur les cours au 31/12 de l'année de consultation.")
 
     st.divider()
 
@@ -639,14 +659,27 @@ else:
 
     # 3. TABLE 2: Balances par Compte
     st.divider()
+
+    owners_map = sl.load_owner_accounts()
+    owner_ids = set(owners_map.keys())
+    pos_map = sl.load_position_labels()
+    pos_ids = set(pos_map.keys())
+
+    # Separate Wallets and Protocols from snapshot
+    if not snapshot_df.empty:
+        snapshot_df["_raw_acc"] = snapshot_df["Location"].apply(sl.resolve_raw_addr)
+        df_wallets = snapshot_df[snapshot_df["_raw_acc"].isin(owner_ids)].copy()
+        df_protocols_snap = snapshot_df[snapshot_df["_raw_acc"].isin(pos_ids)].copy()
+    else:
+        df_wallets = pd.DataFrame()
+        df_protocols_snap = pd.DataFrame()
+
     st.subheader(f"🏦 État des Lieux par Compte Propriétaire (au 31/12/{target_year})")
 
-    if snapshot_df.empty:
-        st.info("Aucun solde à afficher.")
+    if df_wallets.empty:
+        st.info("Aucun solde portefeuille à afficher.")
     else:
-        # Filter for Owners (Location resolution might vary, usually standardized address)
-        # Assuming get_portfolio_snapshot returns standard display strings in 'Location'
-        df_balances = snapshot_df.copy()
+        df_balances = df_wallets.copy()
         df_balances["Compte"] = df_balances["Location"]
 
         display_bal_cols = ["Compte", "Asset", "Solde", "Prix (EUR)", "Valeur (EUR)", "Notes"]
