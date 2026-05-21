@@ -139,7 +139,8 @@ else:
             journal[col] = 0.0
 
     # Construction du masque de détection (Exclude manual duplicates and Spam)
-    mask_valid = (journal["Status"] != "Spam") & (journal.get("Category", "") != "Doublon à ignorer")
+    status_col = "Audit_Status" if "Audit_Status" in journal.columns else "Status"
+    mask_valid = (journal[status_col] != "Spam") & (journal.get("Category", "") != "Doublon à ignorer")
     mask_imposable = (journal["Imposable"].apply(is_imposable_robust)) & mask_valid if use_imposable_col else pd.Series(False, index=journal.index)
     mask_category = (journal["Category"].fillna("").str.contains("Vente", case=False)) & mask_valid if use_category_vente else pd.Series(False, index=journal.index)
 
@@ -198,7 +199,8 @@ else:
                 to_calc = to_calc.sort_values("Date", ascending=True)
 
                 for idx, (i, row) in enumerate(to_calc.iterrows()):
-                    _, vgp_val = get_portfolio_snapshot(journal, row["Date"], force_full_history=force_full, start_recalc_year=start_year)
+                    # Use shared logic with current unsaved journal override
+                    _, vgp_val = get_portfolio_snapshot(target_year, row["Date"], df_override=journal)
                     journal.at[i, "VGP (EUR)"] = vgp_val
                     pbar.progress((idx + 1) / len(to_calc))
 
@@ -254,7 +256,8 @@ else:
         selected_date = st.selectbox("Choisir une date pour voir le détail", options=audit_options, format_func=lambda x: f"{x.strftime('%d/%m/%Y')} {'(🏁 Fin d’année)' if x == eoy_date else '(📈 Cession)'}")
 
         if selected_date:
-            snapshot_df, total_val = get_portfolio_snapshot(journal, selected_date, force_full_history=force_full, start_recalc_year=start_year)
+            # Use shared logic with current unsaved journal override
+            snapshot_df, total_val = get_portfolio_snapshot(target_year, selected_date, df_override=journal)
             if not snapshot_df.empty:
                 st.write(f"Composition du portefeuille au **{selected_date}** :")
 

@@ -267,60 +267,50 @@ def get_protocol_summary(year):
     if df_h.empty: return pd.DataFrame()
 
     # --- PROTOCOL DETECTION LOGIC ---
-    # Protocol balances can be direct (Account = Protocol)
-    # OR mirrors (Counterparty = Protocol AND Category = Internal Transfer)
+    # We leverage the centralized portfolio snapshot to ensure consistency
+    snapshot, _ = sl.get_portfolio_snapshot(year, datetime(year, 12, 31))
 
-    # 1. Direct Legs
-    df_h["acc_raw"] = df_h["Account"].apply(sl.resolve_raw_addr)
-    df_direct = df_h[df_h["acc_raw"].isin(pos_addrs) | df_h["Account"].isin(pos_map.values())].copy()
+    if snapshot.empty: return pd.DataFrame()
 
-    # 2. Mirror Legs
-    df_h["cp_raw"] = df_h["Counterparty"].apply(sl.resolve_raw_addr)
+    # Filter for Protocols (using raw address and label name matching)
+    pos_ids = {str(k).lower().strip() for k in pos_map.keys()}
+    pos_names = {str(v).lower().strip() for v in pos_map.values()}
+
+    snapshot["_raw_loc"] = snapshot["Location"].apply(sl.resolve_raw_addr).str.lower().str.strip()
+    df_proto_snap = snapshot[snapshot["_raw_loc"].isin(pos_ids) | snapshot["_raw_loc"].isin(pos_names)].copy()
+
+    if df_proto_snap.empty: return pd.DataFrame()
+
+    # Now we need In/Out cumulative details. We extract them from the CLEAN history.
+    df_h["acc_raw"] = df_h["Account"].apply(sl.resolve_raw_addr).str.lower().str.strip()
+    df_direct = df_h[df_h["acc_raw"].isin(pos_ids) | df_h["acc_raw"].isin(pos_names)].copy()
+
+    df_h["cp_raw"] = df_h["Counterparty"].apply(sl.resolve_raw_addr).str.lower().str.strip()
     df_mirror = df_h[(df_h["Category"] == "Transfert Interne") &
-                     (df_h["cp_raw"].isin(pos_addrs) | df_h["Counterparty"].isin(pos_map.values()))].copy()
+                     (df_h["cp_raw"].isin(pos_ids) | df_h["cp_raw"].isin(pos_names))].copy()
 
     if not df_mirror.empty:
-        # Mirror: Protocol becomes the account, amount is negated (In becomes Out and vice versa)
         df_mirror["Account"] = df_mirror["Counterparty"]
         df_mirror["Amount"] = -pd.to_numeric(df_mirror["Amount"], errors="coerce").fillna(0.0)
-        df_proto = pd.concat([df_direct, df_mirror])
+        df_full_proto = pd.concat([df_direct, df_mirror])
     else:
-        df_proto = df_direct
+        df_full_proto = df_direct
 
-    if df_proto.empty: return pd.DataFrame()
+    # Calculate cumulatives
+    df_full_proto["In"] = df_full_proto["Amount"].apply(lambda x: x if x > 0 else 0.0)
+    df_full_proto["Out"] = df_full_proto["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+    df_full_proto["Compte"] = df_full_proto["Account"].apply(sl.resolve_owner_display)
 
-    # Ensure amount is numeric
-    df_proto["Amount"] = pd.to_numeric(df_proto["Amount"], errors="coerce").fillna(0.0)
+    cumul = df_full_proto.groupby(["Compte", "Asset"]).agg({"In": "sum", "Out": "sum"}).reset_index()
+    cumul = cumul.rename(columns={"In": "Quantité Entrée", "Out": "Quantité Sortie"})
 
-    # Aggregate In/Out
-    df_proto["In"] = df_proto["Amount"].apply(lambda x: x if x > 0 else 0.0)
-    df_proto["Out"] = df_proto["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+    # Final Merge with Snapshot (which has the correct final balance and EUR value)
+    df_proto_snap["Compte"] = df_proto_snap["Location"]
+    res = pd.merge(df_proto_snap[["Compte", "Asset", "Amount", "Valeur (EUR)"]], cumul, on=["Compte", "Asset"], how="left")
 
-    # We group by the Display Name for the protocol
-    df_proto["Compte (Protocol)"] = df_proto["Account"].apply(sl.resolve_owner_display)
+    res = res.rename(columns={"Amount": "Solde (Qté)", "Valeur (EUR)": "Valeur EUR", "Compte": "Compte (Protocol)"})
 
-    summary = df_proto.groupby(["Compte (Protocol)", "Asset"]).agg({
-        "In": "sum",
-        "Out": "sum",
-        "Amount": "sum" # Balance
-    }).reset_index()
-
-    summary = summary.rename(columns={
-        "In": "Quantité Entrée",
-        "Out": "Quantité Sortie",
-        "Amount": "Solde (Qté)"
-    })
-
-    # Pricing at EOY
-    cache = sl.load_price_cache()
-    eoy_date = datetime(year, 12, 31)
-
-    summary["Valeur EUR"] = summary.apply(
-        lambda row: row["Solde (Qté)"] * sl.get_price_eur(row["Asset"], eoy_date, cache=cache),
-        axis=1
-    )
-
-    return summary[summary["Solde (Qté)"].abs() > 1e-8]
+    return res[res["Solde (Qté)"].abs() > 1e-8]
 
 # --- Shared Constants ---
 DISPLAY_COLS = ["Date", "Account", "Asset", "Quantité Entrée", "Quantité Sortie", "Valeur EUR (Date)", "Category", "Counterparty", "Notes"]

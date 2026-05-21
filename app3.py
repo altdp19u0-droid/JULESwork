@@ -350,7 +350,8 @@ with tab_accounts:
         st.warning("Veuillez soit générer l'inventaire N-1 dans l'app2VGP, soit cocher 'Recalculer tout l'historique'.")
 
     eoy_date = datetime(target_year, 12, 31)
-    full_snapshot, _ = sl.get_portfolio_snapshot(target_year, eoy_date, force_full_history=force_full, start_recalc_year=start_year)
+    # The Gateway loader handles history automatically, we just need the target year and date
+    full_snapshot, _ = sl.get_portfolio_snapshot(target_year, eoy_date)
 
     df_manual_snap = pd.DataFrame()
     if full_snapshot.empty:
@@ -765,10 +766,7 @@ with tab_bilan:
                 with st.spinner("Calcul en cours..."):
                     # Use the shared logic to get a factual snapshot
                     eoy_date = datetime(target_year, 12, 31)
-                    # Use the settings from tab_accounts if available or defaults
-                    ff = st.session_state.get("force_full_app3", False)
-                    sy = st.session_state.get("start_year_app3", 2020)
-                    _, vgp_val = sl.get_portfolio_snapshot(target_year, eoy_date, force_full_history=ff, start_recalc_year=sy)
+                    _, vgp_val = sl.get_portfolio_snapshot(target_year, eoy_date)
                     st.session_state[f"vgp_eoy_{target_year}"] = vgp_val
                     st.success(f"VGP calculée : {vgp_val:,.2f} €")
                     st.rerun()

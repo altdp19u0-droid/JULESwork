@@ -455,7 +455,7 @@ def main():
             view_df,
             column_config={
                 "Audit_Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam", "Ignoré"]),
-                "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Revenu", "Dépense", "Transfert", "Swap", "Achat", "Vente"]),
+                "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Revenu", "Dépense", "Transfert", "Transfert Interne", "Swap", "Achat", "Vente"]),
                 "Imposable": st.column_config.CheckboxColumn("Imposable"),
                 "Valeur $": st.column_config.NumberColumn(format="$ %.2f"),
                 "USD prix asset reçu": st.column_config.NumberColumn(format="$ %.4f"),

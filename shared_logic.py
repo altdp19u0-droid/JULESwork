@@ -506,10 +506,15 @@ def calculate_fiscal_gains(cessions_df, total_acq_price):
 
     return df, current_acq_base
 
-def get_portfolio_snapshot(year, target_date):
+def get_portfolio_snapshot(year, target_date, df_override=None):
     """Calculates balances and total VGP, including mirror legs for protocol positions."""
     target_date = pd.to_datetime(target_date, utc=True)
-    df_j = load_clean_history(year)
+
+    if df_override is not None:
+        df_j = df_override.copy()
+    else:
+        df_j = load_clean_history(year)
+
     if df_j.empty: return pd.DataFrame(), 0.0
 
     df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True)
@@ -521,11 +526,15 @@ def get_portfolio_snapshot(year, target_date):
 
     # 2. Mirror Legs (Internal Transfers to Protocols)
     # If an owner sends to a protocol, the protocol "receives" the amount.
-    pos_addrs = set(load_position_labels().keys())
-    df_j["cp_raw"] = df_j["Counterparty"].apply(resolve_raw_addr)
+    pos_labels = load_position_labels()
+    pos_addrs = {str(k).lower().strip() for k in pos_labels.keys()}
+    pos_names = {str(v).lower().strip() for v in pos_labels.values()}
+
+    df_j["cp_raw"] = df_j["Counterparty"].apply(resolve_raw_addr).str.lower().str.strip()
+    df_j["cp_name"] = df_j["Counterparty"].astype(str).str.lower().str.strip()
 
     df_mirror = df_j[(df_j["Category"] == "Transfert Interne") &
-                     (df_j["cp_raw"].isin(pos_addrs))].copy()
+                     (df_j["cp_raw"].isin(pos_addrs) | df_j["cp_name"].isin(pos_names))].copy()
 
     if not df_mirror.empty:
         # Mirror: Protocol becomes the account, amount is negated
@@ -543,7 +552,18 @@ def get_portfolio_snapshot(year, target_date):
     res["Prix (EUR)"] = res["Asset"].apply(lambda a: get_price_eur(a, target_date, cache))
     res["Valeur (EUR)"] = res["Amount"] * res["Prix (EUR)"]
 
-    return res, res["Valeur (EUR)"].sum()
+    # Global VGP Calculation:
+    # We must EXCLUDE personal wallets and only sum values in credits (Receivables / Protocols)
+    # Actually, VGP formula from Art 150 VH bis is the sum of values of ALL assets in the portfolio.
+    # In our model, a transfer to a protocol creates a credit (+) and a wallet debit (-).
+    # The sum of (Wallet + Protocol) would be zero if we don't handle it correctly.
+    # RULE: Total VGP = Sum of all POSITIVE values (credits) across all accounts (Wallets & Protocols).
+    # But wait, personal wallets should not be negative anyway if harvests are complete.
+    # Let's keep it simple and robust: Total VGP = Sum(Values) where Value > 0.
+
+    total_vgp = res[res["Valeur (EUR)"] > 0]["Valeur (EUR)"].sum()
+
+    return res, total_vgp
 
 # --- Hub Integration ---
 
