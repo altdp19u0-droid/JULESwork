@@ -418,9 +418,15 @@ def main():
             f_cp = f_cols2[0].multiselect("Contrepartie", sorted(list(df["Counterparty"].dropna().unique())))
             f_imp = f_cols2[1].selectbox("Imposable", ["Tous", "Oui", "Non"])
 
-        view_df = df.copy()
+        # DATA VIEW GENERATION
+        # We start from the full state to ensure index consistency
+        full_df = st.session_state.df_qualif
+
+        # APPLY SPAM VISIBILITY (Uses hardened sl.apply_spam_filter with reset_idx=False)
         if not show_spams:
-            view_df = view_df[view_df["Audit_Status"] != "Spam"]
+            view_df = sl.apply_spam_filter(full_df, drop=True, reset_idx=False)
+        else:
+            view_df = full_df.copy()
 
         if f_status: view_df = view_df[view_df["Audit_Status"].isin(f_status)]
         if f_acc:
@@ -456,8 +462,11 @@ def main():
             key="qualif_editor"
         )
 
-        # Détection de modifications
+        # DETECTION AND INSTANT SYNC
+        # If the user edited something, we update the global session state immediately
+        # This ensures that actions like toggling spams or adding to blacklist don't revert edits.
         if not edited_df.equals(view_df):
+            st.session_state.df_qualif.update(edited_df)
             st.session_state.has_unsaved_changes = True
 
         save_label = "🚨 Sauvegarder Journal (Modifications en cours)" if st.session_state.has_unsaved_changes else "🐾 Sauvegarder Journal"

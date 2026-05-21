@@ -310,7 +310,7 @@ def get_owner_display_list(df=None):
 
 # --- Spam & Transfers ---
 
-def apply_spam_filter(df, drop=True):
+def apply_spam_filter(df, drop=True, reset_idx=True):
     """Strictly identifies and optionally removes spams based on Audit_Status and Blacklist."""
     if df is None or df.empty: return df
     spams = load_spam_list(); valides = load_valid_assets(); df = df.copy()
@@ -323,6 +323,7 @@ def apply_spam_filter(df, drop=True):
         if status_col:
             st_val = str(r.get(status_col, "")).strip().lower()
             if st_val == "spam": return True
+            if st_val == "valide": return False # Manual validation overrides blacklist
 
         # 2. Check Blacklist (Asset or Counterparty) - High Priority
         asset = str(r.get("Asset", "")).upper().strip()
@@ -348,7 +349,8 @@ def apply_spam_filter(df, drop=True):
     mask = df.apply(is_row_spam, axis=1)
 
     if drop:
-        return df[~mask].reset_index(drop=True)
+        res = df[~mask]
+        return res.reset_index(drop=True) if reset_idx else res
 
     if status_col:
         df.loc[mask, status_col] = "Spam"
