@@ -214,26 +214,35 @@ else:
         st.info("Vous pouvez modifier directement les valeurs VGP dans le tableau ci-dessous.")
 
         # On affiche uniquement les cessions pour édition
-        # Type safety pour editor
-        display_cols = ["Date", "Account", "Asset", "Amount", "Value ($)", "VGP (EUR)", "Tx Hash"]
+        # Type safety pour editor - Standard V4 uses 'Tx_Hash' with underscore
+        tx_col = "Tx_Hash" if "Tx_Hash" in journal.columns else ("Tx Hash" if "Tx Hash" in journal.columns else "Tx_Hash")
+        display_cols = ["Date", "Account", "Asset", "Amount", "VGP (EUR)", tx_col]
+
+        # 'Value ($)' fallback if missing
+        v_usd_col = "Valeur $" if "Valeur $" in journal.columns else ("Value ($)" if "Value ($)" in journal.columns else None)
+        if v_usd_col: display_cols.insert(4, v_usd_col)
+
         edit_df = journal[mask_cessions][display_cols].copy()
-        for c in ["Account", "Asset", "Tx Hash"]:
-            edit_df[c] = edit_df[c].fillna("").astype(str)
+        for c in ["Account", "Asset", tx_col]:
+            if c in edit_df.columns:
+                edit_df[c] = edit_df[c].fillna("").astype(str)
 
         # Display standardized account names
         edit_df["Account"] = edit_df["Account"].apply(sl.resolve_owner_display)
 
+        col_config_vgp = {
+            "VGP (EUR)": st.column_config.NumberColumn("VGP (EUR)", format="%.2f", help="Valeur totale du portefeuille à cette date"),
+            "Date": st.column_config.DatetimeColumn(disabled=True),
+            "Account": st.column_config.TextColumn("Compte", disabled=True),
+            "Amount": st.column_config.NumberColumn(disabled=True),
+            "Asset": st.column_config.TextColumn(disabled=True),
+        }
+        if v_usd_col: col_config_vgp[v_usd_col] = st.column_config.NumberColumn(disabled=True)
+        col_config_vgp[tx_col] = st.column_config.TextColumn(disabled=True)
+
         edited_cessions = st.data_editor(
             edit_df,
-            column_config={
-                "VGP (EUR)": st.column_config.NumberColumn("VGP (EUR)", format="%.2f", help="Valeur totale du portefeuille à cette date"),
-                "Date": st.column_config.DatetimeColumn(disabled=True),
-                "Account": st.column_config.TextColumn("Compte", disabled=True),
-                "Amount": st.column_config.NumberColumn(disabled=True),
-                "Asset": st.column_config.TextColumn(disabled=True),
-                "Value ($)": st.column_config.NumberColumn(disabled=True),
-                "Tx Hash": st.column_config.TextColumn(disabled=True),
-            },
+            column_config=col_config_vgp,
             width='stretch',
             key="vgp_editor_v4"
         )
