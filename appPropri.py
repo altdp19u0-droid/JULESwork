@@ -283,16 +283,21 @@ def get_protocol_summary(year):
 
     # --- ASSET FILTERING (REGISTRY MATCH) ---
     def filter_assets(row):
-        loc_str = str(row["Location"]).lower()
+        loc_str = str(row["Location"]).lower().strip()
         loc_raw = sl.resolve_raw_addr(loc_str).lower()
+
+        # Extract label from "0x... (Label)"
+        loc_label_extracted = ""
+        if "(" in loc_str and ")" in loc_str:
+            loc_label_extracted = loc_str.split("(")[1].replace(")", "").strip().lower()
 
         # Find entry in registry either by address or by label name
         entry = pos_reg.get(loc_raw)
         if not entry:
-            # Fallback: check if the location string matches the label EXACTLY or if it contains label in brackets
+            # Fallback: check matching labels
             for k, v in pos_reg.items():
-                lbl = str(v.get("label", "")).lower().strip()
-                if lbl and (lbl == loc_str or f"({lbl})" in loc_str):
+                lbl_reg = str(v.get("label", "")).lower().strip()
+                if lbl_reg and (lbl_reg == loc_str or lbl_reg == loc_label_extracted):
                     entry = v
                     break
 

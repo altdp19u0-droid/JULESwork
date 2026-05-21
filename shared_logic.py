@@ -484,31 +484,20 @@ def get_price_eur(asset, date_obj, cache=None):
 
 def get_total_acquisition_value(year):
     """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from CLEAN history up to year."""
-    # EXCLUSIVITY: All modules must use this exact same function for consistency.
+    # EXCLUSIVITY: Summing only EUR assets with 'Achat' category to match manual fiat input (app0).
     df_h = load_clean_history(year)
     if df_h.empty: return 0.0
 
-    # Recognition logic aligned with Fiscal Tab: 'Achat' category
-    mask = df_h['Category'].fillna("").str.contains("Achat", case=False, na=False)
-    df_acq = df_h[mask]
+    # Filter for 'Achat' categories
+    mask_cat = df_h['Category'].fillna("").str.contains("Achat", case=False, na=False)
+    # Filter strictly for EUR asset (Fiat mobilization)
+    # This prevents double counting crypto purchase costs if they are also marked 'Achat'
+    mask_eur = df_h['Asset'].astype(str).str.upper().str.strip() == "EUR"
 
+    df_acq = df_h[mask_cat & mask_eur]
     if df_acq.empty: return 0.0
 
-    # Summing either 'Amount' (if asset is EUR) or 'VGP (EUR)'
-    def get_row_acq_val(r):
-        ast = str(r.get("Asset", "")).upper().strip()
-        amt = float(r.get("Amount", 0))
-        # If it's pure fiat EUR, Amount is the value
-        if ast == "EUR": return abs(amt)
-        # If it's a crypto purchase, VGP (EUR) represents the acquisition cost
-        vgp = float(r.get("VGP (EUR)", 0))
-        if vgp > 0: return vgp
-        # Fallback to USD value if available
-        v_usd = float(r.get("Valeur $", 0))
-        if v_usd > 0: return v_usd * 0.92 # Default rate
-        return 0.0
-
-    return df_acq.apply(get_row_acq_val, axis=1).sum()
+    return pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0).apply(abs).sum()
 
 def calculate_fiscal_gains(cessions_df, total_acq_price):
     """Applies Art 150 VH bis gain formula: Gain = P_vente - (P_acq_total * (P_vente / VGP))."""
@@ -541,36 +530,47 @@ def calculate_fiscal_gains(cessions_df, total_acq_price):
 
     return df, current_acq_base
 
-def get_journal_prices(df_h):
-    """Extracts the most recent prices in EUR from the journal based on USD valuations, VGP and BCE rates."""
+def get_journal_prices(df_h, target_date=None):
+    """Extracts the most recent prices in EUR from the journal, prioritizing Position rows at target_date."""
     if df_h.empty: return {}
 
     # We sort by date descending to get the latest known price
     df = df_h.sort_values("Date", ascending=False)
-    prices = {}
 
-    # BCE rate for conversion
+    if target_date:
+        target_date = pd.to_datetime(target_date, utc=True)
+        # We prioritize 'Position' rows that are EXACTLY at the target date (EOY snapshots)
+        mask_target = (df["Date"].dt.date == target_date.date()) & (df["Type"].fillna("").str.contains("Position", case=False))
+        df_priority = df[mask_target]
+        # Rest of the journal for fallbacks
+        df_others = df[~mask_target]
+        df_scan = pd.concat([df_priority, df_others])
+    else:
+        df_scan = df
+
+    prices = {}
     last_dt = df["Date"].max()
     eur_usd = get_fiat_rate("USD", last_dt) or 0.92
 
-    for _, r in df.iterrows():
+    for _, r in df_scan.iterrows():
         ast = str(r["Asset"]).upper().strip()
         if ast in prices or ast == "EUR": continue
 
-        # 1. Try dedicated USD price columns
+        # Priority 1: dedicated USD price columns (explicitly harvested or imported)
         p_usd = float(r.get("USD prix asset reçu", 0))
         if p_usd == 0: p_usd = float(r.get("USD prix asset envoyé", 0))
 
-        # 2. Try Valeur $ / Amount
-        if p_usd == 0 and float(r.get("Amount", 0)) != 0:
+        # Priority 2: VGP (EUR) / Amount (Already in EUR, highly certified if from app2VGP)
+        p_eur = 0.0
+        if float(r.get("VGP (EUR)", 0)) > 0 and abs(float(r.get("Amount", 0))) > 1e-12:
+            p_eur = abs(float(r.get("VGP (EUR)")) / float(r.get("Amount")))
+
+        # Priority 3: Valeur $ / Amount
+        if p_eur == 0 and p_usd == 0 and abs(float(r.get("Amount", 0))) > 1e-12:
             p_usd = abs(float(r.get("Valeur $", 0)) / float(r.get("Amount")))
 
-        # 3. Try VGP (EUR) / Amount (Already in EUR)
-        p_eur = 0.0
-        if p_usd > 0:
+        if p_eur == 0 and p_usd > 0:
             p_eur = p_usd * eur_usd
-        elif float(r.get("VGP (EUR)", 0)) > 0 and float(r.get("Amount", 0)) != 0:
-            p_eur = abs(float(r.get("VGP (EUR)")) / float(r.get("Amount")))
 
         if p_eur > 0:
             prices[ast] = p_eur
@@ -642,8 +642,9 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
     res["Prix (EUR)"] = res["Asset"].apply(get_smart_price)
     res["Valeur (EUR)"] = res["Amount"] * res["Prix (EUR)"]
 
-    # VGP Calculation: Sum of all POSITIVE values in the ecosystem (Wallets + Receivables)
-    total_vgp = res[res["Valeur (EUR)"] > 0]["Valeur (EUR)"].sum()
+    # VGP Calculation: Net sum of ALL values (Wallets + Receivables - Debts if any)
+    # Using only positive values might inflate the VGP if there are negative anomalies.
+    total_vgp = res["Valeur (EUR)"].sum()
 
     return res, total_vgp
 
