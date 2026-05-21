@@ -68,7 +68,9 @@ L'application `app2.py` applique automatiquement la catégorie "Transfert Intern
 2. **appPropri (Dashboard) :**
     - Affiche la synthèse des positions protocoles (selon `position_labels.json`).
     - **Filtrage Intelligent :** Pour chaque position protocole, seuls les assets explicitement définis dans le registre sont affichés. Si la liste est vide, tous les assets de la position sont affichés.
-    - **Unité de Calcul :** Le prix d'acquisition total (A) est calculé exclusivement à partir du journal CLEAN qualifié pour assurer une cohérence parfaite entre les vues.
+    - **Intégrité des Prix :** Les valuations (EUR) utilisent prioritairement les prix USD récoltés dans le journal Step 2 (certifiés) avant de solliciter les APIs externes.
+    - **Anti-Inflation VGP :** Le mirroring des positions protocoles n'est appliqué que si la position n'est pas déjà présente comme compte actif dans l'historique, évitant les doubles comptages.
+    - **Unité de Calcul :** Le prix d'acquisition total (A) est calculé exclusivement à partir du journal CLEAN qualifié (Achat asset EUR) pour assurer une cohérence parfaite entre les vues.
     - Consomme exclusivement les données via `sl.load_clean_history` pour garantir un affichage sans spam.
 3. **app3 (Fiscalité) :**
     - Application stricte de l'Art. 150 VH bis.

@@ -289,15 +289,15 @@ def get_protocol_summary(year):
         # Find entry in registry either by address or by label name
         entry = pos_reg.get(loc_raw)
         if not entry:
-            # Fallback: check if the location string contains the label or vice versa
+            # Fallback: check if the location string matches the label EXACTLY or if it contains label in brackets
             for k, v in pos_reg.items():
                 lbl = str(v.get("label", "")).lower().strip()
-                if lbl and (lbl in loc_str or loc_str in lbl):
+                if lbl and (lbl == loc_str or f"({lbl})" in loc_str):
                     entry = v
                     break
 
         if entry:
-            allowed_assets = entry.get("assets", [])
+            allowed_assets = [str(a).upper().strip() for a in entry.get("assets", [])]
             # If no assets defined yet, we show all (fallback for newly added positions)
             if not allowed_assets: return True
             return str(row["Asset"]).upper().strip() in allowed_assets
@@ -334,9 +334,12 @@ def get_protocol_summary(year):
 
     # Final Merge with Snapshot (which has the correct final balance and EUR value)
     df_proto_snap["Compte"] = df_proto_snap["Location"]
-    res = pd.merge(df_proto_snap[["Compte", "Asset", "Amount", "Valeur (EUR)"]], cumul, on=["Compte", "Asset"], how="left")
+    # Outer join to ensure we see assets even if snapshot or cumul is missing one side
+    res = pd.merge(df_proto_snap[["Compte", "Asset", "Amount", "Valeur (EUR)"]], cumul, on=["Compte", "Asset"], how="outer")
 
     res = res.rename(columns={"Amount": "Solde (Qté)", "Valeur (EUR)": "Valeur EUR", "Compte": "Compte (Protocol)"})
+    res["Solde (Qté)"] = res["Solde (Qté)"].fillna(0.0)
+    res["Valeur EUR"] = res["Valeur EUR"].fillna(0.0)
 
     return res[res["Solde (Qté)"].abs() > 1e-8]
 

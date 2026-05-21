@@ -484,22 +484,31 @@ def get_price_eur(asset, date_obj, cache=None):
 
 def get_total_acquisition_value(year):
     """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from CLEAN history up to year."""
+    # EXCLUSIVITY: All modules must use this exact same function for consistency.
     df_h = load_clean_history(year)
     if df_h.empty: return 0.0
 
-    # Filter for 'Achat' categories in the journal (Standard for acquisition cost)
-    # We include EUR and common fiat/stable variations if they represent the entry cost
+    # Recognition logic aligned with Fiscal Tab: 'Achat' category
     mask = df_h['Category'].fillna("").str.contains("Achat", case=False, na=False)
     df_acq = df_h[mask]
 
     if df_acq.empty: return 0.0
 
-    # We only sum rows where the asset is EUR (fiat entry) to avoid summing crypto quantities
-    # but we are more flexible on the string match
-    is_fiat = df_acq['Asset'].astype(str).str.upper().str.strip().isin(['EUR', 'EUR ', ' EUR'])
-    df_fiat_only = df_acq[is_fiat]
+    # Summing either 'Amount' (if asset is EUR) or 'VGP (EUR)'
+    def get_row_acq_val(r):
+        ast = str(r.get("Asset", "")).upper().strip()
+        amt = float(r.get("Amount", 0))
+        # If it's pure fiat EUR, Amount is the value
+        if ast == "EUR": return abs(amt)
+        # If it's a crypto purchase, VGP (EUR) represents the acquisition cost
+        vgp = float(r.get("VGP (EUR)", 0))
+        if vgp > 0: return vgp
+        # Fallback to USD value if available
+        v_usd = float(r.get("Valeur $", 0))
+        if v_usd > 0: return v_usd * 0.92 # Default rate
+        return 0.0
 
-    return pd.to_numeric(df_fiat_only["Amount"], errors="coerce").fillna(0.0).sum()
+    return df_acq.apply(get_row_acq_val, axis=1).sum()
 
 def calculate_fiscal_gains(cessions_df, total_acq_price):
     """Applies Art 150 VH bis gain formula: Gain = P_vente - (P_acq_total * (P_vente / VGP))."""
@@ -532,8 +541,44 @@ def calculate_fiscal_gains(cessions_df, total_acq_price):
 
     return df, current_acq_base
 
+def get_journal_prices(df_h):
+    """Extracts the most recent prices in EUR from the journal based on USD valuations, VGP and BCE rates."""
+    if df_h.empty: return {}
+
+    # We sort by date descending to get the latest known price
+    df = df_h.sort_values("Date", ascending=False)
+    prices = {}
+
+    # BCE rate for conversion
+    last_dt = df["Date"].max()
+    eur_usd = get_fiat_rate("USD", last_dt) or 0.92
+
+    for _, r in df.iterrows():
+        ast = str(r["Asset"]).upper().strip()
+        if ast in prices or ast == "EUR": continue
+
+        # 1. Try dedicated USD price columns
+        p_usd = float(r.get("USD prix asset reçu", 0))
+        if p_usd == 0: p_usd = float(r.get("USD prix asset envoyé", 0))
+
+        # 2. Try Valeur $ / Amount
+        if p_usd == 0 and float(r.get("Amount", 0)) != 0:
+            p_usd = abs(float(r.get("Valeur $", 0)) / float(r.get("Amount")))
+
+        # 3. Try VGP (EUR) / Amount (Already in EUR)
+        p_eur = 0.0
+        if p_usd > 0:
+            p_eur = p_usd * eur_usd
+        elif float(r.get("VGP (EUR)", 0)) > 0 and float(r.get("Amount", 0)) != 0:
+            p_eur = abs(float(r.get("VGP (EUR)")) / float(r.get("Amount")))
+
+        if p_eur > 0:
+            prices[ast] = p_eur
+
+    return prices
+
 def get_portfolio_snapshot(year, target_date, df_override=None):
-    """Calculates balances and total VGP, including mirror legs for protocol positions."""
+    """Calculates balances and total VGP, ensuring consistency with Journal valuations."""
     target_date = pd.to_datetime(target_date, utc=True)
 
     if df_override is not None:
@@ -547,26 +592,37 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
     df_j = df_j[df_j["Date"] <= target_date]
     df_j = apply_spam_filter(df_j, drop=True)
 
-    # 1. Direct Legs (Account)
+    # 1. Base Legs (Account)
     df_direct = df_j.copy()
 
-    # 2. Mirror Legs (Internal Transfers to Protocols)
-    # If an owner sends to a protocol, the protocol "receives" the amount.
+    # 2. Protocol Mirroring (Receivables)
     pos_labels = load_position_labels()
-    pos_addrs = {str(k).lower().strip() for k in pos_labels.keys()}
+    pos_ids = {str(k).lower().strip() for k in pos_labels.keys()}
     pos_names = {str(v).lower().strip() for v in pos_labels.values()}
+    owner_accounts = set(load_owner_accounts().keys())
 
     df_j["cp_raw"] = df_j["Counterparty"].apply(resolve_raw_addr).str.lower().str.strip()
-    df_j["cp_name"] = df_j["Counterparty"].astype(str).str.lower().str.strip()
 
+    # We mirror Internal Transfers to Protocols that are NOT already in the 'Account' list
+    # to avoid double counting if the protocol is also harvested as an account.
     df_mirror = df_j[(df_j["Category"] == "Transfert Interne") &
-                     (df_j["cp_raw"].isin(pos_addrs) | df_j["cp_name"].isin(pos_names))].copy()
+                     (df_j["cp_raw"].isin(pos_ids) | df_j["Counterparty"].str.lower().isin(pos_names))].copy()
 
     if not df_mirror.empty:
-        # Mirror: Protocol becomes the account, amount is negated
-        df_mirror["Account"] = df_mirror["Counterparty"]
-        df_mirror["Amount"] = -df_mirror["Amount"]
-        df_final = pd.concat([df_direct, df_mirror])
+        # Check which protocols are NOT already accounts in the history
+        active_accounts = set(df_j["Account"].apply(resolve_raw_addr).str.lower().unique())
+        df_mirror["cp_acc_raw"] = df_mirror["cp_raw"]
+
+        # Mirror only if the target is NOT an owner account and NOT already harvested as an account
+        mask_mirror = (~df_mirror["cp_acc_raw"].isin(owner_accounts)) & (~df_mirror["cp_acc_raw"].isin(active_accounts))
+        df_to_mirror = df_mirror[mask_mirror].copy()
+
+        if not df_to_mirror.empty:
+            df_to_mirror["Account"] = df_to_mirror["Counterparty"]
+            df_to_mirror["Amount"] = -df_to_mirror["Amount"]
+            df_final = pd.concat([df_direct, df_to_mirror])
+        else:
+            df_final = df_direct
     else:
         df_final = df_direct
 
@@ -574,19 +630,19 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
     res = df_final.groupby(["Location", "Asset"])["Amount"].sum().reset_index()
     res = res[res["Amount"].abs() > 1e-8]
 
+    # Valuations: Journal Prices First, then Fallback
+    journal_prices = get_journal_prices(df_j)
     cache = load_price_cache()
-    res["Prix (EUR)"] = res["Asset"].apply(lambda a: get_price_eur(a, target_date, cache))
+
+    def get_smart_price(asset):
+        ast = str(asset).upper().strip()
+        if ast in journal_prices: return journal_prices[ast]
+        return get_price_eur(ast, target_date, cache)
+
+    res["Prix (EUR)"] = res["Asset"].apply(get_smart_price)
     res["Valeur (EUR)"] = res["Amount"] * res["Prix (EUR)"]
 
-    # Global VGP Calculation:
-    # We must EXCLUDE personal wallets and only sum values in credits (Receivables / Protocols)
-    # Actually, VGP formula from Art 150 VH bis is the sum of values of ALL assets in the portfolio.
-    # In our model, a transfer to a protocol creates a credit (+) and a wallet debit (-).
-    # The sum of (Wallet + Protocol) would be zero if we don't handle it correctly.
-    # RULE: Total VGP = Sum of all POSITIVE values (credits) across all accounts (Wallets & Protocols).
-    # But wait, personal wallets should not be negative anyway if harvests are complete.
-    # Let's keep it simple and robust: Total VGP = Sum(Values) where Value > 0.
-
+    # VGP Calculation: Sum of all POSITIVE values in the ecosystem (Wallets + Receivables)
     total_vgp = res[res["Valeur (EUR)"] > 0]["Valeur (EUR)"].sum()
 
     return res, total_vgp
