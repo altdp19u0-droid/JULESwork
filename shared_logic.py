@@ -82,8 +82,8 @@ def standardize_address_string(addr_str):
 
 def resolve_owner_display(addr):
     raw = resolve_raw_addr(addr).lower()
-    owners = load_owner_accounts()
-    if raw in owners: return format_owner_display(raw, owners[raw])
+    mapping = get_all_labels()
+    if raw in mapping: return format_owner_display(raw, mapping[raw])
     return addr
 
 def standardize_df_addresses(df):
@@ -483,20 +483,23 @@ def get_price_eur(asset, date_obj, cache=None):
     return 0.0
 
 def get_total_acquisition_value(year):
-    """Calculates cumulative sum of all fiat acquisitions (Amount EUR) up to year."""
-    config = load_global_config()
-    start = config.get("start_year") or 2020
-    total = 0.0
-    for y in range(start, year + 1):
-        p = get_file_path(y, 'fiat')
-        if os.path.exists(p):
-            df = pd_read_csv_safe(p)
-            if not df.empty and "Type" in df.columns:
-                mask = df["Type"].str.contains("Achat", case=False, na=False)
-                amt_col = "Montant EUR" if "Montant EUR" in df.columns else "Amount"
-                if amt_col in df.columns:
-                    total += pd.to_numeric(df[mask][amt_col], errors="coerce").fillna(0.0).sum()
-    return total
+    """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from CLEAN history up to year."""
+    df_h = load_clean_history(year)
+    if df_h.empty: return 0.0
+
+    # Filter for 'Achat' categories in the journal (Standard for acquisition cost)
+    # We include EUR and common fiat/stable variations if they represent the entry cost
+    mask = df_h['Category'].fillna("").str.contains("Achat", case=False, na=False)
+    df_acq = df_h[mask]
+
+    if df_acq.empty: return 0.0
+
+    # We only sum rows where the asset is EUR (fiat entry) to avoid summing crypto quantities
+    # but we are more flexible on the string match
+    is_fiat = df_acq['Asset'].astype(str).str.upper().str.strip().isin(['EUR', 'EUR ', ' EUR'])
+    df_fiat_only = df_acq[is_fiat]
+
+    return pd.to_numeric(df_fiat_only["Amount"], errors="coerce").fillna(0.0).sum()
 
 def calculate_fiscal_gains(cessions_df, total_acq_price):
     """Applies Art 150 VH bis gain formula: Gain = P_vente - (P_acq_total * (P_vente / VGP))."""

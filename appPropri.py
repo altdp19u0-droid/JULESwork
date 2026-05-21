@@ -283,20 +283,26 @@ def get_protocol_summary(year):
 
     # --- ASSET FILTERING (REGISTRY MATCH) ---
     def filter_assets(row):
-        loc_raw = sl.resolve_raw_addr(row["Location"]).lower()
+        loc_str = str(row["Location"]).lower()
+        loc_raw = sl.resolve_raw_addr(loc_str).lower()
+
         # Find entry in registry either by address or by label name
         entry = pos_reg.get(loc_raw)
         if not entry:
-            # Fallback to label match
-            loc_label = str(row["Location"]).lower().strip()
+            # Fallback: check if the location string contains the label or vice versa
             for k, v in pos_reg.items():
-                if v.get("label", "").lower().strip() == loc_label:
+                lbl = str(v.get("label", "")).lower().strip()
+                if lbl and (lbl in loc_str or loc_str in lbl):
                     entry = v
                     break
 
         if entry:
             allowed_assets = entry.get("assets", [])
+            # If no assets defined yet, we show all (fallback for newly added positions)
+            if not allowed_assets: return True
             return str(row["Asset"]).upper().strip() in allowed_assets
+
+        # If not found in registry at all, we don't display it here (strict UI)
         return False
 
     df_proto_snap = df_proto_snap[df_proto_snap.apply(filter_assets, axis=1)].copy()
