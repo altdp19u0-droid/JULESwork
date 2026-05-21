@@ -266,9 +266,26 @@ def get_protocol_summary(year):
     df_h = sl.load_clean_history(year)
     if df_h.empty: return pd.DataFrame()
 
-    # Filter for protocol positions only
+    # --- PROTOCOL DETECTION LOGIC ---
+    # Protocol balances can be direct (Account = Protocol)
+    # OR mirrors (Counterparty = Protocol AND Category = Internal Transfer)
+
+    # 1. Direct Legs
     df_h["acc_raw"] = df_h["Account"].apply(sl.resolve_raw_addr)
-    df_proto = df_h[df_h["acc_raw"].isin(pos_addrs) | df_h["Account"].isin(pos_map.values())].copy()
+    df_direct = df_h[df_h["acc_raw"].isin(pos_addrs) | df_h["Account"].isin(pos_map.values())].copy()
+
+    # 2. Mirror Legs
+    df_h["cp_raw"] = df_h["Counterparty"].apply(sl.resolve_raw_addr)
+    df_mirror = df_h[(df_h["Category"] == "Transfert Interne") &
+                     (df_h["cp_raw"].isin(pos_addrs) | df_h["Counterparty"].isin(pos_map.values()))].copy()
+
+    if not df_mirror.empty:
+        # Mirror: Protocol becomes the account, amount is negated (In becomes Out and vice versa)
+        df_mirror["Account"] = df_mirror["Counterparty"]
+        df_mirror["Amount"] = -pd.to_numeric(df_mirror["Amount"], errors="coerce").fillna(0.0)
+        df_proto = pd.concat([df_direct, df_mirror])
+    else:
+        df_proto = df_direct
 
     if df_proto.empty: return pd.DataFrame()
 
@@ -668,8 +685,10 @@ else:
     # Separate Wallets and Protocols from snapshot
     if not snapshot_df.empty:
         snapshot_df["_raw_acc"] = snapshot_df["Location"].apply(sl.resolve_raw_addr)
-        df_wallets = snapshot_df[snapshot_df["_raw_acc"].isin(owner_ids)].copy()
-        df_protocols_snap = snapshot_df[snapshot_df["_raw_acc"].isin(pos_ids)].copy()
+        df_wallets = snapshot_df[snapshot_df["_raw_acc"].isin(owner_ids) |
+                                 snapshot_df["Location"].isin(owners_map.values())].copy()
+        df_protocols_snap = snapshot_df[snapshot_df["_raw_acc"].isin(pos_ids) |
+                                        snapshot_df["Location"].isin(pos_map.values())].copy()
     else:
         df_wallets = pd.DataFrame()
         df_protocols_snap = pd.DataFrame()

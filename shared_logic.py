@@ -507,7 +507,7 @@ def calculate_fiscal_gains(cessions_df, total_acq_price):
     return df, current_acq_base
 
 def get_portfolio_snapshot(year, target_date):
-    """Calculates balances and total VGP."""
+    """Calculates balances and total VGP, including mirror legs for protocol positions."""
     target_date = pd.to_datetime(target_date, utc=True)
     df_j = load_clean_history(year)
     if df_j.empty: return pd.DataFrame(), 0.0
@@ -516,8 +516,27 @@ def get_portfolio_snapshot(year, target_date):
     df_j = df_j[df_j["Date"] <= target_date]
     df_j = apply_spam_filter(df_j, drop=True)
 
-    df_j["Location"] = df_j["Account"].apply(standardize_address_string)
-    res = df_j.groupby(["Location", "Asset"])["Amount"].sum().reset_index()
+    # 1. Direct Legs (Account)
+    df_direct = df_j.copy()
+
+    # 2. Mirror Legs (Internal Transfers to Protocols)
+    # If an owner sends to a protocol, the protocol "receives" the amount.
+    pos_addrs = set(load_position_labels().keys())
+    df_j["cp_raw"] = df_j["Counterparty"].apply(resolve_raw_addr)
+
+    df_mirror = df_j[(df_j["Category"] == "Transfert Interne") &
+                     (df_j["cp_raw"].isin(pos_addrs))].copy()
+
+    if not df_mirror.empty:
+        # Mirror: Protocol becomes the account, amount is negated
+        df_mirror["Account"] = df_mirror["Counterparty"]
+        df_mirror["Amount"] = -df_mirror["Amount"]
+        df_final = pd.concat([df_direct, df_mirror])
+    else:
+        df_final = df_direct
+
+    df_final["Location"] = df_final["Account"].apply(standardize_address_string)
+    res = df_final.groupby(["Location", "Asset"])["Amount"].sum().reset_index()
     res = res[res["Amount"].abs() > 1e-8]
 
     cache = load_price_cache()
