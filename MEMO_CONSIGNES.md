@@ -63,7 +63,9 @@ L'application `app2.py` applique automatiquement la catégorie "Transfert Intern
 
 1. **appPriceFix (Collecteur de Prix) :**
     - Doit scanner exclusivement le journal CLEAN.
-    - Priorité aux valuations USD récoltées (converties via taux fiat BCE) avant de solliciter CoinGecko.
+    - **Hiérarchie de Collecte :**
+        1. **Premier Niveau :** Recherche de prix certifiés dans le journal Step 2 (VGP/Amount, prix USD récoltés, Valeur $/Amount).
+        2. **Second Niveau :** Recherche automatique via APIs externes (CoinGecko, DeFiLlama) intégrée dans `sl.get_price_eur`.
     - **Robustesse Date :** Toujours convertir en datetime avant d'utiliser l'accesseur `.dt`.
 2. **appPropri (Dashboard) :**
     - Affiche la synthèse des positions protocoles (selon `position_labels.json`).

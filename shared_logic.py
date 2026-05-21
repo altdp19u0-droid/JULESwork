@@ -648,6 +648,52 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
 
     return res, total_vgp
 
+def get_price_from_journal(asset, target_date, df_h=None, year=None):
+    """Searches for a certified price in the Step 2 Journal for a given asset and date."""
+    if df_h is None and year:
+        df_h = load_clean_history(year)
+
+    if df_h is None or df_h.empty: return 0.0
+
+    asset = str(asset).upper().strip()
+    target_date = pd.to_datetime(target_date, utc=True).date()
+
+    # 1. Look for matching Asset and Date
+    mask = (df_h["Asset"].str.upper() == asset) & (df_h["Date"].dt.date == target_date)
+    matches = df_h[mask].copy()
+
+    if matches.empty: return 0.0
+
+    # Prioritize:
+    # 1. Highest VGP (EUR) / Amount ratio (most certified)
+    # 2. USD prices
+    # 3. Valeur $
+
+    best_p_eur = 0.0
+    eur_usd = get_fiat_rate("USD", datetime.combine(target_date, datetime.min.time())) or 0.92
+
+    for _, r in matches.iterrows():
+        amt = abs(float(r.get("Amount", 0)))
+        if amt < 1e-12: continue
+
+        # Method A: VGP (already in EUR)
+        p_vgp = float(r.get("VGP (EUR)", 0)) / amt
+        if p_vgp > best_p_eur: best_p_eur = p_vgp
+
+        # Method B: USD dedicated columns
+        p_usd = float(r.get("USD prix asset reçu", 0)) or float(r.get("USD prix asset envoyé", 0))
+        if p_usd > 0:
+            p_eur = p_usd * eur_usd
+            if p_eur > best_p_eur: best_p_eur = p_eur
+
+        # Method C: Valeur $
+        v_usd = float(r.get("Valeur $", 0))
+        if v_usd > 0:
+            p_eur = (v_usd / amt) * eur_usd
+            if p_eur > best_p_eur: best_p_eur = p_eur
+
+    return best_p_eur
+
 # --- Hub Integration ---
 
 def inject_to_app0(data_list, target, year):

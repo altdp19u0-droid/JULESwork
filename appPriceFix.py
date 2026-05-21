@@ -220,28 +220,10 @@ if "price_explorer_df" in st.session_state:
                 dt_obj = datetime.combine(row["Date"], datetime.min.time())
                 asset = str(row["Asset"]).upper().strip()
 
-                new_price = 0.0
+                # 1. First Level: Look for certified price in the Journal (Step 2)
+                new_price = sl.get_price_from_journal(asset, row["Date"], df_h=harvested_prices)
 
-                # 1. Look for Harvested USD price first
-                if not harvested_prices.empty and "Date" in harvested_prices.columns:
-                    # Look for match on Asset and Date
-                    # Date is already datetime thanks to sl.load_clean_history
-                    mask = (harvested_prices["Asset"].str.upper() == asset) & (harvested_prices["Date"].dt.date == row["Date"])
-                    matches = harvested_prices[mask]
-                    if not matches.empty:
-                        # Prioritize 'USD prix asset reçu' or 'USD prix asset envoyé' or 'Valeur $' / 'Amount'
-                        p_rec = float(matches.iloc[0].get("USD prix asset reçu", 0.0))
-                        p_sent = float(matches.iloc[0].get("USD prix asset envoyé", 0.0))
-                        v_usd = float(matches.iloc[0].get("Valeur $", 0.0))
-                        amt = abs(float(matches.iloc[0].get("Amount", 1.0))) or 1.0
-
-                        harvest_usd = p_rec or p_sent or (v_usd / amt if v_usd > 0 else 0.0)
-
-                        if harvest_usd > 0:
-                            fiat_rate = sl.get_fiat_rate("USD", dt_obj)
-                            new_price = harvest_usd * fiat_rate
-
-                # 2. Fallback to central API logic
+                # 2. Second Level: Fallback to central API logic (CoinGecko/Llama)
                 if new_price <= 0:
                     new_price = sl.get_price_eur(row["Asset"], dt_obj, cache=cache)
 
