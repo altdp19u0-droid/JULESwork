@@ -559,14 +559,17 @@ def main():
                     if st.button("Confirmer l'élimination du pool actif"):
                         count_del = 0
                         for _, s_row in selected_rows.iterrows():
+                            # Robust Source_File detection and cleaning
                             src_f = s_row.get("Source_File")
-                            if src_f and isinstance(src_f, str) and src_f.strip() != "" and src_f.lower() != "nan":
-                                # PROTECTED: We ONLY target the root year directory, NEVER the sanctuary
-                                f_path = os.path.join(EXPORT_BASE_DIR, str(year), src_f)
+                            if pd.isna(src_f) or not isinstance(src_f, str) or src_f.strip() == "" or src_f.lower() == "nan":
+                                continue
 
-                                if os.path.exists(f_path):
-                                    if sl.remove_row_from_csv(f_path, s_row):
-                                        count_del += 1
+                            # PROTECTED: We ONLY target the root year directory, NEVER the sanctuary
+                            f_path = os.path.join(EXPORT_BASE_DIR, str(year), src_f.strip())
+
+                            if os.path.exists(f_path):
+                                if sl.remove_row_from_csv(f_path, s_row):
+                                    count_del += 1
 
                         st.session_state.df_qualif = st.session_state.df_qualif.drop(index=selected_rows.index)
                         st.session_state.has_unsaved_changes = True

@@ -138,17 +138,19 @@ def get_acquisition_history(year):
 
     # Value detection & Standard mapping - Safe handling of missing columns
     if "Montant EUR" in df_acq.columns:
-        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Montant EUR"], errors="coerce").fillna(0.0)
+        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Montant EUR"], errors="coerce")
     elif "Amount" in df_acq.columns:
-        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0)
+        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Amount"], errors="coerce")
     else:
-        df_acq["Fiat Mobilisé (EUR)"] = 0.0
+        df_acq["Fiat Mobilisé (EUR)"] = pd.Series([0.0] * len(df_acq))
+
+    df_acq["Fiat Mobilisé (EUR)"] = df_acq["Fiat Mobilisé (EUR)"].fillna(0.0)
 
     # Standardize Quantité column (always refers to 'Amount' column of the journal)
     if "Amount" in df_acq.columns:
         df_acq["Quantité"] = pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0).abs()
     else:
-        df_acq["Quantité"] = 0.0
+        df_acq["Quantité"] = pd.Series([0.0] * len(df_acq))
 
     return df_acq.sort_values("Date", ascending=False).reset_index(drop=True)
 
