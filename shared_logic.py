@@ -630,6 +630,22 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
     res = df_final.groupby(["Location", "Asset"])["Amount"].sum().reset_index()
     res = res[res["Amount"].abs() > 1e-8]
 
+    # Identification of External Circuits (Exclusion from VGP)
+    ext_circuits = load_external_circuits()
+    ext_ids = {str(k).lower().strip() for k in ext_circuits.get("labels", {}).keys()}
+    ext_names = {str(v).lower().strip() for v in ext_circuits.get("labels", {}).values()}
+
+    def check_is_circuit(loc):
+        raw = resolve_raw_addr(loc).lower().strip()
+        if raw in ext_ids: return True
+        # Extract label
+        if "(" in loc and ")" in loc:
+            lbl = loc.split("(")[1].replace(")", "").strip().lower()
+            if lbl in ext_names: return True
+        return False
+
+    res["Is_Circuit"] = res["Location"].apply(check_is_circuit)
+
     # Valuations: Journal Prices First, then Fallback
     journal_prices = get_journal_prices(df_j)
     cache = load_price_cache()
@@ -642,9 +658,8 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
     res["Prix (EUR)"] = res["Asset"].apply(get_smart_price)
     res["Valeur (EUR)"] = res["Amount"] * res["Prix (EUR)"]
 
-    # VGP Calculation: Net sum of ALL values (Wallets + Receivables - Debts if any)
-    # Using only positive values might inflate the VGP if there are negative anomalies.
-    total_vgp = res["Valeur (EUR)"].sum()
+    # VGP Calculation: Net sum of ALL values EXCLUDING External Circuits
+    total_vgp = res[res["Is_Circuit"] == False]["Valeur (EUR)"].sum()
 
     return res, total_vgp
 
