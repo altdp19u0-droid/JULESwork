@@ -763,10 +763,27 @@ def inject_to_app0(data_list, target, year, op_type="Vente"):
     for r in data_list:
         dt = pd.to_datetime(r.get("Date")).date() if r.get("Date") else ""
         if target == "Fiat":
+            # For Fiat moves, we clearly distinguish source and destination labels
+            acc_crypto = standardize_address_string(r.get("Account", ""))
+
+            if op_type == "Achat": # Banque -> Crypto
+                label_fiat = "Banque FIAT"
+                label_crypto = f"Compte CRYPTO ({acc_crypto})"
+            else: # Crypto -> Banque
+                label_fiat = f"Compte CRYPTO ({acc_crypto})"
+                label_fiat_dest = "Banque FIAT"
+
             new_rows.append({
-                "Date": dt, "Account": r.get("Account"), "Counterparty": "banq fiat",
-                "Montant EUR": 0.0, "Type": op_type, "Asset": r.get("Asset"),
-                "Quantité": abs(float(r.get("Amount", 0))), "Tx Hash": r.get("Tx Hash"),
+                "Date": dt,
+                "Account": r.get("Account"),
+                "Compte/Label": "Banque FIAT" if op_type == "Achat" else acc_crypto,
+                "Plateforme": acc_crypto if op_type == "Achat" else "Banque FIAT",
+                "Counterparty": "banq fiat",
+                "Montant EUR": 0.0,
+                "Type": f"{op_type} (Injection)",
+                "Asset": r.get("Asset"),
+                "Quantité": abs(float(r.get("Amount", 0))),
+                "Tx Hash": r.get("Tx Hash"),
                 "Imposable": (op_type == "Vente")
             })
         else:

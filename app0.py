@@ -178,51 +178,58 @@ def fragment_fiat():
             st.session_state.fiat_edit_idx = None
             st.rerun()
 
-    # Utilisation de colonnes hors formulaire pour la réactivité
-    c1, c2, c3 = st.columns(3)
+    # Réorganisation logique pour une meilleure compréhension du flux financier
+    c1, c2, c3 = st.columns([1, 1.2, 1])
     default_date = datetime.now() if target_year == datetime.now().year else datetime(target_year, 1, 1)
-    f_date = c1.date_input("Date du virement", default_date, key="fiat_date_input")
+    f_date = c1.date_input("🗓️ Date de l'opération", default_date, key="fiat_date_input")
 
-    # Prop B: Dropdown with free text fallback
+    f_type = c2.selectbox("📂 Nature du flux", [
+        "Achat (Banque -> Crypto)",
+        "Vente (Crypto -> Banque)",
+        "Virement interne (Fiat)",
+        "Dépôt Plateforme",
+        "Retrait Plateforme"
+    ], key="fiat_type_input")
+
+    f_amount = c3.number_input("💶 Montant EUR (Reçu/Payé)", min_value=0.0, step=10.0, key="fiat_amount_input", help="Indiquez le montant final en Euros constaté sur votre banque.")
+
+    st.markdown("---")
+    st.write("**🔍 Identification des comptes (Provenance & Destination)**")
+
+    c_acc1, c_acc2, c_acc3 = st.columns(3)
     known_displays = sl.get_owner_display_list()
-    options_acc = ["(Nouveau / Autre...)"] + known_displays
+    options_acc = ["(Saisie libre / Autre...)"] + known_displays
 
-    sel_label = c2.selectbox("Compte Bancaire (Connu)", options_acc, key="sel_fiat_label")
-    if sel_label == "(Nouveau / Autre...)":
-        f_label_raw = c2.text_input("Saisie nouveau compte", placeholder="ex: Compte Courant Bourso", key="fiat_label_input")
+    sel_label = c_acc1.selectbox("🏦 Compte FIAT / Banque", options_acc, key="sel_fiat_label")
+    if sel_label == "(Saisie libre / Autre...)":
+        f_label_raw = c_acc1.text_input("Saisir Label Banque", placeholder="ex: Banque FIAT, Bourso...", key="fiat_label_input")
         f_label = sl.standardize_address_string(f_label_raw)
     else:
         f_label = sel_label
 
-    sel_plat = c3.selectbox("Plateforme / Contrepartie (Connue)", options_acc, key="sel_fiat_plat")
-    if sel_plat == "(Nouveau / Autre...)":
-        f_plat_raw = c3.text_input("Saisie nouvelle plateforme", placeholder="ex: Binance, Kraken", key="fiat_plat_input")
+    sel_plat = c_acc2.selectbox("🌐 Compte CRYPTO / Service", options_acc, key="sel_fiat_plat")
+    if sel_plat == "(Saisie libre / Autre...)":
+        f_plat_raw = c_acc2.text_input("Saisir Label Crypto", placeholder="ex: Binance, Wallet A...", key="fiat_plat_input")
         f_plat = sl.standardize_address_string(f_plat_raw)
     else:
         f_plat = sel_plat
 
-    c4, c5, c6 = st.columns(3)
-    f_amount = c4.number_input("Montant (EUR)", min_value=0.0, step=10.0, key="fiat_amount_input")
-    def on_fiat_type_change():
-        st.session_state["fiat_imp_checkbox"] = (st.session_state["fiat_type_input"] == "Vente (Retour vers Banque)")
+    f_asset = c_acc3.text_input("🪙 Token (Optionnel)", placeholder="ex: EUR, USDT, BTC", key="fiat_asset_input")
+    f_qty = c_acc3.number_input("🔢 Quantité Token", min_value=0.0, format="%.8f", key="fiat_qty_input")
 
-    f_type = c5.selectbox("Nature du flux", [
-        "Achat (Virement vers Crypto)",
-        "Vente (Retour vers Banque)",
-        "Virement interne (Fiat)",
-        "Dépôt",
-        "Retrait"
-    ], key="fiat_type_input", on_change=on_fiat_type_change)
-    f_asset = c6.text_input("Asset concerné (Optionnel)", placeholder="ex: EUR, USDT, BTC", key="fiat_asset_input")
+    st.markdown("---")
+    c_hash, c_addr_f, c_imp = st.columns([2, 2, 0.5])
+    f_hash = c_hash.text_input("🔗 Tx Hash (Audit)", placeholder="0x...", key="fiat_hash_input")
 
-    c_hash, c_addr_f, c_qty_f, c_imp = st.columns([1.5, 1.5, 1, 0.5])
-    f_hash = c_hash.text_input("Tx Hash (Blockchain)", placeholder="0x...", key="fiat_hash_input")
+    f_addr_sel = c_addr_f.selectbox("📍 Adresse Tech (0x...)", options_acc, key="sel_fiat_addr", help="Adresse technique de destination on-chain si applicable.")
+    f_addr_new = c_addr_f.text_input("Saisir Adresse", placeholder="0x...", key="fiat_addr_input")
+    f_addr = sl.standardize_address_string(f_addr_new if f_addr_sel == "(Saisie libre / Autre...)" else f_addr_sel)
 
-    f_addr_sel = c_addr_f.selectbox("Compte / Adresse (Connu)", options_acc, key="sel_fiat_addr")
-    f_addr_new = c_addr_f.text_input("Saisie nouveau compte/adresse", placeholder="0x... ou label", key="fiat_addr_input")
-    f_addr = sl.standardize_address_string(f_addr_new if f_addr_sel == "(Nouveau / Autre...)" else f_addr_sel)
+    # Automatisation intelligente de la coche imposable
+    if "fiat_imp_checkbox" not in st.session_state:
+        st.session_state["fiat_imp_checkbox"] = ("Vente" in f_type)
 
-    f_qty = c_qty_f.number_input("Quantité Asset", min_value=0.0, format="%.8f", key="fiat_qty_input")
+    f_imposable = c_imp.checkbox("Imp.", key="fiat_imp_checkbox", help="Cochez si cette opération est une cession imposable (Vente).")
 
     # Automatisation de la coche imposable via session_state
     if "fiat_imp_checkbox" not in st.session_state:
@@ -279,10 +286,10 @@ def fragment_fiat():
     if "Mod." not in df_fiat.columns:
         df_fiat.insert(0, "Mod.", False)
 
-    # UI Highlight for rows with 0 amount (injected from app2)
+    # UI Highlight for rows with 0 amount (injected from app2) - Stronger visibility
     def style_fiat(row):
-        if float(row.get("Montant EUR", 0)) == 0:
-            return ['background-color: #ffffcc'] * len(row)
+        if pd.to_numeric(row.get("Montant EUR"), errors='coerce') == 0:
+            return ['background-color: #fff9c4; font-weight: bold; border: 1px solid #fbc02d'] * len(row)
         return [''] * len(row)
 
     df_fiat = df_fiat.reset_index(drop=True)
@@ -290,17 +297,17 @@ def fragment_fiat():
         df_fiat.style.apply(style_fiat, axis=1),
         column_config={
             "Mod.": st.column_config.CheckboxColumn("Mod.", default=False),
-            "Date": st.column_config.DateColumn("Date", required=True),
-            "Account": st.column_config.TextColumn("Account"),
-            "Counterparty": st.column_config.TextColumn("Counterparty"),
-            "Compte/Label": st.column_config.TextColumn("Compte/Label"),
-            "Plateforme": st.column_config.TextColumn("Plateforme"),
-            "Asset": st.column_config.TextColumn("Asset"), # Force Text for symbols like BTC, ETH
-            "Type": st.column_config.TextColumn("Type"),
-            "Montant EUR": st.column_config.NumberColumn("Montant EUR", format="%.2f"),
-            "Quantité": st.column_config.NumberColumn("Quantité", format="%.8f"),
-            "Tx Hash": st.column_config.TextColumn("Tx Hash"),
-            "Imposable": st.column_config.CheckboxColumn("Imposable"),
+            "Date": st.column_config.DateColumn("🗓️ Date", required=True),
+            "Compte/Label": st.column_config.TextColumn("🏦 Source/Dest FIAT"),
+            "Plateforme": st.column_config.TextColumn("🌐 Compte/Svc CRYPTO"),
+            "Type": st.column_config.TextColumn("📂 Nature"),
+            "Montant EUR": st.column_config.NumberColumn("💶 Montant EUR", format="%.2f"),
+            "Asset": st.column_config.TextColumn("🪙 Token"),
+            "Quantité": st.column_config.NumberColumn("🔢 Quantité", format="%.8f"),
+            "Imposable": st.column_config.CheckboxColumn("Imp."),
+            "Account": st.column_config.TextColumn("📍 Adresse Tech"),
+            "Tx Hash": st.column_config.TextColumn("🔗 Tx Hash"),
+            "Counterparty": None, # Hide legacy technical col
         },
         width='stretch',
         num_rows="dynamic",
