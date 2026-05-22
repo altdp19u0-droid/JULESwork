@@ -6,6 +6,8 @@ import json
 from datetime import datetime
 
 # --- CONFIGURATION & SCHEMA ---
+EXPORT_BASE_DIR = "sanctuarisation"
+
 QUALIFIED_V4_COLUMNS = [
     "Date", "Chain", "Tx_Hash", "Type", "Method", "Account", "From", "To",
     "From_Label", "To_Label", "Counterparty", "Asset", "Amount",
