@@ -553,17 +553,16 @@ def main():
                     st.rerun()
 
             with act_cols[1]:
-                with st.popover("🔥 Éliminer DÉFINITIVEMENT", width='stretch'):
-                    st.error("Cette action supprimera la transaction du fichier source original (RAW).")
-                    if st.button("Confirmer l'élimination physique"):
+                with st.popover("🔥 Éliminer (RAW Racine)", width='stretch'):
+                    st.error("Cette action supprimera la transaction des fichiers RAW de travail (racine de l'année).")
+                    st.info("💡 Le dossier /sanctuary/ reste intact et permettra le rétablissement ultérieur via l'onglet Audit.")
+                    if st.button("Confirmer l'élimination du pool actif"):
                         count_del = 0
                         for _, s_row in selected_rows.iterrows():
                             src_f = s_row.get("Source_File")
                             if src_f and isinstance(src_f, str) and src_f.strip() != "" and src_f.lower() != "nan":
+                                # PROTECTED: We ONLY target the root year directory, NEVER the sanctuary
                                 f_path = os.path.join(EXPORT_BASE_DIR, str(year), src_f)
-                                # Check if it's in sanctuary too
-                                if not os.path.exists(f_path):
-                                    f_path = os.path.join(EXPORT_BASE_DIR, str(year), "sanctuary", src_f)
 
                                 if os.path.exists(f_path):
                                     if sl.remove_row_from_csv(f_path, s_row):
@@ -571,7 +570,7 @@ def main():
 
                         st.session_state.df_qualif = st.session_state.df_qualif.drop(index=selected_rows.index)
                         st.session_state.has_unsaved_changes = True
-                        st.success(f"{len(selected_rows)} lignes éliminées et retirées de {count_del} fichiers RAW.")
+                        st.success(f"{len(selected_rows)} lignes retirées du pool actif (Modifié dans {count_del} fichiers RAW).")
                         time.sleep(1); st.rerun()
 
         # CSS pour colorer le bouton en rouge si modifications
@@ -678,18 +677,47 @@ def main():
 
     with tab2:
         st.header("Audit & Recovery")
-        # Compare current journal with sanctuary backups
-        raw_now = merge_raw_data(year)
-        missing = raw_now[~raw_now["Tx_Hash"].isin(df["Tx_Hash"])]
+
+        # 1. SCAN GLOBAL (All RAW files including Sanctuary)
+        raw_global = merge_raw_data(year)
+
+        # 2. IDENTIFY MISSING
+        # We use a robust identification (Hash, Asset, Account, Amount)
+        def get_uid_set(df_target):
+             if df_target.empty: return set()
+             return set(df_target.apply(lambda r: f"{r['Tx_Hash']}_{r['Asset']}_{r['Account']}_{float(r['Amount']):.6f}", axis=1))
+
+        journal_uids = get_uid_set(df)
+        raw_global["_uid"] = raw_global.apply(lambda r: f"{r['Tx_Hash']}_{r['Asset']}_{r['Account']}_{float(r['Amount']):.6f}", axis=1)
+
+        missing = raw_global[~raw_global["_uid"].isin(journal_uids)].copy()
 
         if not missing.empty:
-            st.error(f"⚠️ {len(missing)} transactions présentes dans les RAW sont manquantes dans le journal !")
-            st.dataframe(missing)
-            if st.button("Récupérer les manquants"):
-                st.session_state.df_qualif = pd.concat([df, missing]).drop_duplicates(subset=["Tx_Hash", "Asset", "Account"]).sort_values("Date", ascending=False)
-                st.success("Intégration terminée. Pensez à sauvegarder.")
+            st.error(f"⚠️ {len(missing)} transactions présentes dans les archives (RAW/Sanctuary) sont manquantes dans votre journal !")
+
+            # Distinguish between Root and Sanctuary
+            missing["Origin"] = missing["Source_File"].apply(lambda f: "Sanctuary (Archive)" if "sanctuary" in str(sl.get_all_raw_files(year)) else "RAW Racine")
+
+            st.dataframe(missing.drop(columns=["_uid"]), use_container_width=True)
+
+            c_rec1, c_rec2 = st.columns(2)
+            if c_rec1.button("♻️ Récupérer TOUT le manquant", type="primary", width='stretch'):
+                st.session_state.df_qualif = pd.concat([df, missing.drop(columns=["_uid", "Origin"])]).sort_values("Date", ascending=False)
+                st.session_state.has_unsaved_changes = True
+                st.success("Toutes les lignes ont été réintégrées. N'oubliez pas de sauvegarder.")
+                st.rerun()
+
+            if c_rec2.button("🔙 Récupérer uniquement le Sanctuary", width='stretch'):
+                from_sanctuary = missing[missing["Origin"] == "Sanctuary (Archive)"]
+                if not from_sanctuary.empty:
+                    st.session_state.df_qualif = pd.concat([df, from_sanctuary.drop(columns=["_uid", "Origin"])]).sort_values("Date", ascending=False)
+                    st.session_state.has_unsaved_changes = True
+                    st.success("Lignes du Sanctuary réintégrées.")
+                    st.rerun()
+                else:
+                    st.info("Aucune ligne spécifique au Sanctuary à récupérer.")
         else:
-            st.success("Journal en phase avec les sources RAW.")
+            st.success("✅ Journal parfaitement en phase avec le Sanctuary et les sources RAW.")
 
     with tab3:
         stats_df = st.session_state.df_qualif

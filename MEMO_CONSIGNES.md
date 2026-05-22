@@ -58,7 +58,8 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 2. **Positions Protocoles :** Si l'une des parties est un propriétaire et l'autre est une adresse de position protocole, ET que l'asset de la transaction correspond à l'un des assets enregistrés pour cette position dans le registre.
 
 - **Injections Fiat :** L'outil d'injection dans `app2.py` permet de transférer des flux vers le registre Step 0 (fiat bank) en choisissant le sens : **Achat** (Banque -> Crypto) ou **Vente** (Crypto -> Banque, imposable par défaut). Les lignes injectées apparaissent en jaune vif dans l'App 0 et utilisent les libellés "Banque FIAT" et "Compte CRYPTO" pour plus de clarté.
-- **Gestion des Lignes RAW :** L'App 2 permet l'élimination définitive de transactions erronées dans les fichiers RAW sources via la colonne de sélection `Mod.`. La traçabilité est assurée par la colonne `Source_File`. La suppression physique s'applique aux fichiers présents dans `/sanctuarisation/{year}/` et son sous-dossier `/sanctuary/`.
+- **Gestion des Lignes RAW :** L'App 2 permet l'élimination de transactions erronées dans les fichiers RAW de travail (racine de l'année) via la colonne de sélection `Mod.`. La traçabilité est assurée par la colonne `Source_File`.
+- **Règle Absolue Sanctuary :** Il est **STRICTEMENT INTERDIT** de modifier ou supprimer des lignes dans les fichiers du dossier `/sanctuary/`. Ce dossier sert d'archive de secours inviolable permettant le rétablissement des données via l'onglet "Audit & Recovery".
 
 ---
 
