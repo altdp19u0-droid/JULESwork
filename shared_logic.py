@@ -483,44 +483,24 @@ def get_price_eur(asset, date_obj, cache=None):
     return 0.0
 
 def get_total_acquisition_value(year):
-    """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from CLEAN history up to year."""
-    # EXCLUSIVITY: All modules must use this exact same function for total consistency.
-    df_h = load_clean_history(year)
-    if df_h.empty: return 0.0
+    """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from Step 0 manual registers up to year."""
+    config = load_global_config()
+    start = config.get("start_year", 2015)
+    total = 0.0
 
-    # Filter for 'Achat' categories in the journal
-    # Use fillna to avoid mask issues with NaN categories
-    mask_cat = df_h['Category'].fillna("").str.contains("Achat", case=False, na=False)
-    df_acq = df_h[mask_cat].copy()
+    for y in range(start, year + 1):
+        p = get_file_path(y, 'fiat')
+        if os.path.exists(p):
+            df = pd_read_csv_safe(p)
+            if not df.empty:
+                # Recognition logic: type 'Achat' or 'Virement vers Crypto'
+                mask = df['Type'].fillna("").str.contains("Achat|Virement vers Crypto", case=False, na=False)
+                # Amount is in 'Montant EUR' or 'Amount'
+                amt_col = "Montant EUR" if "Montant EUR" in df.columns else "Amount"
+                if amt_col in df.columns:
+                    total += pd.to_numeric(df[mask][amt_col], errors="coerce").fillna(0.0).abs().sum()
 
-    if df_acq.empty: return 0.0
-
-    def get_row_acq_val(r):
-        # 1. Primary: If Asset is EUR, Amount is the value
-        ast = str(r.get("Asset", "")).upper().strip()
-        amt = abs(pd.to_numeric(r.get("Amount"), errors='coerce') or 0.0)
-
-        if ast == "EUR":
-            return amt
-
-        # 2. Fallback for unspecified assets from fiat sources
-        if ast in ["", "NAN", "NONE", "UNKNOWN", "TOKEN"]:
-            way = str(r.get("Source_Way", "")).lower()
-            chain = str(r.get("Chain", "")).lower()
-            acc = str(r.get("Account", "")).lower()
-            if "fiat" in way or "fiat" in chain or "bank" in acc or "banq" in acc:
-                return amt
-
-        # 3. If it's a crypto purchase, acquisition cost is in VGP (EUR) or Valeur $
-        vgp = abs(pd.to_numeric(r.get("VGP (EUR)"), errors='coerce') or 0.0)
-        if vgp > 0: return vgp
-
-        v_usd = abs(pd.to_numeric(r.get("Valeur $"), errors='coerce') or 0.0)
-        if v_usd > 0: return v_usd * 0.92 # Default rate if unknown
-
-        return 0.0
-
-    return df_acq.apply(get_row_acq_val, axis=1).sum()
+    return total
 
 def calculate_fiscal_gains(cessions_df, total_acq_price):
     """Applies Art 150 VH bis gain formula: Gain = P_vente - (P_acq_total * (P_vente / VGP))."""
@@ -584,17 +564,14 @@ def get_journal_prices(df_h, target_date=None):
 
         amt = abs(float(r.get("Amount", 0)))
 
-        # Hierarchy Level 1: Harvested USD price (high precision)
+        # Hierarchy Level 1: Harvested USD price (high precision from Step 1/Step 2)
         p_usd = float(r.get("USD prix asset reçu", 0)) or float(r.get("USD prix asset envoyé", 0))
 
-        # Hierarchy Level 2: VGP (EUR) / Amount (Already in EUR, certifiable)
+        # Hierarchy Level 2: Valeur $ / Amount
+        # (Using Valeur $ is safer than VGP as it represents the asset value only)
         p_eur = 0.0
-        if float(r.get("VGP (EUR)", 0)) > 0 and amt > 1e-12:
-            p_eur = abs(float(r.get("VGP (EUR)")) / amt)
-
-        # Hierarchy Level 3: Valeur $ / Amount
         v_usd = float(r.get("Valeur $", 0))
-        if p_eur == 0 and p_usd == 0 and v_usd > 0 and amt > 1e-12:
+        if p_usd == 0 and v_usd > 0 and amt > 1e-12:
             p_usd = v_usd / amt
 
         if p_eur == 0 and p_usd > 0:

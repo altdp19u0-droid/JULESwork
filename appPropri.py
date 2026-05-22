@@ -135,11 +135,11 @@ def get_acquisition_history(year):
         "Chain": "Blockchain"
     })
 
-    # Value detection
-    if "Montant EUR" in df_acq.columns:
-        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Montant EUR"], errors="coerce").fillna(0.0)
-    else:
-        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0)
+    # Value detection & Standard mapping
+    df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq.get("Montant EUR", 0.0), errors="coerce").fillna(0.0)
+
+    # Standardize Quantité column (always refers to 'Amount' column of the journal)
+    df_acq["Quantité"] = pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0).abs()
 
     return df_acq.sort_values("Date", ascending=False).reset_index(drop=True)
 
@@ -744,11 +744,14 @@ else:
     if not snapshot_df.empty:
         snapshot_df["_raw_acc"] = snapshot_df["Location"].apply(sl.resolve_raw_addr)
         # Ensure we have all columns expected
-        for c in ["Solde", "Prix (EUR)", "Valeur (EUR)"]:
-            if c not in snapshot_df.columns: snapshot_df[c] = 0.0
+        for c in ["Solde", "Prix (EUR)", "Valeur (EUR)", "Is_Circuit"]:
+            if c not in snapshot_df.columns: snapshot_df[c] = (False if c == "Is_Circuit" else 0.0)
 
-        df_wallets = snapshot_df[snapshot_df["_raw_acc"].isin(owner_ids) |
-                                 snapshot_df["Location"].isin(owners_map.values())].copy()
+        # Exclude External Circuits from standard wallets view
+        snapshot_clean = snapshot_df[snapshot_df["Is_Circuit"] == False].copy()
+
+        df_wallets = snapshot_clean[snapshot_clean["_raw_acc"].isin(owner_ids) |
+                                 snapshot_clean["Location"].isin(owners_map.values())].copy()
         df_protocols_snap = snapshot_df[snapshot_df["_raw_acc"].isin(pos_ids) |
                                         snapshot_df["Location"].isin(pos_map.values())].copy()
     else:
