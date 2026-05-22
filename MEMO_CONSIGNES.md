@@ -75,6 +75,7 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
     - **Intégrité des Prix :** Les valuations (EUR) utilisent prioritairement les prix USD récoltés dans le journal Step 2 (certifiés) avant de solliciter les APIs externes.
     - **Anti-Inflation VGP :** Le mirroring des positions protocoles n'est appliqué que si la position n'est pas déjà présente comme compte actif dans l'historique, évitant les doubles comptages. La VGP est calculée comme la somme **nette** des actifs (en excluant les circuits externes) pour refléter la réalité du portefeuille.
     - **Unité de Calcul :** Le prix d'acquisition total (A) est calculé exclusivement à partir du journal CLEAN qualifié via `sl.get_total_acquisition_value` pour garantir une cohérence inter-modules. Il somme les lignes 'Achat' certifiées (Asset EUR ou sources fiat/manuelles certifiées).
+    - **Standard d'Affichage Acquisition :** Le tableau détaillé des acquisitions doit obligatoirement afficher : Fiat Mobilisé (à l'achat), Quantité acquise et Valeur au 31/12.
     - Consomme exclusivement les données via `sl.load_clean_history` pour garantir un affichage sans spam.
 3. **app3 (Fiscalité) :**
     - Application stricte de l'Art. 150 VH bis.

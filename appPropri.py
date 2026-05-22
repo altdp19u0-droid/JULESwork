@@ -390,31 +390,50 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
         else:
             with st.spinner("Valorisation des acquisitions..."):
                 acq_history = apply_notes(acq_history)
-                acq_history["Date_Only"] = acq_history["Date"].dt.date
-                unique_pairs = acq_history[["Asset", "Date_Only"]].drop_duplicates()
 
-                prices_map = {}
-                for _, r in unique_pairs.iterrows():
-                    prices_map[(r["Asset"], r["Date_Only"])] = sl.get_price_eur(r["Asset"], r["Date_Only"], cache=global_cache)
+                # Valuation A: At the time of purchase (Fiat Mobilisé)
+                # If Fiat Mobilisé (EUR) is missing or 0, we can try to derive it from VGP or Valeur $
+                def get_fiat_mob(r):
+                    val = float(r.get("Fiat Mobilisé (EUR)", 0))
+                    if val == 0:
+                        val = float(r.get("VGP (EUR)", 0)) or (float(r.get("Valeur $", 0)) * 0.92)
+                    return val
+                acq_history["Fiat Mobilisé (EUR)"] = acq_history.apply(get_fiat_mob, axis=1)
+
+                # Valuation B: Current Value at 31/12
+                eoy_date = datetime(target_year, 12, 31)
+
+                # Fetch EOY prices for all assets in acq_history
+                unique_assets = acq_history["Asset"].unique()
+                eoy_prices = {}
+                df_h_all = sl.load_clean_history(target_year)
+                journal_prices_eoy = sl.get_journal_prices(df_h_all, target_date=eoy_date)
+
+                for a in unique_assets:
+                    ast = str(a).upper().strip()
+                    p = journal_prices_eoy.get(ast, 0.0)
+                    if p == 0:
+                        p = sl.get_price_eur(ast, eoy_date, cache=global_cache)
+                    eoy_prices[ast] = p
 
                 amt_col = "Quantité" if "Quantité" in acq_history.columns else "Amount"
-                acq_history["Valeur EUR (Date)"] = acq_history.apply(
-                    lambda r: float(r[amt_col]) * prices_map.get((r["Asset"], r["Date_Only"]), 0.0), axis=1
+                acq_history["Valeur (EUR) au 31/12"] = acq_history.apply(
+                    lambda r: float(r[amt_col]) * eoy_prices.get(str(r["Asset"]).upper().strip(), 0.0), axis=1
                 )
 
                 # UNIFICATION: Use central logic for metric display
                 total_a = sl.get_total_acquisition_value(target_year)
                 st.metric("Total Prix d'Acquisition (A)", f"{total_a:,.2f} €")
 
-                # We pass the full dataframe to preserve hidden columns (Account, Tx Hash, Amount) for the key generator
-                # But we hide them via column_config
-                display_acq_cols = ["Date", "Fiat Mobilisé (EUR)", "Asset", "Quantité", "Valeur EUR (Date)", "Compte", "Blockchain", "Notes"]
+                # Table Display
+                display_acq_cols = ["Date", "Fiat Mobilisé (EUR)", "Asset", "Quantité", "Valeur (EUR) au 31/12", "Compte", "Blockchain", "Notes"]
                 hide_cols = [c for c in acq_history.columns if c not in display_acq_cols]
 
                 col_cfg = {
-                    "Fiat Mobilisé (EUR)": st.column_config.NumberColumn(format="%.2f €"),
-                    "Valeur EUR (Date)": st.column_config.NumberColumn("Valeur (EUR)", format="%.2f €"),
-                    "Quantité": st.column_config.NumberColumn(format="%.6f"),
+                    "Fiat Mobilisé (EUR)": st.column_config.NumberColumn("Fiat mobilisé (EUR)", format="%.2f €", help="Montant dépensé au moment de l'acquisition."),
+                    "Valeur (EUR) au 31/12": st.column_config.NumberColumn("Valeur (EUR) au 31/12", format="%.2f €", help="Valeur estimée au 31/12 de l'année de consultation."),
+                    "Quantité": st.column_config.NumberColumn("Solde / Quantité", format="%.6f"),
+                    "Asset": "Actif",
                     "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="large"),
                     "Date": st.column_config.DatetimeColumn(format="DD/MM/YYYY", disabled=True),
                 }
