@@ -231,12 +231,6 @@ def fragment_fiat():
 
     f_imposable = c_imp.checkbox("Imp.", key="fiat_imp_checkbox", help="Cochez si cette opération est une cession imposable (Vente).")
 
-    # Automatisation de la coche imposable via session_state
-    if "fiat_imp_checkbox" not in st.session_state:
-        st.session_state["fiat_imp_checkbox"] = (f_type == "Vente (Retour vers Banque)")
-
-    f_imposable = c_imp.checkbox("Imp.", key="fiat_imp_checkbox")
-
     btn_label = "💾 Enregistrer les modifications" if edit_idx is not None else "➕ Ajouter au journal"
     if st.button(btn_label, width='stretch', type="primary" if edit_idx is not None else "secondary"):
         if f_date.year != target_year:
