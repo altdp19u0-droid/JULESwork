@@ -52,10 +52,12 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 - **CRUD Registres :** Les listes (Spams, Assets Valides, Propriétaires, Positions) en sidebar doivent permettre l'ajout et la suppression individuelle via des boutons dédiés.
 - **Positions Protocoles :** L'ajout d'une position protocole requiert obligatoirement la saisie d'un ou plusieurs assets associés (séparés par des virgules).
 
-### 4. Automatisation de la Catégorie "Transfert Interne"
-L'application `app2.py` applique automatiquement la catégorie "Transfert Interne" lors de la qualification initiale si les conditions suivantes sont réunies et que la ligne n'est pas qualifiée de **Spam** :
+### 4. Automatisation & Injections
+- **Transfert Interne :** L'application `app2.py` applique automatiquement la catégorie "Transfert Interne" lors de la qualification initiale si les conditions suivantes sont réunies et que la ligne n'est pas qualifiée de **Spam** :
 1. **Entre Propriétaires :** Si l'expéditeur (`From`) et le destinataire (`To`) sont tous deux dans le registre des comptes propriétaires ET que l'asset est dans la Whitelist (`valid_assets.json`).
 2. **Positions Protocoles :** Si l'une des parties est un propriétaire et l'autre est une adresse de position protocole, ET que l'asset de la transaction correspond à l'un des assets enregistrés pour cette position dans le registre.
+
+- **Injections Fiat :** L'outil d'injection dans `app2.py` permet de transférer des flux vers le registre Step 0 (fiat bank) en choisissant le sens : **Achat** (Banque -> Crypto) ou **Vente** (Crypto -> Banque, imposable par défaut).
 
 ---
 

@@ -753,7 +753,7 @@ def get_price_from_journal(asset, target_date, df_h=None, year=None):
 
 # --- Hub Integration ---
 
-def inject_to_app0(data_list, target, year):
+def inject_to_app0(data_list, target, year, op_type="Vente"):
     """Injects transactions to App0 registries."""
     path = get_file_path(year, 'fiat' if target == "Fiat" else 'swaps')
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -765,8 +765,9 @@ def inject_to_app0(data_list, target, year):
         if target == "Fiat":
             new_rows.append({
                 "Date": dt, "Account": r.get("Account"), "Counterparty": "banq fiat",
-                "Montant EUR": 0.0, "Type": "Vente", "Asset": r.get("Asset"),
-                "Quantité": abs(float(r.get("Amount", 0))), "Tx Hash": r.get("Tx Hash"), "Imposable": True
+                "Montant EUR": 0.0, "Type": op_type, "Asset": r.get("Asset"),
+                "Quantité": abs(float(r.get("Amount", 0))), "Tx Hash": r.get("Tx Hash"),
+                "Imposable": (op_type == "Vente")
             })
         else:
             new_rows.append({

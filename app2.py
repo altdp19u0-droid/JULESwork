@@ -574,14 +574,24 @@ def main():
         i_cols = st.columns(2)
 
         with i_cols[0]:
-            st.info("Injecter une vente crypto vers le flux fiat (banq fiat).")
+            st.info("Injecter vers le flux fiat (banq fiat).")
             with st.popover("Préparer Injection Fiat"):
-                sel_row_idx = st.selectbox("Choisir transaction de vente",
-                                       view_df[view_df["Amount"] != 0].index,
+                inj_type = st.radio("Type d'injection", ["Vente (Crypto -> Banque)", "Achat (Banque -> Crypto)"], horizontal=True)
+
+                # Filter for selection
+                if "Vente" in inj_type:
+                    valid_idx = view_df[view_df["Amount"] < 0].index
+                    prompt = "Choisir jambe de sortie (Amount < 0)"
+                else:
+                    valid_idx = view_df[view_df["Amount"] > 0].index
+                    prompt = "Choisir jambe d'entrée (Amount > 0)"
+
+                sel_row_idx = st.selectbox(prompt, valid_idx,
                                        format_func=lambda x: f"{view_df.loc[x, 'Date']} - {view_df.loc[x, 'Amount']} {view_df.loc[x, 'Asset']}")
-                fiat_amt = st.number_input("Montant EUR reçu (Optionnel ici, à saisir dans Flux Fiat)", value=0.0)
+
                 if st.button("Confirmer Injection Fiat"):
                     row = view_df.loc[sel_row_idx]
+                    op_type = "Vente" if "Vente" in inj_type else "Achat"
                     data = [{
                         "Date": row["Date"],
                         "Account": row["Account"],
@@ -589,10 +599,10 @@ def main():
                         "Amount": row["Amount"],
                         "Asset": row["Asset"],
                         "Tx Hash": row["Tx_Hash"],
-                        "Imposable": True
+                        "Imposable": (op_type == "Vente")
                     }]
-                    sl.inject_to_app0(data, "Fiat", year)
-                    st.success("Injecté vers Flux Fiat !")
+                    sl.inject_to_app0(data, "Fiat", year, op_type=op_type)
+                    st.success(f"Injecté comme '{op_type}' vers Flux Fiat !")
 
         with i_cols[1]:
             st.info("Injecter vers le registre des Swaps & Internes.")
