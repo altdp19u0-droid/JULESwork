@@ -279,7 +279,10 @@ else:
                 snapshot_df["Emplacement"] = snapshot_df["Location"].apply(map_loc_display)
 
                 # --- IDENTIFY CIRCUITS & UNLABELED ---
-                circuits_df = snapshot_df[snapshot_df.get("Is_Circuit", False) == True]
+                if "Is_Circuit" in snapshot_df.columns:
+                    circuits_df = snapshot_df[snapshot_df["Is_Circuit"] == True]
+                else:
+                    circuits_df = pd.DataFrame()
                 unlabeled = snapshot_df[snapshot_df["Location"].str.contains("External/CEX:", na=False)]
 
                 if not circuits_df.empty:
@@ -324,7 +327,7 @@ else:
                 ed_snapshot["Valeur (EUR)"] = ed_snapshot["Solde"] * ed_snapshot["Prix (EUR)"].fillna(0.0)
                 # Robust check for Is_Circuit
                 if "Is_Circuit" in ed_snapshot.columns:
-                    mask_vgp_ed = (ed_snapshot["Is_Circuit"] != True)
+                    mask_vgp_ed = (ed_snapshot["Is_Circuit"] == False)
                 else:
                     mask_vgp_ed = pd.Series(True, index=ed_snapshot.index)
                 new_total = ed_snapshot[mask_vgp_ed]["Valeur (EUR)"].sum()

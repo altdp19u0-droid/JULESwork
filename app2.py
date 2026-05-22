@@ -149,11 +149,14 @@ def merge_raw_data(year):
         for _, r in df_fiat.iterrows():
             # Robust mapping for fiat rows from app0 (Montant EUR)
             amt_val = r.get("Montant EUR", r.get("Amount", 0))
+            ast_val = str(r.get("Asset", "EUR")).upper().strip()
+            if ast_val in ["", "NAN", "NONE"]: ast_val = "EUR"
+
             rows.append({
                 "Date": pd.to_datetime(r.get("Date"), utc=True),
                 "Chain": "Fiat", "Tx_Hash": str(r.get("Tx_Hash", "MANUAL_FIAT")),
                 "Account": str(r.get("Account", "banq fiat")),
-                "Asset": str(r.get("Asset", "EUR")), "Amount": float(amt_val),
+                "Asset": ast_val, "Amount": float(amt_val),
                 "Counterparty": str(r.get("Counterparty", "Banque")),
                 "Type": "Fiat Move", "Source_Way": "Manuel", "Audit_Status": "Valide",
                 "Category": str(r.get("Type", "Achat")) # Propagate manual category

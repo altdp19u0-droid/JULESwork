@@ -484,20 +484,34 @@ def get_price_eur(asset, date_obj, cache=None):
 
 def get_total_acquisition_value(year):
     """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from CLEAN history up to year."""
-    # EXCLUSIVITY: Summing only EUR assets with 'Achat' category to match manual fiat input (app0).
+    # EXCLUSIVITY: Summing EUR assets or empty/unspecified assets with 'Achat' category from fiat sources.
     df_h = load_clean_history(year)
     if df_h.empty: return 0.0
 
     # Filter for 'Achat' categories
     mask_cat = df_h['Category'].fillna("").str.contains("Achat", case=False, na=False)
-    # Filter strictly for EUR asset (Fiat mobilization)
-    # This prevents double counting crypto purchase costs if they are also marked 'Achat'
-    mask_eur = df_h['Asset'].astype(str).str.upper().str.strip() == "EUR"
 
-    df_acq = df_h[mask_cat & mask_eur]
+    # Identification of EUR rows: explicit "EUR" OR empty/NaN if source is "Fiat" or "Manuel"
+    def is_fiat_apport(r):
+        ast = str(r.get("Asset", "")).upper().strip()
+        way = str(r.get("Source_Way", "")).lower()
+        chain = str(r.get("Chain", "")).lower()
+
+        if ast == "EUR": return True
+        if ast in ["", "NAN", "NONE"]:
+            # Fallback: if asset is missing but it's from a fiat/manual source, assume EUR
+            if "fiat" in way or "fiat" in chain or "manuel" in way: return True
+        return False
+
+    df_acq = df_h[mask_cat].copy()
     if df_acq.empty: return 0.0
 
-    return pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0).apply(abs).sum()
+    mask_fiat = df_acq.apply(is_fiat_apport, axis=1)
+    df_final = df_acq[mask_fiat]
+
+    if df_final.empty: return 0.0
+
+    return pd.to_numeric(df_final["Amount"], errors="coerce").fillna(0.0).apply(abs).sum()
 
 def calculate_fiscal_gains(cessions_df, total_acq_price):
     """Applies Art 150 VH bis gain formula: Gain = P_vente - (P_acq_total * (P_vente / VGP))."""

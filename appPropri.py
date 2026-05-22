@@ -235,21 +235,33 @@ def get_complementary_history(year):
     return res
 
 # --- Helpers for UI ---
-def valuate_dataframe(df, cache):
+def valuate_dataframe(df, cache, year=None):
     """Calculates Valeur EUR (Date) for a transaction dataframe."""
     if df.empty: return df
     df = df.copy()
+
+    # Load certified journal prices for the year if provided
+    journal_prices = {}
+    if year:
+        df_h = sl.load_clean_history(year)
+        journal_prices = sl.get_journal_prices(df_h)
+
     # Optimization: Group by (Asset, Date) to minimize redundant price calls
     df["Date_Only"] = df["Date"].dt.date
     unique_pairs = df[["Asset", "Date_Only"]].drop_duplicates()
 
     prices_map = {}
     for _, r in unique_pairs.iterrows():
-        p_eur = sl.get_price_eur(r["Asset"], r["Date_Only"], cache=cache)
-        prices_map[(r["Asset"], r["Date_Only"])] = p_eur
+        ast = str(r["Asset"]).upper().strip()
+        # 1. Try Journal Price (latest known)
+        p_eur = journal_prices.get(ast, 0.0)
+        # 2. Fallback to historical date lookup
+        if p_eur == 0:
+            p_eur = sl.get_price_eur(ast, r["Date_Only"], cache=cache)
+        prices_map[(ast, r["Date_Only"])] = p_eur
 
     def valuate_row(row):
-        p_eur = prices_map.get((row["Asset"], row["Date_Only"]), 0.0)
+        p_eur = prices_map.get((str(row["Asset"]).upper().strip(), row["Date_Only"]), 0.0)
         # Force sign preservation
         return float(row["Amount"]) * p_eur
 
@@ -346,7 +358,7 @@ def get_protocol_summary(year):
     res["Solde (Qté)"] = res["Solde (Qté)"].fillna(0.0)
     res["Valeur EUR"] = res["Valeur EUR"].fillna(0.0)
 
-    return res[res["Solde (Qté)"].abs() > 1e-8]
+    return res
 
 # --- Shared Constants ---
 DISPLAY_COLS = ["Date", "Account", "Asset", "Quantité Entrée", "Quantité Sortie", "Valeur EUR (Date)", "Category", "Counterparty", "Notes"]
@@ -611,7 +623,7 @@ else:
     else:
         with st.spinner("Calcul de la valeur des mouvements propriétaires..."):
             df_year = apply_notes(df_year)
-            df_year = valuate_dataframe(df_year, global_cache)
+            df_year = valuate_dataframe(df_year, global_cache, year=target_year)
 
             df_year["Quantité Entrée"] = df_year["Amount"].apply(lambda x: x if x > 0 else 0.0)
             df_year["Quantité Sortie"] = df_year["Amount"].apply(lambda x: x if x < 0 else 0.0)
@@ -663,7 +675,7 @@ else:
     else:
         with st.spinner("Calcul de la valeur des mouvements complémentaires..."):
             df_year_comp = apply_notes(df_year_comp)
-            df_year_comp = valuate_dataframe(df_year_comp, global_cache)
+            df_year_comp = valuate_dataframe(df_year_comp, global_cache, year=target_year)
 
             df_year_comp["Quantité Entrée"] = df_year_comp["Amount"].apply(lambda x: x if x > 0 else 0.0)
             df_year_comp["Quantité Sortie"] = df_year_comp["Amount"].apply(lambda x: x if x < 0 else 0.0)
