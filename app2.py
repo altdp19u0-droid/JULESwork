@@ -528,6 +528,8 @@ def main():
         # If the user edited something, we update the global session state immediately
         # This ensures that actions like toggling spams or adding to blacklist don't revert edits.
         if not edited_df.equals(view_df):
+            # Prioritize standard column sync but handle the 'Mod.' flag carefully
+            # We don't want to reset 'Mod.' to False in the main state if it's currently selected
             st.session_state.df_qualif.update(edited_df)
             st.session_state.has_unsaved_changes = True
 
@@ -557,7 +559,7 @@ def main():
                         count_del = 0
                         for _, s_row in selected_rows.iterrows():
                             src_f = s_row.get("Source_File")
-                            if src_f:
+                            if src_f and isinstance(src_f, str) and src_f.strip() != "" and src_f.lower() != "nan":
                                 f_path = os.path.join(EXPORT_BASE_DIR, str(year), src_f)
                                 # Check if it's in sanctuary too
                                 if not os.path.exists(f_path):

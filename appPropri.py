@@ -145,7 +145,10 @@ def get_acquisition_history(year):
         df_acq["Fiat Mobilisé (EUR)"] = 0.0
 
     # Standardize Quantité column (always refers to 'Amount' column of the journal)
-    df_acq["Quantité"] = pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0).abs()
+    if "Amount" in df_acq.columns:
+        df_acq["Quantité"] = pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0).abs()
+    else:
+        df_acq["Quantité"] = 0.0
 
     return df_acq.sort_values("Date", ascending=False).reset_index(drop=True)
 

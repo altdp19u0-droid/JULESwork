@@ -822,7 +822,7 @@ def cleanup_working_files(year):
 
 def remove_row_from_csv(file_path, row_to_remove):
     """Deletes a single row from a CSV file matching a quintuplet (Date, Account, Asset, Amount, Tx Hash)."""
-    if not os.path.exists(file_path): return False
+    if not file_path or not isinstance(file_path, str) or not os.path.exists(file_path): return False
     df = pd_read_csv_safe(file_path)
     if df.empty: return False
 
