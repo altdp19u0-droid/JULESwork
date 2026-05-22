@@ -306,10 +306,10 @@ def get_protocol_summary(year):
         # Find entry in registry either by address or by label name
         entry = pos_reg.get(loc_raw)
         if not entry:
-            # Fallback: check matching labels
+            # Fallback: check matching labels (Case insensitive and stripped)
             for k, v in pos_reg.items():
                 lbl_reg = str(v.get("label", "")).lower().strip()
-                if lbl_reg and (lbl_reg == loc_str or lbl_reg == loc_label_extracted):
+                if lbl_reg and (lbl_reg == loc_str or lbl_reg == loc_label_extracted or lbl_reg in loc_str):
                     entry = v
                     break
 
@@ -352,9 +352,10 @@ def get_protocol_summary(year):
     # Final Merge with Snapshot (which has the correct final balance and EUR value)
     df_proto_snap["Compte"] = df_proto_snap["Location"]
     # Outer join to ensure we see assets even if snapshot or cumul is missing one side
-    res = pd.merge(df_proto_snap[["Compte", "Asset", "Amount", "Valeur (EUR)"]], cumul, on=["Compte", "Asset"], how="outer")
+    # Snapshot now uses "Solde" instead of "Amount"
+    res = pd.merge(df_proto_snap[["Compte", "Asset", "Solde", "Valeur (EUR)"]], cumul, on=["Compte", "Asset"], how="outer")
 
-    res = res.rename(columns={"Amount": "Solde (Qté)", "Valeur (EUR)": "Valeur EUR", "Compte": "Compte (Protocol)"})
+    res = res.rename(columns={"Solde": "Solde (Qté)", "Valeur (EUR)": "Valeur EUR", "Compte": "Compte (Protocol)"})
     res["Solde (Qté)"] = res["Solde (Qté)"].fillna(0.0)
     res["Valeur EUR"] = res["Valeur EUR"].fillna(0.0)
 
@@ -401,8 +402,8 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                     lambda r: float(r[amt_col]) * prices_map.get((r["Asset"], r["Date_Only"]), 0.0), axis=1
                 )
 
-                fiat_col = "Fiat Mobilisé (EUR)" if "Fiat Mobilisé (EUR)" in acq_history.columns else "Amount"
-                total_a = acq_history[fiat_col].sum() if fiat_col in acq_history.columns else 0.0
+                # UNIFICATION: Use central logic for metric display
+                total_a = sl.get_total_acquisition_value(target_year)
                 st.metric("Total Prix d'Acquisition (A)", f"{total_a:,.2f} €")
 
                 # We pass the full dataframe to preserve hidden columns (Account, Tx Hash, Amount) for the key generator
@@ -723,6 +724,10 @@ else:
     # Separate Wallets and Protocols from snapshot
     if not snapshot_df.empty:
         snapshot_df["_raw_acc"] = snapshot_df["Location"].apply(sl.resolve_raw_addr)
+        # Ensure we have all columns expected
+        for c in ["Solde", "Prix (EUR)", "Valeur (EUR)"]:
+            if c not in snapshot_df.columns: snapshot_df[c] = 0.0
+
         df_wallets = snapshot_df[snapshot_df["_raw_acc"].isin(owner_ids) |
                                  snapshot_df["Location"].isin(owners_map.values())].copy()
         df_protocols_snap = snapshot_df[snapshot_df["_raw_acc"].isin(pos_ids) |

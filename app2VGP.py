@@ -324,12 +324,17 @@ else:
                 )
 
                 # Recalculate Total with manual edits (Excluding circuits)
-                ed_snapshot["Valeur (EUR)"] = ed_snapshot["Solde"] * ed_snapshot["Prix (EUR)"].fillna(0.0)
+                # Force numeric for recalculation
+                ed_snapshot["Solde"] = pd.to_numeric(ed_snapshot["Solde"], errors="coerce").fillna(0.0)
+                ed_snapshot["Prix (EUR)"] = pd.to_numeric(ed_snapshot["Prix (EUR)"], errors="coerce").fillna(0.0)
+                ed_snapshot["Valeur (EUR)"] = ed_snapshot["Solde"] * ed_snapshot["Prix (EUR)"]
+
                 # Robust check for Is_Circuit
                 if "Is_Circuit" in ed_snapshot.columns:
-                    mask_vgp_ed = (ed_snapshot["Is_Circuit"] == False)
+                    mask_vgp_ed = (ed_snapshot["Is_Circuit"].fillna(False) == False)
                 else:
                     mask_vgp_ed = pd.Series(True, index=ed_snapshot.index)
+
                 new_total = ed_snapshot[mask_vgp_ed]["Valeur (EUR)"].sum()
                 st.metric("VGP Totale Corrigée (Excl. Circuits)", f"{new_total:,.2f} €")
 

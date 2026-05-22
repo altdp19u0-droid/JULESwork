@@ -484,34 +484,43 @@ def get_price_eur(asset, date_obj, cache=None):
 
 def get_total_acquisition_value(year):
     """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from CLEAN history up to year."""
-    # EXCLUSIVITY: Summing EUR assets or empty/unspecified assets with 'Achat' category from fiat sources.
+    # EXCLUSIVITY: All modules must use this exact same function for total consistency.
     df_h = load_clean_history(year)
     if df_h.empty: return 0.0
 
-    # Filter for 'Achat' categories
+    # Filter for 'Achat' categories in the journal
+    # Use fillna to avoid mask issues with NaN categories
     mask_cat = df_h['Category'].fillna("").str.contains("Achat", case=False, na=False)
-
-    # Identification of EUR rows: explicit "EUR" OR empty/NaN if source is "Fiat" or "Manuel"
-    def is_fiat_apport(r):
-        ast = str(r.get("Asset", "")).upper().strip()
-        way = str(r.get("Source_Way", "")).lower()
-        chain = str(r.get("Chain", "")).lower()
-
-        if ast == "EUR": return True
-        if ast in ["", "NAN", "NONE"]:
-            # Fallback: if asset is missing but it's from a fiat/manual source, assume EUR
-            if "fiat" in way or "fiat" in chain or "manuel" in way: return True
-        return False
-
     df_acq = df_h[mask_cat].copy()
+
     if df_acq.empty: return 0.0
 
-    mask_fiat = df_acq.apply(is_fiat_apport, axis=1)
-    df_final = df_acq[mask_fiat]
+    def get_row_acq_val(r):
+        # 1. Primary: If Asset is EUR, Amount is the value
+        ast = str(r.get("Asset", "")).upper().strip()
+        amt = abs(pd.to_numeric(r.get("Amount"), errors='coerce') or 0.0)
 
-    if df_final.empty: return 0.0
+        if ast == "EUR":
+            return amt
 
-    return pd.to_numeric(df_final["Amount"], errors="coerce").fillna(0.0).apply(abs).sum()
+        # 2. Fallback for unspecified assets from fiat sources
+        if ast in ["", "NAN", "NONE", "UNKNOWN", "TOKEN"]:
+            way = str(r.get("Source_Way", "")).lower()
+            chain = str(r.get("Chain", "")).lower()
+            acc = str(r.get("Account", "")).lower()
+            if "fiat" in way or "fiat" in chain or "bank" in acc or "banq" in acc:
+                return amt
+
+        # 3. If it's a crypto purchase, acquisition cost is in VGP (EUR) or Valeur $
+        vgp = abs(pd.to_numeric(r.get("VGP (EUR)"), errors='coerce') or 0.0)
+        if vgp > 0: return vgp
+
+        v_usd = abs(pd.to_numeric(r.get("Valeur $"), errors='coerce') or 0.0)
+        if v_usd > 0: return v_usd * 0.92 # Default rate if unknown
+
+        return 0.0
+
+    return df_acq.apply(get_row_acq_val, axis=1).sum()
 
 def calculate_fiscal_gains(cessions_df, total_acq_price):
     """Applies Art 150 VH bis gain formula: Gain = P_vente - (P_acq_total * (P_vente / VGP))."""
@@ -553,12 +562,15 @@ def get_journal_prices(df_h, target_date=None):
 
     if target_date:
         target_date = pd.to_datetime(target_date, utc=True)
-        # We prioritize 'Position' rows that are EXACTLY at the target date (EOY snapshots)
-        mask_target = (df["Date"].dt.date == target_date.date()) & (df["Type"].fillna("").str.contains("Position", case=False))
-        df_priority = df[mask_target]
-        # Rest of the journal for fallbacks
-        df_others = df[~mask_target]
-        df_scan = pd.concat([df_priority, df_others])
+        # Priority A: Snapshot/Position entries at EXACT target date
+        mask_snap = (df["Date"].dt.date == target_date.date()) & (df["Type"].fillna("").str.contains("Position", case=False))
+        # Priority B: Any entry at EXACT target date
+        mask_exact = (df["Date"].dt.date == target_date.date())
+        # Priority C: Rest of history
+        df_priority_a = df[mask_snap]
+        df_priority_b = df[mask_exact & ~mask_snap]
+        df_rest = df[~mask_exact]
+        df_scan = pd.concat([df_priority_a, df_priority_b, df_rest])
     else:
         df_scan = df
 
@@ -570,21 +582,26 @@ def get_journal_prices(df_h, target_date=None):
         ast = str(r["Asset"]).upper().strip()
         if ast in prices or ast == "EUR": continue
 
-        # Priority 1: dedicated USD price columns (explicitly harvested or imported)
-        p_usd = float(r.get("USD prix asset reçu", 0))
-        if p_usd == 0: p_usd = float(r.get("USD prix asset envoyé", 0))
+        amt = abs(float(r.get("Amount", 0)))
 
-        # Priority 2: VGP (EUR) / Amount (Already in EUR, highly certified if from app2VGP)
+        # Hierarchy Level 1: Harvested USD price (high precision)
+        p_usd = float(r.get("USD prix asset reçu", 0)) or float(r.get("USD prix asset envoyé", 0))
+
+        # Hierarchy Level 2: VGP (EUR) / Amount (Already in EUR, certifiable)
         p_eur = 0.0
-        if float(r.get("VGP (EUR)", 0)) > 0 and abs(float(r.get("Amount", 0))) > 1e-12:
-            p_eur = abs(float(r.get("VGP (EUR)")) / float(r.get("Amount")))
+        if float(r.get("VGP (EUR)", 0)) > 0 and amt > 1e-12:
+            p_eur = abs(float(r.get("VGP (EUR)")) / amt)
 
-        # Priority 3: Valeur $ / Amount
-        if p_eur == 0 and p_usd == 0 and abs(float(r.get("Amount", 0))) > 1e-12:
-            p_usd = abs(float(r.get("Valeur $", 0)) / float(r.get("Amount")))
+        # Hierarchy Level 3: Valeur $ / Amount
+        v_usd = float(r.get("Valeur $", 0))
+        if p_eur == 0 and p_usd == 0 and v_usd > 0 and amt > 1e-12:
+            p_usd = v_usd / amt
 
         if p_eur == 0 and p_usd > 0:
-            p_eur = p_usd * eur_usd
+            # Refresh rate for the specific date of the entry if possible, else use last_dt
+            row_dt = r["Date"]
+            rate = get_fiat_rate("USD", row_dt) or eur_usd
+            p_eur = p_usd * rate
 
         if p_eur > 0:
             prices[ast] = p_eur
@@ -641,8 +658,20 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
         df_final = df_direct
 
     df_final["Location"] = df_final["Account"].apply(standardize_address_string)
-    res = df_final.groupby(["Location", "Asset"])["Amount"].sum().reset_index()
-    res = res[res["Amount"].abs() > 1e-8]
+
+    # Calculate detailed snapshot
+    df_final["In"] = df_final["Amount"].apply(lambda x: x if x > 0 else 0.0)
+    df_final["Out"] = df_final["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+
+    res = df_final.groupby(["Location", "Asset"]).agg({
+        "Amount": "sum",
+        "In": "sum",
+        "Out": "sum"
+    }).reset_index()
+    res = res.rename(columns={"Amount": "Solde", "In": "Entrées", "Out": "Sorties"})
+    res["Report"] = 0.0 # Placeholder for EOY carry-over if needed
+
+    res = res[res["Solde"].abs() > 1e-10]
 
     # Identification of External Circuits (Exclusion from VGP)
     ext_circuits = load_external_circuits()
@@ -652,7 +681,6 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
     def check_is_circuit(loc):
         raw = resolve_raw_addr(loc).lower().strip()
         if raw in ext_ids: return True
-        # Extract label
         if "(" in loc and ")" in loc:
             lbl = loc.split("(")[1].replace(")", "").strip().lower()
             if lbl in ext_names: return True
@@ -661,7 +689,7 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
     res["Is_Circuit"] = res["Location"].apply(check_is_circuit)
 
     # Valuations: Journal Prices First, then Fallback
-    journal_prices = get_journal_prices(df_j)
+    journal_prices = get_journal_prices(df_j, target_date=target_date)
     cache = load_price_cache()
 
     def get_smart_price(asset):
@@ -670,7 +698,7 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
         return get_price_eur(ast, target_date, cache)
 
     res["Prix (EUR)"] = res["Asset"].apply(get_smart_price)
-    res["Valeur (EUR)"] = res["Amount"] * res["Prix (EUR)"]
+    res["Valeur (EUR)"] = res["Solde"] * res["Prix (EUR)"]
 
     # VGP Calculation: Net sum of ALL values EXCLUDING External Circuits
     total_vgp = res[res["Is_Circuit"] == False]["Valeur (EUR)"].sum()
