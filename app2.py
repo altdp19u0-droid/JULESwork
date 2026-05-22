@@ -152,8 +152,12 @@ def merge_raw_data(year):
     if f_fiat and os.path.exists(f_fiat):
         df_fiat = sl.pd_read_csv_safe(f_fiat)
         for _, r in df_fiat.iterrows():
-            # Robust mapping for fiat rows from app0 (Montant EUR)
-            amt_val = r.get("Montant EUR", r.get("Amount", 0))
+            # Robust mapping for fiat rows from app0
+            # Quantité (Token qty) -> Amount
+            # Montant EUR (Fiat cost) -> VGP (EUR)
+            qty_val = r.get("Quantité", r.get("Amount", 0))
+            fiat_val = r.get("Montant EUR", 0)
+
             ast_val = str(r.get("Asset", "EUR")).upper().strip()
             if ast_val in ["", "NAN", "NONE"]: ast_val = "EUR"
 
@@ -161,10 +165,28 @@ def merge_raw_data(year):
                 "Date": pd.to_datetime(r.get("Date"), utc=True),
                 "Chain": "Fiat", "Tx_Hash": str(r.get("Tx_Hash", "MANUAL_FIAT")),
                 "Account": str(r.get("Account", "banq fiat")),
-                "Asset": ast_val, "Amount": float(amt_val),
+                "Asset": ast_val, "Amount": float(qty_val),
+                "VGP (EUR)": float(fiat_val),
                 "Counterparty": str(r.get("Counterparty", "Banque")),
                 "Type": "Fiat Move", "Source_Way": "Manuel", "Audit_Status": "Valide",
-                "Category": str(r.get("Type", "Achat")) # Propagate manual category
+                "Category": str(r.get("Type", "Achat")), # Propagate manual category
+                "Imposable": r.get("Imposable", False)
+            })
+
+    # 2b. Source Manuelle (Swaps & Internes)
+    f_swaps = sl.get_file_path(year, 'swaps')
+    if f_swaps and os.path.exists(f_swaps):
+        df_swaps = sl.pd_read_csv_safe(f_swaps)
+        for _, r in df_swaps.iterrows():
+            rows.append({
+                "Date": pd.to_datetime(r.get("Date"), utc=True),
+                "Chain": "Manual", "Tx_Hash": str(r.get("Tx_Hash", "MANUAL_SWAP")),
+                "Account": str(r.get("Account", "Portefeuille")),
+                "Asset": str(r.get("Asset", "UNKNOWN")), "Amount": float(r.get("Amount", 0)),
+                "Counterparty": str(r.get("Counterparty", "Swap")),
+                "Type": str(r.get("Type", "Swap")), "Source_Way": "Manuel", "Audit_Status": "Valide",
+                "Category": str(r.get("Type", "Swap")),
+                "Imposable": r.get("Imposable", False)
             })
 
     # 3. Source Manuelle (Positions Initiales / Snapshot)
@@ -241,9 +263,11 @@ def run_fidelity_engine(raw_df, existing_df):
                 val = qualif_map[uid].get(col)
                 # Logic logic: Prioritize existing if not "empty"
                 # For strings: not empty. For numbers: not 0.0 (unless it's VGP which might be 0)
+                # For boolean (Imposable): False is NOT empty.
                 is_empty = False
                 if pd.isna(val): is_empty = True
                 elif isinstance(val, str) and val.strip() == "": is_empty = True
+                elif isinstance(val, bool): is_empty = False # Bools are never empty (True or False are decisions)
                 elif isinstance(val, (int, float)) and val == 0.0 and col != "VGP (EUR)": is_empty = True
 
                 if not is_empty:

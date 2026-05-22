@@ -36,6 +36,35 @@ def load_position_labels():
 
 
 # --- Helpers ---
+def ensure_columns(df):
+    """Garantit le schéma V4 et la conversion stricte des dates en UTC."""
+    QUALIFIED_V4_COLUMNS = [
+        "Date", "Chain", "Tx_Hash", "Type", "Method", "Account", "From", "To",
+        "From_Label", "To_Label", "Counterparty", "Asset", "Amount",
+        "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset",
+        "Fee_Asset", "Fee_Amount", "Source_Way", "Audit_Status", "Fee_Audit_Alert",
+        "Source_Exchange_Rate", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable",
+        "Source_File"
+    ]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=QUALIFIED_V4_COLUMNS)
+    for col in QUALIFIED_V4_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+    # Nettoyage des dates : conversion forcée en UTC pour éviter TypeError lors des tris
+    df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
+    df = df.dropna(subset=["Date"])
+    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0.0)
+    df["VGP (EUR)"] = pd.to_numeric(df["VGP (EUR)"], errors="coerce").fillna(0.0)
+
+    # New USD columns numeric conversion
+    for usd_col in ["Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset"]:
+        if usd_col in df.columns:
+            df[usd_col] = pd.to_numeric(df[usd_col], errors="coerce").fillna(0.0)
+
+    # Conversion stricte de Imposable en booléen
+    df["Imposable"] = df["Imposable"].apply(sl.is_imposable_robust)
+    return df
 
 # --- UI sidebar ---
 with st.sidebar:
@@ -117,9 +146,9 @@ else:
     # We use session state to ensure UI updates after calculation
     if "journal_active" not in st.session_state or st.session_state.get("active_path") != path:
         journal = pd_read_csv_safe(path)
-        # UNIFICATION
+        # UNIFICATION & SCHEMA ENFORCEMENT
+        journal = ensure_columns(journal)
         journal = standardize_df_addresses(journal)
-        journal["Date"] = pd.to_datetime(journal["Date"], utc=True, errors="coerce")
 
         # --- ZÉRO SPAM : Filtre d'audit ---
         # Mark spams to notify user, but we will exclude them from masks anyway
@@ -132,7 +161,7 @@ else:
     journal = st.session_state.journal_active
 
     # Force numeric conversion & initialization
-    for col in ["Amount", "Value ($)", "VGP (EUR)"]:
+    for col in ["Amount", "Valeur $", "VGP (EUR)"]:
         if col in journal.columns:
             journal[col] = pd.to_numeric(journal[col], errors="coerce").fillna(0.0)
         else:
@@ -141,7 +170,7 @@ else:
     # Construction du masque de détection (Exclude manual duplicates and Spam)
     status_col = "Audit_Status" if "Audit_Status" in journal.columns else "Status"
     mask_valid = (journal[status_col] != "Spam") & (journal.get("Category", "") != "Doublon à ignorer")
-    mask_imposable = (journal["Imposable"].apply(is_imposable_robust)) & mask_valid if use_imposable_col else pd.Series(False, index=journal.index)
+    mask_imposable = (journal["Imposable"]) & mask_valid if use_imposable_col else pd.Series(False, index=journal.index)
     mask_category = (journal["Category"].fillna("").str.contains("Vente", case=False)) & mask_valid if use_category_vente else pd.Series(False, index=journal.index)
 
     mask_cessions = (mask_imposable | mask_category) & (journal["Asset"] != "EUR")
@@ -214,16 +243,10 @@ else:
         st.info("Vous pouvez modifier directement les valeurs VGP dans le tableau ci-dessous.")
 
         # On affiche uniquement les cessions pour édition
-        # Type safety pour editor - Standard V4 uses 'Tx_Hash' with underscore
-        tx_col = "Tx_Hash" if "Tx_Hash" in journal.columns else ("Tx Hash" if "Tx Hash" in journal.columns else "Tx_Hash")
-        display_cols = ["Date", "Account", "Asset", "Amount", "VGP (EUR)", tx_col]
-
-        # 'Value ($)' fallback if missing
-        v_usd_col = "Valeur $" if "Valeur $" in journal.columns else ("Value ($)" if "Value ($)" in journal.columns else None)
-        if v_usd_col: display_cols.insert(4, v_usd_col)
+        display_cols = ["Date", "Account", "Asset", "Amount", "Valeur $", "VGP (EUR)", "Tx_Hash"]
 
         edit_df = journal[mask_cessions][display_cols].copy()
-        for c in ["Account", "Asset", tx_col]:
+        for c in ["Account", "Asset", "Tx_Hash"]:
             if c in edit_df.columns:
                 edit_df[c] = edit_df[c].fillna("").astype(str)
 
@@ -236,9 +259,9 @@ else:
             "Account": st.column_config.TextColumn("Compte", disabled=True),
             "Amount": st.column_config.NumberColumn(disabled=True),
             "Asset": st.column_config.TextColumn(disabled=True),
+            "Valeur $": st.column_config.NumberColumn(disabled=True),
+            "Tx_Hash": st.column_config.TextColumn(disabled=True),
         }
-        if v_usd_col: col_config_vgp[v_usd_col] = st.column_config.NumberColumn(disabled=True)
-        col_config_vgp[tx_col] = st.column_config.TextColumn(disabled=True)
 
         edited_cessions = st.data_editor(
             edit_df,

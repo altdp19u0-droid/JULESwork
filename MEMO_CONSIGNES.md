@@ -38,6 +38,7 @@ Tout fichier produit par le moteur ou les importeurs doit respecter scrupuleusem
 Lors de l'intégration de nouvelles données RAW, le système doit impérativement préserver les décisions de l'utilisateur déjà enregistrées :
 - **UID Composite :** La correspondance se fait sur `(Tx_Hash, Asset, Account, Amount, Date)`.
 - **Priorité Numérique :** Une valeur existante n'est écrasée que si elle est "vide". Pour les prix et USD, **0.00 est considéré comme vide**, permettant aux nouvelles récoltes Step 1 (Blockscout) d'enrichir les anciens journaux sans perte de données.
+- **Décisions Booléennes :** Pour la colonne `Imposable`, une valeur `False` est considérée comme une décision explicite de l'utilisateur et ne doit pas être écrasée par une valeur par défaut "vide".
 - **Colonnes Préservées :** `Audit_Status`, `Category`, `Imposable`, `VGP (EUR)`, `Valeur $`, et les 3 colonnes de prix USD.
 
 ### 2. Gestion de l'Exclusion des Spams
@@ -77,8 +78,8 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
     - **Intégrité des Prix :** Les valuations (EUR) utilisent prioritairement les prix USD récoltés dans le journal Step 2 (certifiés) avant de solliciter les APIs externes. **Il est strictement interdit d'utiliser la colonne VGP pour dériver un prix unitaire.**
     - **Anti-Inflation VGP :** Le mirroring des positions protocoles n'est appliqué que si la position n'est pas déjà présente comme compte actif dans l'historique, évitant les doubles comptages. La VGP est calculée comme la somme **nette** des actifs (en excluant les circuits externes) pour refléter la réalité du portefeuille.
     - **Unité de Calcul :** Le prix d'acquisition total (A) est calculé prioritairement à partir des registres manuels Step 0 via `sl.get_total_acquisition_value` pour une fidélité absolue à l'historique fiat.
-    - **Standard d'Affichage Acquisition :** Le tableau détaillé des acquisitions doit obligatoirement afficher : Fiat Mobilisé (à l'achat), Quantité acquise et Valeur au 31/12.
-    - Consomme exclusivement les données via `sl.load_clean_history` pour garantir un affichage sans spam.
+    - **Standard d'Affichage Acquisition :** Le tableau détaillé des acquisitions doit obligatoirement afficher : Fiat Mobilisé (à l'achat), Quantité acquise et Valeur au 31/12. Pour une fiabilité absolue, ces données sont extraites directement du registre manuel Step 0 (`manual_fiat`).
+    - Consomme les données via `sl.load_clean_history` pour les indicateurs, mais interroge les registres manuels pour les détails d'acquisition.
 3. **app3 (Fiscalité) :**
     - Application stricte de l'Art. 150 VH bis.
     - **Verrou de Sécurité :** Génération PDF interdite si `appDiagCoh` détecte des ruptures de stock (soldes négatifs) pour l'année cible.

@@ -115,16 +115,25 @@ def get_owner_history(year):
 
 @st.cache_data
 def get_acquisition_history(year):
-    """Loads all fiat acquisitions from CLEAN history from start_year to 'year'."""
-    # EXCLUSIVITY RULE: Data must come from CLEAN history journal only
-    df_h = sl.load_clean_history(year)
-    if df_h.empty: return pd.DataFrame()
+    """Loads all fiat acquisitions from Step 0 manual registers up to 'year' for absolute reliability."""
+    config = sl.load_global_config()
+    start = config.get("start_year", 2015)
+    all_acq = []
 
-    # Filter for 'Achat' categories in the journal
-    mask = df_h['Category'].fillna("").str.contains("Achat", case=False, na=False)
-    df_acq = df_h[mask].copy()
+    for y in range(start, year + 1):
+        p = sl.get_file_path(y, 'fiat')
+        if os.path.exists(p):
+            df = sl.pd_read_csv_safe(p)
+            if not df.empty:
+                # Recognition logic: type 'Achat' or 'Virement vers Crypto'
+                mask = df['Type'].fillna("").str.contains("Achat|Virement vers Crypto", case=False, na=False)
+                df_y = df[mask].copy()
+                if not df_y.empty:
+                    df_y["Source_Year"] = y
+                    all_acq.append(df_y)
 
-    if df_acq.empty: return pd.DataFrame()
+    if not all_acq: return pd.DataFrame()
+    df_acq = pd.concat(all_acq, ignore_index=True)
 
     df_acq["Date"] = pd.to_datetime(df_acq["Date"], utc=True, errors="coerce")
     df_acq = df_acq[df_acq["Date"].notna()]
@@ -133,24 +142,17 @@ def get_acquisition_history(year):
     df_acq = df_acq.rename(columns={
         "Account": "Compte",
         "Counterparty": "Provenance",
-        "Chain": "Blockchain"
+        "Plateforme": "Blockchain",
+        "Montant EUR": "Fiat Mobilisé (EUR)"
     })
 
-    # Value detection & Standard mapping - Safe handling of missing columns
-    if "Montant EUR" in df_acq.columns:
-        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Montant EUR"], errors="coerce")
-    elif "Amount" in df_acq.columns:
-        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Amount"], errors="coerce")
+    # In Step 0, 'Quantité' is already the token amount.
+    if "Quantité" not in df_acq.columns:
+        df_acq["Quantité"] = pd.to_numeric(df_acq.get("Amount", 0.0), errors="coerce").fillna(0.0).abs()
     else:
-        df_acq["Fiat Mobilisé (EUR)"] = pd.Series([0.0] * len(df_acq))
+        df_acq["Quantité"] = pd.to_numeric(df_acq["Quantité"], errors="coerce").fillna(0.0).abs()
 
-    df_acq["Fiat Mobilisé (EUR)"] = df_acq["Fiat Mobilisé (EUR)"].fillna(0.0)
-
-    # Standardize Quantité column (always refers to 'Amount' column of the journal)
-    if "Amount" in df_acq.columns:
-        df_acq["Quantité"] = pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0).abs()
-    else:
-        df_acq["Quantité"] = pd.Series([0.0] * len(df_acq))
+    df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Fiat Mobilisé (EUR)"], errors="coerce").fillna(0.0)
 
     return df_acq.sort_values("Date", ascending=False).reset_index(drop=True)
 
@@ -576,51 +578,6 @@ else:
     # 1. METRICS
     st.subheader("📊 Indicateurs Patrimoniaux")
 
-    # --- NEW: PROTOCOL POSITIONS TABLE ---
-    st.subheader(f"🏦 État des Lieux par Position Protocole (au 31/12/{target_year})")
-    df_proto_sum = get_protocol_summary(target_year)
-    if df_proto_sum.empty:
-        st.info("Aucune position protocole qualifiée détectée.")
-    else:
-        # Applying notes to protocol summary for consistency
-        df_proto_sum = apply_notes(df_proto_sum.rename(columns={"Compte (Protocol)": "Compte"}))
-
-        # Adding dummy tech columns for key generator in apply_notes
-        df_proto_sum["Tx Hash"] = "SNAPSHOT_PROTO"
-        if "Amount" not in df_proto_sum.columns:
-            df_proto_sum["Amount"] = df_proto_sum["Solde (Qté)"]
-
-        ed_proto = st.data_editor(
-            df_proto_sum,
-            column_config={
-                "Compte": "Protocole",
-                "Quantité Entrée": st.column_config.NumberColumn(format="%.6f"),
-                "Quantité Sortie": st.column_config.NumberColumn(format="%.6f"),
-                "Solde (Qté)": st.column_config.NumberColumn(format="%.6f"),
-                "Valeur EUR": st.column_config.NumberColumn(format="%.2f €"),
-                "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
-                "Tx Hash": None, "Amount": None # Hide dummy cols
-            },
-            width='stretch',
-            hide_index=True,
-            key="proto_bal_editor"
-        )
-
-        if st.button("💾 Enregistrer les Notes (Balances Protocoles)", key="btn_save_notes_bal_proto"):
-            new_notes = notes_db.copy()
-            for _, r in ed_proto.iterrows():
-                r_proxy = r.to_dict()
-                r_proxy["Date"] = datetime(target_year, 12, 31)
-                r_proxy["Account"] = r["Compte"]
-                key = sl.get_note_key(r_proxy)
-                if r["Notes"]: new_notes[key] = str(r["Notes"])
-                elif key in new_notes: del new_notes[key]
-            sl.save_manual_notes(new_notes)
-            st.success("Notes enregistrées.")
-            st.rerun()
-
-        st.caption("Note: Les prix et valeurs sont basés sur les cours au 31/12 de l'année de consultation.")
-
     st.divider()
 
     # Cumulative Acquisition Price (A)
@@ -815,6 +772,52 @@ else:
             sl.save_manual_notes(new_notes)
             st.success("Notes enregistrées.")
             st.rerun()
+
+    # --- NEW: PROTOCOL POSITIONS TABLE (Relocated to bottom) ---
+    st.divider()
+    st.subheader(f"🏦 État des Lieux par Position Protocole (au 31/12/{target_year})")
+    df_proto_sum = get_protocol_summary(target_year)
+    if df_proto_sum.empty:
+        st.info("Aucune position protocole qualifiée détectée.")
+    else:
+        # Applying notes to protocol summary for consistency
+        df_proto_sum = apply_notes(df_proto_sum.rename(columns={"Compte (Protocol)": "Compte"}))
+
+        # Adding dummy tech columns for key generator in apply_notes
+        df_proto_sum["Tx Hash"] = "SNAPSHOT_PROTO"
+        if "Amount" not in df_proto_sum.columns:
+            df_proto_sum["Amount"] = df_proto_sum["Solde (Qté)"]
+
+        ed_proto = st.data_editor(
+            df_proto_sum,
+            column_config={
+                "Compte": "Protocole",
+                "Quantité Entrée": st.column_config.NumberColumn(format="%.6f"),
+                "Quantité Sortie": st.column_config.NumberColumn(format="%.6f"),
+                "Solde (Qté)": st.column_config.NumberColumn(format="%.6f"),
+                "Valeur EUR": st.column_config.NumberColumn(format="%.2f €"),
+                "Notes": st.column_config.TextColumn("Notes (Saisie libre)", width="medium"),
+                "Tx Hash": None, "Amount": None # Hide dummy cols
+            },
+            width='stretch',
+            hide_index=True,
+            key="proto_bal_editor"
+        )
+
+        if st.button("💾 Enregistrer les Notes (Balances Protocoles)", key="btn_save_notes_bal_proto"):
+            new_notes = notes_db.copy()
+            for _, r in ed_proto.iterrows():
+                r_proxy = r.to_dict()
+                r_proxy["Date"] = datetime(target_year, 12, 31)
+                r_proxy["Account"] = r["Compte"]
+                key = sl.get_note_key(r_proxy)
+                if r["Notes"]: new_notes[key] = str(r["Notes"])
+                elif key in new_notes: del new_notes[key]
+            sl.save_manual_notes(new_notes)
+            st.success("Notes enregistrées.")
+            st.rerun()
+
+        st.caption("Note: Les prix et valeurs sont basés sur les cours au 31/12 de l'année de consultation.")
 
 st.sidebar.divider()
 st.sidebar.caption("Dashboard Patrimoine v1.0 - appPropri")
