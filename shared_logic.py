@@ -567,8 +567,7 @@ def get_journal_prices(df_h, target_date=None):
         # Hierarchy Level 1: Harvested USD price (high precision from Step 1/Step 2)
         p_usd = float(r.get("USD prix asset reçu", 0)) or float(r.get("USD prix asset envoyé", 0))
 
-        # Hierarchy Level 2: Valeur $ / Amount
-        # (Using Valeur $ is safer than VGP as it represents the asset value only)
+        # Hierarchy Level 2: Valeur $ / Amount (Asset specific valuation)
         p_eur = 0.0
         v_usd = float(r.get("Valeur $", 0))
         if p_usd == 0 and v_usd > 0 and amt > 1e-12:
@@ -699,9 +698,8 @@ def get_price_from_journal(asset, target_date, df_h=None, year=None):
     if matches.empty: return 0.0
 
     # Prioritize:
-    # 1. Highest VGP (EUR) / Amount ratio (most certified)
-    # 2. USD prices
-    # 3. Valeur $
+    # 1. USD prices (Received/Sent)
+    # 2. Valeur $ / Amount
 
     best_p_eur = 0.0
     eur_usd = get_fiat_rate("USD", datetime.combine(target_date, datetime.min.time())) or 0.92
@@ -710,17 +708,13 @@ def get_price_from_journal(asset, target_date, df_h=None, year=None):
         amt = abs(float(r.get("Amount", 0)))
         if amt < 1e-12: continue
 
-        # Method A: VGP (already in EUR)
-        p_vgp = float(r.get("VGP (EUR)", 0)) / amt
-        if p_vgp > best_p_eur: best_p_eur = p_vgp
-
-        # Method B: USD dedicated columns
+        # Method A: USD dedicated columns
         p_usd = float(r.get("USD prix asset reçu", 0)) or float(r.get("USD prix asset envoyé", 0))
         if p_usd > 0:
             p_eur = p_usd * eur_usd
             if p_eur > best_p_eur: best_p_eur = p_eur
 
-        # Method C: Valeur $
+        # Method B: Valeur $ / Amount
         v_usd = float(r.get("Valeur $", 0))
         if v_usd > 0:
             p_eur = (v_usd / amt) * eur_usd
@@ -825,6 +819,53 @@ def cleanup_working_files(year):
             except: pass
 
     return deleted_count
+
+def remove_row_from_csv(file_path, row_to_remove):
+    """Deletes a single row from a CSV file matching a quintuplet (Date, Account, Asset, Amount, Tx Hash)."""
+    if not os.path.exists(file_path): return False
+    df = pd_read_csv_safe(file_path)
+    if df.empty: return False
+
+    # Discovery of columns in the raw file
+    d_c = discover_col_simple(df, ["date", "timestamp", "time"])
+    acc_c = discover_col_simple(df, ["account", "compte", "address"])
+    ast_c = discover_col_simple(df, ["asset", "symbol", "token"])
+    amt_c = discover_col_simple(df, ["amount", "value", "quantity"])
+    tx_c = discover_col_simple(df, ["txhash", "hash", "transaction"])
+
+    if not all([d_c, acc_c, ast_c, amt_c, tx_c]): return False
+
+    # Robust Matching
+    try:
+        match_dt = pd.to_datetime(row_to_remove.get("Date"), utc=True)
+        match_acc = resolve_raw_addr(row_to_remove.get("Account")).lower()
+        match_ast = str(row_to_remove.get("Asset")).upper()
+        match_amt = abs(float(row_to_remove.get("Amount", 0)))
+        match_tx = str(row_to_remove.get("Tx_Hash", row_to_remove.get("Tx Hash"))).lower()
+
+        def is_match(r):
+            if pd.isna(r.get(d_c)): return False
+            if pd.to_datetime(r.get(d_c), utc=True) != match_dt: return False
+            if resolve_raw_addr(r.get(acc_c)).lower() != match_acc: return False
+            if str(r.get(ast_c)).upper() != match_ast: return False
+            if abs(float(r.get(amt_c, 0))) != match_amt: return False
+            if str(r.get(tx_c)).lower() != match_tx: return False
+            return True
+
+        mask = df.apply(is_match, axis=1)
+        if mask.any():
+            df_new = df[~mask]
+            df_new.to_csv(file_path, index=False, encoding="utf-8-sig")
+            return True
+    except: pass
+    return False
+
+def discover_col_simple(df, candidates):
+    cols_map = {str(c).lower().strip().replace(" ","").replace("_",""): c for c in df.columns}
+    for cand in candidates:
+        norm_cand = cand.lower().strip().replace(" ","").replace("_","")
+        if norm_cand in cols_map: return cols_map[norm_cand]
+    return None
 
 def show_status():
     st.sidebar.success("✅ Système Opérationnel")

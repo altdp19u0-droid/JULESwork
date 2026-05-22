@@ -11,7 +11,8 @@ QUALIFIED_V4_COLUMNS = [
     "From_Label", "To_Label", "Counterparty", "Asset", "Amount",
     "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset",
     "Fee_Asset", "Fee_Amount", "Source_Way", "Audit_Status", "Fee_Audit_Alert",
-    "Source_Exchange_Rate", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable"
+    "Source_Exchange_Rate", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable",
+    "Source_File"
 ]
 
 def ensure_columns(df):
@@ -84,7 +85,8 @@ def merge_raw_data(year):
                     "USD prix asset reçu": float(r.get(p_rec_c, 0.0)) if p_rec_c else 0.0,
                     "USD prix asset envoyé": float(r.get(p_sent_c, 0.0)) if p_sent_c else 0.0,
                     "USD prix de fée asset": float(r.get(p_fee_c, 0.0)) if p_fee_c else 0.0,
-                    "Source_Way": "Voie 3", "Audit_Status": "Valide"
+                    "Source_Way": "Voie 3", "Audit_Status": "Valide",
+                    "Source_File": fn
                 })
             continue
 
@@ -138,7 +140,8 @@ def merge_raw_data(year):
                     "To": sl.standardize_address_string(r.get(to_c, "")),
                     "Counterparty": str(r.get(cp_c, "")),
                     "Type": str(r.get(type_c, "Transfer")),
-                    "Source_Way": "Blockchain", "Audit_Status": "A vérifier"
+                    "Source_Way": "Blockchain", "Audit_Status": "A vérifier",
+                    "Source_File": fn
                 })
             except: continue
 
@@ -489,13 +492,18 @@ def main():
         if f_imp == "Oui": view_df = view_df[view_df["Imposable"].apply(sl.is_imposable_robust)]
         elif f_imp == "Non": view_df = view_df[~view_df["Imposable"].apply(sl.is_imposable_robust)]
 
-        # Editor
+        # Editor Configuration
         if "has_unsaved_changes" not in st.session_state:
             st.session_state.has_unsaved_changes = False
+
+        # Add modification checkbox
+        if "Mod." not in view_df.columns:
+            view_df.insert(0, "Mod.", False)
 
         edited_df = st.data_editor(
             view_df,
             column_config={
+                "Mod.": st.column_config.CheckboxColumn("Mod.", default=False),
                 "Audit_Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam", "Ignoré"]),
                 "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Revenu", "Dépense", "Transfert", "Transfert Interne", "Swap", "Achat", "Vente"]),
                 "Imposable": st.column_config.CheckboxColumn("Imposable"),
@@ -523,6 +531,44 @@ def main():
 
         save_label = "🚨 Sauvegarder Journal (Modifications en cours)" if st.session_state.has_unsaved_changes else "🐾 Sauvegarder Journal"
         btn_type = "primary" if st.session_state.has_unsaved_changes else "secondary"
+
+        # ACTION BAR FOR SELECTED ROWS
+        selected_rows = edited_df[edited_df["Mod."] == True]
+        if not selected_rows.empty:
+            st.markdown("---")
+            st.subheader(f"🛠️ Gestion des {len(selected_rows)} lignes sélectionnées")
+            act_cols = st.columns(3)
+
+            with act_cols[0]:
+                if st.button("⏪ Restaurer vers RAW", help="Retire les qualifications de ces lignes pour les remettre à l'état 'A vérifier'.", width='stretch'):
+                    for idx in selected_rows.index:
+                        st.session_state.df_qualif.loc[idx, "Audit_Status"] = "A vérifier"
+                        st.session_state.df_qualif.loc[idx, "Category"] = ""
+                        st.session_state.df_qualif.loc[idx, "Imposable"] = False
+                    st.session_state.has_unsaved_changes = True
+                    st.rerun()
+
+            with act_cols[1]:
+                with st.popover("🔥 Éliminer DÉFINITIVEMENT", width='stretch'):
+                    st.error("Cette action supprimera la transaction du fichier source original (RAW).")
+                    if st.button("Confirmer l'élimination physique"):
+                        count_del = 0
+                        for _, s_row in selected_rows.iterrows():
+                            src_f = s_row.get("Source_File")
+                            if src_f:
+                                f_path = os.path.join(EXPORT_BASE_DIR, str(year), src_f)
+                                # Check if it's in sanctuary too
+                                if not os.path.exists(f_path):
+                                    f_path = os.path.join(EXPORT_BASE_DIR, str(year), "sanctuary", src_f)
+
+                                if os.path.exists(f_path):
+                                    if sl.remove_row_from_csv(f_path, s_row):
+                                        count_del += 1
+
+                        st.session_state.df_qualif = st.session_state.df_qualif.drop(index=selected_rows.index)
+                        st.session_state.has_unsaved_changes = True
+                        st.success(f"{len(selected_rows)} lignes éliminées et retirées de {count_del} fichiers RAW.")
+                        time.sleep(1); st.rerun()
 
         # CSS pour colorer le bouton en rouge si modifications
         if st.session_state.has_unsaved_changes:

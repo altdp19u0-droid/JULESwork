@@ -26,13 +26,14 @@ with st.sidebar:
     if "_hub_appPropri_year" not in st.session_state:
         st.session_state["_hub_appPropri_year"] = persisted_year
 
-    target_year = st.number_input("Année de consultation", min_value=2015, max_value=2030, key="_hub_appPropri_year")
+    target_year_input = st.number_input("Année de consultation", min_value=2015, max_value=2030, key="_hub_appPropri_year")
+    target_year = int(target_year_input)
 
     # Persist change to global config immediately when detected
     if target_year != g_conf.get("appPropri_year"):
-        g_conf["appPropri_year"] = int(target_year)
+        g_conf["appPropri_year"] = target_year
         # Also update the shared processing year for suite consistency
-        g_conf["processing_year"] = int(target_year)
+        g_conf["processing_year"] = target_year
         sl.save_global_config(g_conf)
 
     # Year switch detection for session clearing
@@ -135,8 +136,13 @@ def get_acquisition_history(year):
         "Chain": "Blockchain"
     })
 
-    # Value detection & Standard mapping
-    df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq.get("Montant EUR", 0.0), errors="coerce").fillna(0.0)
+    # Value detection & Standard mapping - Safe handling of missing columns
+    if "Montant EUR" in df_acq.columns:
+        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Montant EUR"], errors="coerce").fillna(0.0)
+    elif "Amount" in df_acq.columns:
+        df_acq["Fiat Mobilisé (EUR)"] = pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0)
+    else:
+        df_acq["Fiat Mobilisé (EUR)"] = 0.0
 
     # Standardize Quantité column (always refers to 'Amount' column of the journal)
     df_acq["Quantité"] = pd.to_numeric(df_acq["Amount"], errors="coerce").fillna(0.0).abs()
@@ -558,8 +564,8 @@ if nav_mode == "⚖️ Détails Fiscaux (A & Cessions)":
                     st.success("Notes enregistrées.")
                     st.rerun()
 
-elif history.empty and comp_history.empty:
-    st.warning(f"Aucune transaction trouvée pour les comptes propriétaires jusqu'en {target_year}.")
+elif history.empty and comp_history.empty and acq_history.empty:
+    st.warning(f"Aucune donnée (historique, complémentaire ou acquisition) trouvée jusqu'en {target_year}.")
     st.info("💡 Vérifiez que vos comptes sont bien enregistrés dans la **Gestion des Comptes Propriétaires** (App 2).")
 else:
     # 1. METRICS

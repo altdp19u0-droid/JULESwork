@@ -58,6 +58,7 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 2. **Positions Protocoles :** Si l'une des parties est un propriétaire et l'autre est une adresse de position protocole, ET que l'asset de la transaction correspond à l'un des assets enregistrés pour cette position dans le registre.
 
 - **Injections Fiat :** L'outil d'injection dans `app2.py` permet de transférer des flux vers le registre Step 0 (fiat bank) en choisissant le sens : **Achat** (Banque -> Crypto) ou **Vente** (Crypto -> Banque, imposable par défaut). Les lignes injectées apparaissent en jaune vif dans l'App 0 et utilisent les libellés "Banque FIAT" et "Compte CRYPTO" pour plus de clarté.
+- **Gestion des Lignes RAW :** L'App 2 permet l'élimination définitive de transactions erronées dans les fichiers RAW sources via la colonne de sélection `Mod.`. La traçabilité est assurée par la colonne `Source_File`.
 
 ---
 
@@ -72,7 +73,7 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 2. **appPropri (Dashboard) :**
     - Affiche la synthèse des positions protocoles (selon `position_labels.json`).
     - **Filtrage Intelligent :** Pour chaque position protocole, seuls les assets explicitement définis dans le registre sont affichés. Si la liste est vide, tous les assets de la position sont affichés.
-    - **Intégrité des Prix :** Les valuations (EUR) utilisent prioritairement les prix USD récoltés dans le journal Step 2 (certifiés) avant de solliciter les APIs externes.
+    - **Intégrité des Prix :** Les valuations (EUR) utilisent prioritairement les prix USD récoltés dans le journal Step 2 (certifiés) avant de solliciter les APIs externes. **Il est strictement interdit d'utiliser la colonne VGP pour dériver un prix unitaire.**
     - **Anti-Inflation VGP :** Le mirroring des positions protocoles n'est appliqué que si la position n'est pas déjà présente comme compte actif dans l'historique, évitant les doubles comptages. La VGP est calculée comme la somme **nette** des actifs (en excluant les circuits externes) pour refléter la réalité du portefeuille.
     - **Unité de Calcul :** Le prix d'acquisition total (A) est calculé prioritairement à partir des registres manuels Step 0 via `sl.get_total_acquisition_value` pour une fidélité absolue à l'historique fiat.
     - **Standard d'Affichage Acquisition :** Le tableau détaillé des acquisitions doit obligatoirement afficher : Fiat Mobilisé (à l'achat), Quantité acquise et Valeur au 31/12.
