@@ -511,6 +511,15 @@ def main():
     with tab1:
         st.title(f"Qualification {year}")
 
+        # HIDDEN ROWS ALERT
+        num_hidden_qual = len(full_df) - len(view_df)
+        if num_hidden_qual > 0:
+            sc_h1, sc_h2 = st.columns([4, 1])
+            sc_h1.warning(f"⚠️ {num_hidden_qual} transactions sont actuellement masquées par vos filtres ou le bouton 'Spam'.")
+            if sc_h2.button("♻️ Reset", key="btn_reset_warning"):
+                st.session_state.filter_version += 1
+                st.rerun()
+
         # Filtres
         v = st.session_state.filter_version
         with st.expander("🔍 Filtres avancés", expanded=True):
@@ -621,7 +630,7 @@ def main():
         if not selected_rows.empty:
             st.markdown("---")
             st.subheader(f"🛠️ Gestion des {len(selected_rows)} lignes sélectionnées")
-            act_cols = st.columns(3)
+            act_cols = st.columns(4)
 
             with act_cols[0]:
                 if st.button("⏪ Restaurer vers RAW", help="Retire les qualifications de ces lignes pour les remettre à l'état 'A vérifier'.", width='stretch'):
@@ -633,6 +642,28 @@ def main():
                     st.rerun()
 
             with act_cols[1]:
+                with st.popover("🚀 Injecter Sélection", width='stretch'):
+                    st.info(f"Injecter {len(selected_rows)} lignes vers Step 0")
+                    dest = st.radio("Destination", ["Flux Fiat (Banque)", "Swaps & Internes"], horizontal=True, key="dest_selected")
+
+                    if dest == "Flux Fiat (Banque)":
+                        op_type = st.radio("Nature", ["Achat (Banque -> Crypto)", "Vente (Crypto -> Banque)"], horizontal=True, key="op_selected")
+
+                    if st.button("Confirmer Injection Massive"):
+                        data = []
+                        for _, r in selected_rows.iterrows():
+                            data.append({
+                                "Date": r["Date"], "Account": r["Account"], "Counterparty": "banq fiat" if dest == "Flux Fiat (Banque)" else r["Counterparty"],
+                                "Amount": r["Amount"], "Asset": r["Asset"], "Tx Hash": r["Tx_Hash"],
+                                "Imposable": (dest == "Flux Fiat (Banque)" and "Vente" in op_type) or (dest == "Swaps & Internes")
+                            })
+                        target = "Fiat" if dest == "Flux Fiat (Banque)" else "Swaps"
+                        op = "Vente" if (dest == "Flux Fiat (Banque)" and "Vente" in op_type) else "Achat"
+                        sl.inject_to_app0(data, target, year, op_type=op)
+                        st.success(f"{len(data)} lignes injectées vers {dest} !")
+                        time.sleep(1); st.rerun()
+
+            with act_cols[2]:
                 with st.popover("🔥 Éliminer (RAW Racine)", width='stretch'):
                     st.error("Cette action supprimera la transaction des fichiers RAW de travail (racine de l'année).")
                     st.info("💡 Le dossier /sanctuary/ reste intact et permettra le rétablissement ultérieur via l'onglet Audit.")
@@ -708,10 +739,14 @@ def main():
         with i_cols[0]:
             st.info("Injecter vers le flux fiat (banq fiat).")
             with st.popover("Préparer Injection Fiat"):
-                inj_type = st.radio("Type d'injection", ["Vente (Crypto -> Banque)", "Achat (Banque -> Crypto)"], horizontal=True)
+                inj_type = st.radio("Type d'injection", ["Vente (Crypto -> Banque)", "Achat (Banque -> Crypto)"], horizontal=True, key=f"inj_type_{v}")
+                ignore_sign = st.checkbox("Ignorer restriction de signe", value=False, help="Permet de retrouver une transaction même si son signe (In/Out) semble inversé.", key=f"ignore_sign_{v}")
 
                 # Filter for selection
-                if "Vente" in inj_type:
+                if ignore_sign:
+                    valid_idx = view_df.index
+                    prompt = "Choisir n'importe quelle ligne"
+                elif "Vente" in inj_type:
                     valid_idx = view_df[view_df["Amount"] < 0].index
                     prompt = "Choisir jambe de sortie (Amount < 0)"
                 else:
@@ -719,7 +754,8 @@ def main():
                     prompt = "Choisir jambe d'entrée (Amount > 0)"
 
                 sel_row_idx = st.selectbox(prompt, valid_idx,
-                                       format_func=lambda x: f"{view_df.loc[x, 'Date']} - {view_df.loc[x, 'Amount']} {view_df.loc[x, 'Asset']}")
+                                       format_func=lambda x: f"{view_df.loc[x, 'Date'].strftime('%d/%m')} | {view_df.loc[x, 'Amount']} {view_df.loc[x, 'Asset']} | {view_df.loc[x, 'Account'][:10]}... | {view_df.loc[x, 'Category']}",
+                                       key=f"sel_inj_fiat_{v}")
 
                 if st.button("Confirmer Injection Fiat"):
                     row = view_df.loc[sel_row_idx]

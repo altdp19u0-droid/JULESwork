@@ -39,7 +39,7 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 - **UID Composite :** La correspondance se fait sur `(Tx_Hash, Asset, Account, Amount, Date)`.
 - **Priorité Numérique :** Une valeur existante n'est écrasée que si elle est "vide". Pour les prix et USD, **0.00 est considéré comme vide**, permettant aux nouvelles récoltes Step 1 (Blockscout) d'enrichir les anciens journaux sans perte de données.
 - **Décisions Booléennes :** Pour la colonne `Imposable`, une valeur `False` est considérée comme une décision explicite de l'utilisateur et ne doit pas être écrasée par une valeur par défaut "vide".
-- **Colonnes Préservées :** `Audit_Status`, `Category`, `Imposable`, `VGP (EUR)`, `Valeur $`, et les 3 colonnes de prix USD.
+- **Colonnes Préservées :** `Audit_Status`, `Category`, `Imposable`, `Prix de Cession (EUR)`, `VGP (EUR)`, `Valeur $`, et les 3 colonnes de prix USD.
 
 ### 2. Gestion de l'Exclusion des Spams
 - **Zéro Spam CLEAN :** Le bouton "Sauvegarder" doit déclencher un `sl.apply_spam_filter(df, drop=True)` avant l'écriture du fichier CLEAN.
@@ -52,13 +52,14 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 - **Indicateur de Modification :** Le bouton de sauvegarde doit changer de couleur (Rouge) dès qu'une modification est détectée dans l'éditeur.
 - **CRUD Registres :** Les listes (Spams, Assets Valides, Propriétaires, Positions) en sidebar doivent permettre l'ajout et la suppression individuelle via des boutons dédiés.
 - **Positions Protocoles :** L'ajout d'une position protocole requiert obligatoirement la saisie d'un ou plusieurs assets associés (séparés par des virgules).
+- **Système de Filtres :** Pour permettre une réinitialisation propre des widgets Streamlit (toggles, multiselects), les clés des widgets doivent inclure une version (`filter_version`) incrémentée lors du reset.
 
 ### 4. Automatisation & Injections
 - **Transfert Interne :** L'application `app2.py` applique automatiquement la catégorie "Transfert Interne" lors de la qualification initiale si les conditions suivantes sont réunies et que la ligne n'est pas qualifiée de **Spam** :
 1. **Entre Propriétaires :** Si l'expéditeur (`From`) et le destinataire (`To`) sont tous deux dans le registre des comptes propriétaires ET que l'asset est dans la Whitelist (`valid_assets.json`).
 2. **Positions Protocoles :** Si l'une des parties est un propriétaire et l'autre est une adresse de position protocole, ET que l'asset de la transaction correspond à l'un des assets enregistrés pour cette position dans le registre.
 
-- **Injections Fiat :** L'outil d'injection dans `app2.py` permet de transférer des flux vers le registre Step 0 (fiat bank) en choisissant le sens : **Achat** (Banque -> Crypto) ou **Vente** (Crypto -> Banque, imposable par défaut). Les lignes injectées apparaissent en jaune vif dans l'App 0 et utilisent les libellés "Banque FIAT" et "Compte CRYPTO" pour plus de clarté.
+- **Injections Fiat :** L'outil d'injection dans `app2.py` permet de transférer des flux vers le registre Step 0 (fiat bank) en choisissant le sens : **Achat** (Banque -> Crypto) ou **Vente** (Crypto -> Banque, imposable par défaut). Les injections peuvent être faites via l'outil dédié (avec option d'ignorer la restriction de signe) ou directement depuis la barre d'action sur une sélection de lignes. Les lignes injectées apparaissent en jaune vif dans l'App 0 et utilisent les libellés "Banque FIAT" et "Compte CRYPTO" pour plus de clarté.
 - **Gestion des Lignes RAW :** L'App 2 permet l'élimination de transactions erronées dans les fichiers RAW de travail (racine de l'année) via la colonne de sélection `Mod.`. La traçabilité est assurée par la colonne `Source_File`.
 - **Règle Absolue Sanctuary :** Il est **STRICTEMENT INTERDIT** de modifier ou supprimer des lignes dans les fichiers du dossier `/sanctuary/`. Ce dossier sert d'archive de secours inviolable permettant le rétablissement des données via l'onglet "Audit & Recovery".
 
