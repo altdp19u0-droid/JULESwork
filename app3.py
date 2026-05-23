@@ -697,7 +697,9 @@ with tab_bilan:
         st.table(df_bilan)
 
         total_pv = df_bilan['Plus-Value Brute'].sum()
-        total_cessions = df_bilan['Prix Cession'].sum()
+        # Standardize on 'Prix de Cession (EUR)' which is the internal name in shared_logic.calculate_fiscal_gains
+        pc_col = 'Prix de Cession (EUR)' if 'Prix de Cession (EUR)' in df_bilan.columns else ('Prix Cession' if 'Prix Cession' in df_bilan.columns else 'VGP (EUR)')
+        total_cessions = df_bilan[pc_col].sum()
 
         col_b1, col_b2, col_b3 = st.columns(3)
         label_pv = "Plus-Value Totale Brute" if total_pv >= 0 else "Moins-Value Totale Brute"
@@ -1029,14 +1031,19 @@ with tab_bilan:
             for i, c in enumerate(cols_c): pdf.cell(w_c[i], 8, c, border=1, fill=True)
             pdf.ln()
             pdf.set_font(main_font, '', 9)
+
+            # Robust column identification for PDF
+            pc_col = 'Prix de Cession (EUR)' if 'Prix de Cession (EUR)' in bilan_df.columns else ('Prix Cession' if 'Prix Cession' in bilan_df.columns else 'VGP (EUR)')
+            vgp_col = 'VGP (EUR)' if 'VGP (EUR)' in bilan_df.columns else 'VGP'
+
             for _, row in bilan_df.iterrows():
                 try: ds_c = pd.to_datetime(row["Date"]).strftime("%d/%m/%Y")
                 except: ds_c = str(row["Date"])
 
                 pdf.cell(w_c[0], 8, ds_c, border=1)
                 pdf.cell(w_c[1], 8, pdf_safe_str(row["Asset"], use_uni), border=1)
-                pdf.cell(w_c[2], 8, f"{row['Prix Cession']:.2f} EUR", border=1)
-                pdf.cell(w_c[3], 8, f"{row['VGP']:.2f} EUR", border=1)
+                pdf.cell(w_c[2], 8, f"{row.get(pc_col, 0):.2f} EUR", border=1)
+                pdf.cell(w_c[3], 8, f"{row.get(vgp_col, 0):.2f} EUR", border=1)
                 pdf.cell(w_c[4], 8, f"{row['Abattement Acq']:.2f} EUR", border=1)
                 pdf.cell(w_c[5], 8, f"{row['Plus-Value Brute']:.2f} EUR", border=1)
                 pdf.ln()

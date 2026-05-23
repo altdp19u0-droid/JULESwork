@@ -43,7 +43,7 @@ def ensure_columns(df):
         "From_Label", "To_Label", "Counterparty", "Asset", "Amount",
         "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset",
         "Fee_Asset", "Fee_Amount", "Source_Way", "Audit_Status", "Fee_Audit_Alert",
-        "Source_Exchange_Rate", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable",
+        "Source_Exchange_Rate", "Prix de Cession (EUR)", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable",
         "Source_File"
     ]
     if df is None or df.empty:
@@ -161,7 +161,7 @@ else:
     journal = st.session_state.journal_active
 
     # Force numeric conversion & initialization
-    for col in ["Amount", "Valeur $", "VGP (EUR)"]:
+    for col in ["Amount", "Valeur $", "Prix de Cession (EUR)", "VGP (EUR)"]:
         if col in journal.columns:
             journal[col] = pd.to_numeric(journal[col], errors="coerce").fillna(0.0)
         else:
@@ -241,7 +241,7 @@ else:
         st.info("Vous pouvez modifier directement les valeurs VGP dans le tableau ci-dessous.")
 
         # On affiche uniquement les cessions pour édition
-        display_cols = ["Date", "Account", "Asset", "Amount", "Valeur $", "VGP (EUR)", "Tx_Hash"]
+        display_cols = ["Date", "Account", "Asset", "Amount", "Valeur $", "Prix de Cession (EUR)", "VGP (EUR)", "Tx_Hash"]
 
         edit_df = journal[mask_cessions][display_cols].copy()
         for c in ["Account", "Asset", "Tx_Hash"]:
@@ -253,6 +253,7 @@ else:
 
         col_config_vgp = {
             "VGP (EUR)": st.column_config.NumberColumn("VGP (EUR)", format="%.2f", help="Valeur totale du portefeuille à cette date"),
+            "Prix de Cession (EUR)": st.column_config.NumberColumn("Prix Cession (EUR)", format="%.2f"),
             "Date": st.column_config.DatetimeColumn(disabled=True),
             "Account": st.column_config.TextColumn("Compte", disabled=True),
             "Amount": st.column_config.NumberColumn(disabled=True),
@@ -271,8 +272,9 @@ else:
         # Injection des modifs manuelles dans le journal principal
         if st.button("💾 Sanctuariser les VGP (Enregistrer sur disque)", width='stretch'):
             journal.loc[mask_cessions, "VGP (EUR)"] = edited_cessions["VGP (EUR)"].values
+            journal.loc[mask_cessions, "Prix de Cession (EUR)"] = edited_cessions["Prix de Cession (EUR)"].values
             journal.to_csv(path, index=False, encoding="utf-8-sig")
-            st.success(f"Journal mis à jour avec les VGP dans {path}")
+            st.success(f"Journal mis à jour avec les VGP et Prix de Cession dans {path}")
             st.balloons()
 
         # 4. Audit détaillé

@@ -13,7 +13,7 @@ QUALIFIED_V4_COLUMNS = [
     "From_Label", "To_Label", "Counterparty", "Asset", "Amount",
     "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset",
     "Fee_Asset", "Fee_Amount", "Source_Way", "Audit_Status", "Fee_Audit_Alert",
-    "Source_Exchange_Rate", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable",
+    "Source_Exchange_Rate", "Prix de Cession (EUR)", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable",
     "Source_File"
 ]
 
@@ -175,7 +175,7 @@ def merge_raw_data(year):
                 "Chain": "Fiat", "Tx_Hash": tx_h,
                 "Account": str(r.get("Account", "banq fiat")),
                 "Asset": ast_val, "Amount": qty_val,
-                "VGP (EUR)": fiat_val,
+                "Prix de Cession (EUR)": fiat_val,
                 "Counterparty": str(r.get("Counterparty", "Banque")),
                 "Type": "Fiat Move", "Source_Way": "Manuel", "Audit_Status": "Valide",
                 "Category": op_type if op_type else "Achat",
@@ -257,7 +257,7 @@ def run_fidelity_engine(raw_df, existing_df):
     # Les colonnes à préserver (celles que l'utilisateur modifie ou enrichies par récolte)
     preservable = [
         "Audit_Status", "Category", "From_Label", "To_Label", "Counterparty",
-        "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable",
+        "Prix de Cession (EUR)", "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable",
         "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset",
         "Fee_Asset", "Fee_Amount"
     ]
