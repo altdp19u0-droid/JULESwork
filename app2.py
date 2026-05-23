@@ -357,10 +357,14 @@ def main():
 
     year = st.sidebar.selectbox("Année", [2025, 2024], key="_hub_app2_year")
 
+    # Filter reset mechanism using versioned keys
+    if "filter_version" not in st.session_state:
+        st.session_state.filter_version = 0
+
     # Persistent toggle for Spams
     g_conf = sl.load_global_config()
     show_spams_default = g_conf.get("app2_show_spams", False)
-    show_spams = st.sidebar.toggle("Afficher les Spams", value=show_spams_default, key="app2_show_spams_toggle")
+    show_spams = st.sidebar.toggle("Afficher les Spams", value=show_spams_default, key=f"app2_show_spams_{st.session_state.filter_version}")
 
     if show_spams != show_spams_default:
         g_conf["app2_show_spams"] = show_spams
@@ -508,32 +512,29 @@ def main():
         st.title(f"Qualification {year}")
 
         # Filtres
+        v = st.session_state.filter_version
         with st.expander("🔍 Filtres avancés", expanded=True):
             f_cols1 = st.columns(3)
-            f_status = f_cols1[0].multiselect("Statut", ["A vérifier", "Valide", "Spam", "Ignoré"], default=["A vérifier", "Valide"])
+            f_status = f_cols1[0].multiselect("Statut", ["A vérifier", "Valide", "Spam", "Ignoré"], default=["A vérifier", "Valide"], key=f"f_status_{v}")
             # Selection includes all accounts (on-chain and fiat/manual) found in the journal
             all_accs = sorted(list(df["Account"].unique()))
-            f_acc = f_cols1[1].multiselect("Compte", all_accs)
-            f_asset = f_cols1[2].multiselect("Asset", sorted(list(df["Asset"].unique())))
+            f_acc = f_cols1[1].multiselect("Compte", all_accs, key=f"f_acc_{v}")
+            f_asset = f_cols1[2].multiselect("Asset", sorted(list(df["Asset"].unique())), key=f"f_asset_{v}")
 
             f_cols2 = st.columns(3)
-            f_cp = f_cols2[0].multiselect("Contrepartie", sorted(list(df["Counterparty"].dropna().unique())))
-            f_cat = f_cols2[1].multiselect("Catégorie", sorted(list(df["Category"].fillna("").unique())))
-            f_imp = f_cols2[2].selectbox("Imposable", ["Tous", "Oui", "Non"])
+            f_cp = f_cols2[0].multiselect("Contrepartie", sorted(list(df["Counterparty"].dropna().unique())), key=f"f_cp_{v}")
+            f_cat = f_cols2[1].multiselect("Catégorie", sorted(list(df["Category"].fillna("").unique())), key=f"f_cat_{v}")
+            f_imp = f_cols2[2].selectbox("Imposable", ["Tous", "Oui", "Non"], key=f"f_imp_{v}")
 
             f_cols3 = st.columns(3)
             min_date = df["Date"].min().date() if not df.empty else datetime(year, 1, 1).date()
             max_date = df["Date"].max().date() if not df.empty else datetime(year, 12, 31).date()
-            f_date_range = f_cols3[0].date_input("Plage de dates", value=(min_date, max_date), min_value=min_date, max_value=max_date)
-            f_amt_search = f_cols3[1].text_input("Montant (Recherche)", placeholder="ex: 0.5 or 123.45")
-            f_hash_search = f_cols3[2].text_input("Recherche Tx Hash", placeholder="0x...")
+            f_date_range = f_cols3[0].date_input("Plage de dates", value=(min_date, max_date), min_value=min_date, max_value=max_date, key=f"f_date_{v}")
+            f_amt_search = f_cols3[1].text_input("Montant (Recherche)", placeholder="ex: 0.5 or 123.45", key=f"f_amt_{v}")
+            f_hash_search = f_cols3[2].text_input("Recherche Tx Hash", placeholder="0x...", key=f"f_hash_{v}")
 
             if st.button("♻️ Réinitialiser tous les filtres"):
-                # Use hub-prefixed or standard keys based on widget initialization
-                st.session_state["app2_show_spams_toggle"] = True
-                # We can't easily reset multiselects/selectbox from a button inside the expander
-                # without using session state keys for each.
-                # For now, we rely on the user manual reset or we'd need to refactor widgets to use keys.
+                st.session_state.filter_version += 1
                 st.rerun()
 
         # DATA VIEW GENERATION
@@ -761,6 +762,10 @@ def main():
         st.header("Audit & Recovery")
 
         st.info("💡 Si vous ne trouvez pas une transaction, vérifiez si elle n'est pas masquée par le filtre 'Spam' (Bouton dans la barre latérale) ou par les filtres avancés du journal.")
+
+        num_hidden = len(full_df) - len(view_df)
+        if num_hidden > 0:
+            st.warning(f"⚠️ {num_hidden} transactions du journal sont actuellement masquées par vos filtres actifs.")
 
         # 1. SCAN GLOBAL (All RAW files including Sanctuary)
         raw_global = merge_raw_data(year)
