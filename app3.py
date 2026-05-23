@@ -207,8 +207,7 @@ data = load_data(target_year)
 # --- Vérification d'Intégrité (Zéro Fallback) ---
 if 'journal' in data and not data['journal'].empty:
     j = data['journal']
-    def is_imp_check(v): return str(v).upper().strip() in ["TRUE", "1", "1.0", "VRAI"]
-    mask_cess_check = (j['Imposable'].apply(is_imp_check) | j['Category'].fillna("").str.contains("Vente", case=False)) & (j['Asset'] != 'EUR')
+    mask_cess_check = j.apply(sl.is_cession_imposable_robust, axis=1)
     if mask_cess_check.any() and 'VGP (EUR)' in j.columns:
         # Check for zero or negative VGP
         missing_vgp = j[mask_cess_check & (j['VGP (EUR)'].fillna(0) <= 0)]
@@ -581,12 +580,11 @@ with tab_acq:
     st.subheader("💵 Suivi du Prix d'Acquisition Global")
     st.write("Le prix d'acquisition est le total des montants en Euros investis pour acquérir des actifs numériques.")
 
-    current_acq = calculate_acquisition_price(target_year)
+    # UNIFICATION: Use central Step 0 logic for absolute reliability
+    total_acq_price = sl.get_total_acquisition_value(target_year)
 
     col_acq1, col_acq2 = st.columns(2)
     with col_acq1:
-        hist_acq = st.number_input("Prix d'acquisition historique (années précédentes)", value=0.0, step=100.0, key="hist_acq_input")
-        total_acq_price = current_acq + hist_acq
         st.session_state.total_acq_price_shared = total_acq_price
         st.metric("Prix d'acquisition Total (A)", f"{total_acq_price:,.2f} €")
 
@@ -603,14 +601,8 @@ with tab_cessions:
     if journal.empty:
         st.warning("Le journal qualifié est vide. Terminez l'étape 2 d'abord.")
     else:
-        # On cherche les lignes marquées comme Imposable ou étant des retraits Fiat (Vente)
-        # Mais on exclut formellement les lignes EUR (Fiat pur)
-
-        cessions = journal[
-        (journal['Imposable'].apply(sl.is_imposable_robust) |
-             journal['Category'].fillna("").str.contains("Vente", case=False)) &
-            (journal['Asset'] != 'EUR')
-        ].copy()
+        # Centralized detection for imposable cessions
+        cessions = journal[journal.apply(sl.is_cession_imposable_robust, axis=1)].copy()
 
         if cessions.empty:
             st.info("Aucune cession imposable détectée dans le journal.")
@@ -680,11 +672,7 @@ with tab_bilan:
     journal_for_check = data.get('journal', pd.DataFrame())
     if not journal_for_check.empty:
         try:
-            potential_cessions = journal_for_check[
-            (journal_for_check['Imposable'].apply(sl.is_imposable_robust) |
-                 journal_for_check['Category'].fillna("").str.contains("Vente", case=False)) &
-                (journal_for_check['Asset'] != 'EUR')
-            ].copy()
+            potential_cessions = journal_for_check[journal_for_check.apply(sl.is_cession_imposable_robust, axis=1)].copy()
 
             if not potential_cessions.empty:
                 def get_est_eur(row):

@@ -80,6 +80,7 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
     - **Unité de Calcul :** Le prix d'acquisition total (A) est calculé prioritairement à partir des registres manuels Step 0 via `sl.get_total_acquisition_value` pour une fidélité absolue à l'historique fiat.
     - **Standard d'Affichage Acquisition :** Le tableau détaillé des acquisitions doit obligatoirement afficher : Fiat Mobilisé (à l'achat), Quantité acquise et Valeur au 31/12. Pour une fiabilité absolue, ces données sont extraites directement du registre manuel Step 0 (`manual_fiat`).
     - Consomme les données via `sl.load_clean_history` pour les indicateurs, mais interroge les registres manuels pour les détails d'acquisition.
+    - **Identification des Cessions :** Pour être identifiée comme une cession imposable, une transaction doit obligatoirement être un flux de sortie (`Amount < 0`), ne pas être de l'actif `EUR`, et être soit cochée `Imposable`, soit appartenir à une catégorie de type `Vente` ou `Cession`. Cette logique est centralisée dans `sl.is_cession_imposable_robust`.
 3. **app3 (Fiscalité) :**
     - Application stricte de l'Art. 150 VH bis.
     - **Verrou de Sécurité :** Génération PDF interdite si `appDiagCoh` détecte des ruptures de stock (soldes négatifs) pour l'année cible.

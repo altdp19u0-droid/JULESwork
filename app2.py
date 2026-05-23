@@ -151,25 +151,34 @@ def merge_raw_data(year):
     f_fiat = sl.get_file_path(year, 'fiat')
     if f_fiat and os.path.exists(f_fiat):
         df_fiat = sl.pd_read_csv_safe(f_fiat)
-        for _, r in df_fiat.iterrows():
+        for idx, r in df_fiat.iterrows():
             # Robust mapping for fiat rows from app0
-            # Quantité (Token qty) -> Amount
-            # Montant EUR (Fiat cost) -> VGP (EUR)
-            qty_val = r.get("Quantité", r.get("Amount", 0))
-            fiat_val = r.get("Montant EUR", 0)
+            raw_qty = float(r.get("Quantité", r.get("Amount", 0)))
+            fiat_val = float(r.get("Montant EUR", 0))
+            op_type = str(r.get("Type", ""))
+
+            if "Vente" in op_type or "Retrait" in op_type:
+                qty_val = -abs(raw_qty)
+            else:
+                qty_val = abs(raw_qty)
 
             ast_val = str(r.get("Asset", "EUR")).upper().strip()
             if ast_val in ["", "NAN", "NONE"]: ast_val = "EUR"
 
+            # Ensure unique Tx_Hash for manual entries to prevent deduplication collision
+            tx_h = str(r.get("Tx_Hash", ""))
+            if not tx_h or tx_h == "nan" or "MANUAL" in tx_h:
+                tx_h = f"MANUAL_FIAT_{year}_{idx}"
+
             rows.append({
                 "Date": pd.to_datetime(r.get("Date"), utc=True),
-                "Chain": "Fiat", "Tx_Hash": str(r.get("Tx_Hash", "MANUAL_FIAT")),
+                "Chain": "Fiat", "Tx_Hash": tx_h,
                 "Account": str(r.get("Account", "banq fiat")),
-                "Asset": ast_val, "Amount": float(qty_val),
-                "VGP (EUR)": float(fiat_val),
+                "Asset": ast_val, "Amount": qty_val,
+                "VGP (EUR)": fiat_val,
                 "Counterparty": str(r.get("Counterparty", "Banque")),
                 "Type": "Fiat Move", "Source_Way": "Manuel", "Audit_Status": "Valide",
-                "Category": str(r.get("Type", "Achat")), # Propagate manual category
+                "Category": op_type if op_type else "Achat",
                 "Imposable": r.get("Imposable", False)
             })
 
@@ -177,10 +186,14 @@ def merge_raw_data(year):
     f_swaps = sl.get_file_path(year, 'swaps')
     if f_swaps and os.path.exists(f_swaps):
         df_swaps = sl.pd_read_csv_safe(f_swaps)
-        for _, r in df_swaps.iterrows():
+        for idx, r in df_swaps.iterrows():
+            tx_h = str(r.get("Tx_Hash", ""))
+            if not tx_h or tx_h == "nan" or "MANUAL" in tx_h:
+                tx_h = f"MANUAL_SWAP_{year}_{idx}"
+
             rows.append({
                 "Date": pd.to_datetime(r.get("Date"), utc=True),
-                "Chain": "Manual", "Tx_Hash": str(r.get("Tx_Hash", "MANUAL_SWAP")),
+                "Chain": "Manual", "Tx_Hash": tx_h,
                 "Account": str(r.get("Account", "Portefeuille")),
                 "Asset": str(r.get("Asset", "UNKNOWN")), "Amount": float(r.get("Amount", 0)),
                 "Counterparty": str(r.get("Counterparty", "Swap")),

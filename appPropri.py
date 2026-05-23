@@ -163,19 +163,9 @@ def get_cessions_history(year):
     combined = sl.load_clean_history(year)
 
     if not combined.empty:
-        # Filter for cessions
-        # RECOGNITION LOGIC: Consistent with app3.py
-        def is_imposable_logic(r):
-            # Imposable flag is the primary truth
-            if sl.is_imposable_robust(r.get("Imposable")): return True
-            # 'Vente' category is a strong secondary signal
-            cat = str(r.get("Category", "")).lower()
-            if "vente" in cat: return True
-            return False
-
-        combined["_is_imp"] = combined.apply(is_imposable_logic, axis=1)
-
-        mask_cess = (combined["_is_imp"]) & (combined['Asset'] != 'EUR')
+        # Filter for cessions using central robust logic
+        combined["_is_imp"] = combined.apply(sl.is_cession_imposable_robust, axis=1)
+        mask_cess = combined["_is_imp"]
 
         cessions = combined[mask_cess].copy()
 

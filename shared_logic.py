@@ -119,8 +119,51 @@ def pd_read_csv_safe(path):
     return df
 
 def is_imposable_robust(val):
+    if isinstance(val, bool): return val
     s = str(val).upper().strip()
     return s in ["TRUE", "1", "1.0", "VRAI", "YES", "OUI"]
+
+def is_cession_imposable_robust(row):
+    """
+    Unified detection for imposable cessions:
+    1. Not Spam
+    2. Not a duplicate to ignore
+    3. MUST BE an outflow (Amount < 0)
+    4. MUST NOT be EUR
+    5. Marked 'Imposable' OR Category contains 'Vente' or 'Cession'
+    """
+    # Filter 1 & 2: Audit status and duplicates
+    status = str(row.get("Audit_Status", row.get("Status", ""))).lower().strip()
+    if status == "spam": return False
+
+    cat = str(row.get("Category", "")).lower().strip()
+    if "doublon" in cat: return False
+
+    # Filter 3: Direction (Only outflows are cessions)
+    amt = float(row.get("Amount", 0))
+    if amt >= 0: return False
+
+    # Filter 4: Asset
+    asset = str(row.get("Asset", "")).upper().strip()
+    if asset == "EUR": return False
+
+    # Filter 5: Qualification
+    is_imp = is_imposable_robust(row.get("Imposable", False))
+    if is_imp: return True
+    if "vente" in cat or "cession" in cat: return True
+
+    return False
+
+def is_achat_fiat_robust(row):
+    """Detection for fiat acquisitions (Achat)."""
+    cat = str(row.get("Category", "")).lower().strip()
+    if "achat" in cat: return True
+
+    # Some older entries might have this in Type
+    op_type = str(row.get("Type", "")).lower().strip()
+    if "achat" in op_type: return True
+
+    return False
 
 def get_safe_opts(df, col):
     if df is None or df.empty or col not in df.columns: return []

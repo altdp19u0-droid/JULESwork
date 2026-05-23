@@ -169,11 +169,9 @@ else:
 
     # Construction du masque de détection (Exclude manual duplicates and Spam)
     status_col = "Audit_Status" if "Audit_Status" in journal.columns else "Status"
-    mask_valid = (journal[status_col] != "Spam") & (journal.get("Category", "") != "Doublon à ignorer")
-    mask_imposable = (journal["Imposable"]) & mask_valid if use_imposable_col else pd.Series(False, index=journal.index)
-    mask_category = (journal["Category"].fillna("").str.contains("Vente", case=False)) & mask_valid if use_category_vente else pd.Series(False, index=journal.index)
 
-    mask_cessions = (mask_imposable | mask_category) & (journal["Asset"] != "EUR")
+    # Cession Detection Rule: Using central robust logic
+    mask_cessions = journal.apply(sl.is_cession_imposable_robust, axis=1)
     cessions_all = journal[mask_cessions].copy()
 
     # --- Vérification d'Intégrité (Zéro Fallback) ---
