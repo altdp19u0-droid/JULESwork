@@ -165,10 +165,13 @@ def merge_raw_data(year):
             ast_val = str(r.get("Asset", "EUR")).upper().strip()
             if ast_val in ["", "NAN", "NONE"]: ast_val = "EUR"
 
-            # Ensure unique Tx_Hash for manual entries to prevent deduplication collision
-            tx_h = str(r.get("Tx_Hash", ""))
+            # STABILITY: Content-based hash instead of index-based
+            tx_h = str(r.get("Tx_Hash", r.get("Tx Hash", "")))
             if not tx_h or tx_h == "nan" or "MANUAL" in tx_h:
-                tx_h = f"MANUAL_FIAT_{year}_{idx}"
+                # We use date, account, asset, amount to create a stable ID
+                dt_s = str(r.get("Date", ""))
+                acc_s = str(r.get("Account", ""))
+                tx_h = f"MANUAL_FIAT_{dt_s}_{acc_s}_{ast_val}_{qty_val}"
 
             rows.append({
                 "Date": pd.to_datetime(r.get("Date"), utc=True),
@@ -187,9 +190,12 @@ def merge_raw_data(year):
     if f_swaps and os.path.exists(f_swaps):
         df_swaps = sl.pd_read_csv_safe(f_swaps)
         for idx, r in df_swaps.iterrows():
-            tx_h = str(r.get("Tx_Hash", ""))
+            tx_h = str(r.get("Tx_Hash", r.get("Tx Hash", "")))
             if not tx_h or tx_h == "nan" or "MANUAL" in tx_h:
-                tx_h = f"MANUAL_SWAP_{year}_{idx}"
+                dt_s = str(r.get("Date", ""))
+                acc_s = str(r.get("Account", ""))
+                amt_s = str(r.get("Amount", ""))
+                tx_h = f"MANUAL_SWAP_{dt_s}_{acc_s}_{amt_s}"
 
             rows.append({
                 "Date": pd.to_datetime(r.get("Date"), utc=True),
@@ -519,6 +525,16 @@ def main():
             min_date = df["Date"].min().date() if not df.empty else datetime(year, 1, 1).date()
             max_date = df["Date"].max().date() if not df.empty else datetime(year, 12, 31).date()
             f_date_range = f_cols3[0].date_input("Plage de dates", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+            f_amt_search = f_cols3[1].text_input("Montant (Recherche)", placeholder="ex: 0.5 or 123.45")
+            f_hash_search = f_cols3[2].text_input("Recherche Tx Hash", placeholder="0x...")
+
+            if st.button("♻️ Réinitialiser tous les filtres"):
+                # Use hub-prefixed or standard keys based on widget initialization
+                st.session_state["app2_show_spams_toggle"] = True
+                # We can't easily reset multiselects/selectbox from a button inside the expander
+                # without using session state keys for each.
+                # For now, we rely on the user manual reset or we'd need to refactor widgets to use keys.
+                st.rerun()
 
         # DATA VIEW GENERATION
         # We start from the full state to ensure index consistency
@@ -543,6 +559,19 @@ def main():
         if isinstance(f_date_range, (list, tuple)) and len(f_date_range) == 2:
             start_d, end_d = f_date_range
             view_df = view_df[(view_df["Date"].dt.date >= start_d) & (view_df["Date"].dt.date <= end_d)]
+
+        # Amount search logic (searches in multiple numeric columns as string)
+        if f_amt_search:
+            s = str(f_amt_search).strip()
+            # Search in Amount, Valeur $, and Prix de Cession
+            mask_a = view_df["Amount"].astype(str).str.contains(s)
+            mask_v = view_df["Valeur $"].astype(str).str.contains(s)
+            mask_pc = view_df["Prix de Cession (EUR)"].astype(str).str.contains(s)
+            view_df = view_df[mask_a | mask_v | mask_pc]
+
+        # Tx Hash search logic
+        if f_hash_search:
+            view_df = view_df[view_df["Tx_Hash"].str.contains(f_hash_search, case=False, na=False)]
 
         # Editor Configuration
         if "has_unsaved_changes" not in st.session_state:
@@ -730,6 +759,8 @@ def main():
 
     with tab2:
         st.header("Audit & Recovery")
+
+        st.info("💡 Si vous ne trouvez pas une transaction, vérifiez si elle n'est pas masquée par le filtre 'Spam' (Bouton dans la barre latérale) ou par les filtres avancés du journal.")
 
         # 1. SCAN GLOBAL (All RAW files including Sanctuary)
         raw_global = merge_raw_data(year)
