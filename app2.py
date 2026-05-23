@@ -511,15 +511,6 @@ def main():
     with tab1:
         st.title(f"Qualification {year}")
 
-        # HIDDEN ROWS ALERT
-        num_hidden_qual = len(full_df) - len(view_df)
-        if num_hidden_qual > 0:
-            sc_h1, sc_h2 = st.columns([4, 1])
-            sc_h1.warning(f"⚠️ {num_hidden_qual} transactions sont actuellement masquées par vos filtres ou le bouton 'Spam'.")
-            if sc_h2.button("♻️ Reset", key="btn_reset_warning"):
-                st.session_state.filter_version += 1
-                st.rerun()
-
         # Filtres
         v = st.session_state.filter_version
         with st.expander("🔍 Filtres avancés", expanded=True):
@@ -582,6 +573,15 @@ def main():
         # Tx Hash search logic
         if f_hash_search:
             view_df = view_df[view_df["Tx_Hash"].str.contains(f_hash_search, case=False, na=False)]
+
+        # HIDDEN ROWS ALERT (Moved after definition of view_df)
+        num_hidden_qual = len(full_df) - len(view_df)
+        if num_hidden_qual > 0:
+            sc_h1, sc_h2 = st.columns([4, 1])
+            sc_h1.warning(f"⚠️ {num_hidden_qual} transactions sont actuellement masquées par vos filtres ou le bouton 'Spam'.")
+            if sc_h2.button("♻️ Reset", key="btn_reset_warning"):
+                st.session_state.filter_version += 1
+                st.rerun()
 
         # Editor Configuration
         if "has_unsaved_changes" not in st.session_state:
