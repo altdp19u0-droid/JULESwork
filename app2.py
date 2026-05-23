@@ -505,12 +505,20 @@ def main():
         with st.expander("🔍 Filtres avancés", expanded=True):
             f_cols1 = st.columns(3)
             f_status = f_cols1[0].multiselect("Statut", ["A vérifier", "Valide", "Spam", "Ignoré"], default=["A vérifier", "Valide"])
-            f_acc = f_cols1[1].multiselect("Compte", sl.get_owner_display_list())
+            # Selection includes all accounts (on-chain and fiat/manual) found in the journal
+            all_accs = sorted(list(df["Account"].unique()))
+            f_acc = f_cols1[1].multiselect("Compte", all_accs)
             f_asset = f_cols1[2].multiselect("Asset", sorted(list(df["Asset"].unique())))
 
             f_cols2 = st.columns(3)
             f_cp = f_cols2[0].multiselect("Contrepartie", sorted(list(df["Counterparty"].dropna().unique())))
-            f_imp = f_cols2[1].selectbox("Imposable", ["Tous", "Oui", "Non"])
+            f_cat = f_cols2[1].multiselect("Catégorie", sorted(list(df["Category"].fillna("").unique())))
+            f_imp = f_cols2[2].selectbox("Imposable", ["Tous", "Oui", "Non"])
+
+            f_cols3 = st.columns(3)
+            min_date = df["Date"].min().date() if not df.empty else datetime(year, 1, 1).date()
+            max_date = df["Date"].max().date() if not df.empty else datetime(year, 12, 31).date()
+            f_date_range = f_cols3[0].date_input("Plage de dates", value=(min_date, max_date), min_value=min_date, max_value=max_date)
 
         # DATA VIEW GENERATION
         # We start from the full state to ensure index consistency
@@ -524,12 +532,17 @@ def main():
 
         if f_status: view_df = view_df[view_df["Audit_Status"].isin(f_status)]
         if f_acc:
-            acc_set = {sl.resolve_raw_addr(x) for x in f_acc}
-            view_df = view_df[view_df["Account"].apply(sl.resolve_raw_addr).isin(acc_set)]
+            view_df = view_df[view_df["Account"].isin(f_acc)]
         if f_asset: view_df = view_df[view_df["Asset"].isin(f_asset)]
         if f_cp: view_df = view_df[view_df["Counterparty"].isin(f_cp)]
+        if f_cat: view_df = view_df[view_df["Category"].fillna("").isin(f_cat)]
         if f_imp == "Oui": view_df = view_df[view_df["Imposable"].apply(sl.is_imposable_robust)]
         elif f_imp == "Non": view_df = view_df[~view_df["Imposable"].apply(sl.is_imposable_robust)]
+
+        # Date filtering logic
+        if isinstance(f_date_range, (list, tuple)) and len(f_date_range) == 2:
+            start_d, end_d = f_date_range
+            view_df = view_df[(view_df["Date"].dt.date >= start_d) & (view_df["Date"].dt.date <= end_d)]
 
         # Editor Configuration
         if "has_unsaved_changes" not in st.session_state:
