@@ -220,8 +220,8 @@ def calculate_acquisition_price(year):
     journal = data.get('journal', pd.DataFrame())
     if journal.empty: return 0.0
 
-    # On filtre sur les catégories "Achat" dans le journal
-    purchases = journal[journal['Category'].fillna("").str.contains("Achat", case=False, na=False)]
+    # On filtre sur les catégories "Achat" ou "Dépôt" dans le journal
+    purchases = journal[journal['Category'].fillna("").str.contains("Achat|Dépôt", case=False, na=False)]
 
     # On utilise 'Montant EUR' s'il existe ou une valeur calculée
     # Dans le CLEAN journal, on devrait avoir les valeurs EUR
@@ -276,7 +276,7 @@ with tab_accounts:
 
     # NEW: Accumulate manual positions from all years (respecting start_year)
     g_conf = sl.load_global_config()
-    start_y = int(g_conf.get("start_year", 2025))
+    start_y = int(g_conf.get("start_year", 2021))
     manual_all = []
     for y in range(start_y, target_year + 1):
         p_path = os.path.join(EXPORT_BASE_DIR, str(y), f"manual_positions_{y}.csv")

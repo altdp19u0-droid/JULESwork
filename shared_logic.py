@@ -23,7 +23,7 @@ GLOBAL_CONFIG_FILE = "global_config.json"
 def load_global_config():
     """Loads global settings like activity start year and current processing year."""
     defaults = {
-        "start_year": 2025, # Default for test reality
+        "start_year": 2021, # Adjusted to match actual data starting in 2021
         "processing_year": datetime.now().year
     }
     if os.path.exists(GLOBAL_CONFIG_FILE):
@@ -218,7 +218,7 @@ def check_file_freshness(filepath, last_load):
 def load_clean_history(year):
     """GATEWAY: Loads all clean journals from start_year up to year. BLIND TRUST in CLEAN file."""
     config = load_global_config()
-    start = int(config.get("start_year", 2025))
+    start = int(config.get("start_year", 2021))
     all_dfs = []
     for y in range(start, year + 1):
         p = get_file_path(y, 'qualified_clean')
@@ -528,7 +528,7 @@ def get_price_eur(asset, date_obj, cache=None):
 def get_total_acquisition_value(year):
     """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from Step 0 manual registers up to year."""
     config = load_global_config()
-    start = config.get("start_year", 2015)
+    start = config.get("start_year", 2021)
     total = 0.0
 
     for y in range(start, year + 1):
@@ -536,8 +536,8 @@ def get_total_acquisition_value(year):
         if os.path.exists(p):
             df = pd_read_csv_safe(p)
             if not df.empty:
-                # Recognition logic: type 'Achat' or 'Virement vers Crypto'
-                mask = df['Type'].fillna("").str.contains("Achat|Virement vers Crypto", case=False, na=False)
+                # Recognition logic: include Achat, Virement vers Crypto, and Dépôt (Fiat inflow)
+                mask = df['Type'].fillna("").str.contains("Achat|Virement vers Crypto|Dépôt", case=False, na=False)
                 # Amount is in 'Montant EUR' or 'Amount'
                 amt_col = "Montant EUR" if "Montant EUR" in df.columns else "Amount"
                 if amt_col in df.columns:

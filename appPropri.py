@@ -125,8 +125,8 @@ def get_acquisition_history(year):
         if os.path.exists(p):
             df = sl.pd_read_csv_safe(p)
             if not df.empty:
-                # Recognition logic: type 'Achat' or 'Virement vers Crypto'
-                mask = df['Type'].fillna("").str.contains("Achat|Virement vers Crypto", case=False, na=False)
+                # Recognition logic: type 'Achat', 'Virement vers Crypto' or 'Dépôt'
+                mask = df['Type'].fillna("").str.contains("Achat|Virement vers Crypto|Dépôt", case=False, na=False)
                 df_y = df[mask].copy()
                 if not df_y.empty:
                     df_y["Source_Year"] = y
