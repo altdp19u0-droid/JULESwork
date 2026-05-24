@@ -74,7 +74,9 @@ with st.sidebar:
     chains_to_scan = st.multiselect("Chaînes", list(CHAIN_APIS.keys()), default=["Ethereum", "Base", "Arbitrum"])
     st.divider()
 
-    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=default_year, key="_hub_target_year")
+    # Synchronized Hub Processing Year
+    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, key="_hub_target_year")
+
     # Persist change if modified here too
     if target_year != g_conf.get("processing_year"):
         g_conf["processing_year"] = int(target_year); sl.save_global_config(g_conf)

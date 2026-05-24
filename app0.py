@@ -102,9 +102,8 @@ with st.sidebar:
 
     # Load Unified Processing Year
     g_conf = sl.load_global_config()
-    default_year = g_conf.get("processing_year") or datetime.now().year
 
-    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=default_year, key="_hub_target_year")
+    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, key="_hub_target_year")
 
     # Persist change if modified here too
     if target_year != g_conf.get("processing_year"):

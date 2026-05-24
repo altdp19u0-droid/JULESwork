@@ -237,9 +237,15 @@ def fetch_data(address, api_key, network):
 
     return df
 
-# --- Shared Session Initialization ---
+# --- Shared Session Initialization & Global Config ---
+g_conf = sl.load_global_config()
+
+# Standardized Hub keys for global settings
+if "_hub_start_year" not in st.session_state:
+    st.session_state["_hub_start_year"] = g_conf.get("start_year") or 2021
+
 if "_hub_target_year" not in st.session_state:
-    st.session_state["_hub_target_year"] = datetime.now().year
+    st.session_state["_hub_target_year"] = g_conf.get("processing_year") or datetime.now().year
 
 # --- UI PRINCIPALE: Navigation Hub ---
 menu_options = {
@@ -261,6 +267,29 @@ if "_hub_current_menu" not in st.session_state:
 
 # Render Navigation Hub at the TOP of the sidebar
 st.sidebar.title("💎 Jules Crypto Hub")
+
+# --- GLOBAL CONFIGURATION (Sidebar) ---
+with st.sidebar.expander("⚙️ Configuration Globale", expanded=True):
+    # 1. Start Year (Memory Persistent)
+    new_start = st.number_input(
+        "Première année d'activité",
+        min_value=2015, max_value=2030,
+        key="_hub_start_year"
+    )
+
+    # 2. Processing Year (Memory Persistent)
+    new_target = st.number_input(
+        "Année de traitement activée",
+        min_value=2015, max_value=2030,
+        key="_hub_target_year"
+    )
+
+    # Immediate Persistence check
+    if new_start != g_conf.get("start_year") or new_target != g_conf.get("processing_year"):
+        g_conf["start_year"] = int(new_start)
+        g_conf["processing_year"] = int(new_target)
+        sl.save_global_config(g_conf)
+        st.toast("Configuration globale mise à jour.")
 
 # Create a mapping for finding the index
 menu_labels = list(menu_options.keys())

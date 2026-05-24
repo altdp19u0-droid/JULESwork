@@ -29,12 +29,12 @@ with st.sidebar:
     if not available_years: available_years = [str(datetime.now().year)]
 
     g_conf = sl.load_global_config()
-    default_year = str(g_conf.get("processing_year") or datetime.now().year)
+    hub_year = str(st.session_state.get("_hub_target_year", g_conf.get("processing_year") or datetime.now().year))
 
-    # Pre-select the processing year if available
-    default_selection = [default_year] if default_year in available_years else available_years
+    # Pre-select the hub processing year if available
+    default_selection = [hub_year] if hub_year in available_years else available_years
 
-    selected_years = st.multiselect("Années à traiter", options=available_years, default=default_selection, help="Sélectionnez une ou plusieurs années pour limiter le scan.")
+    selected_years = st.multiselect("Années à traiter", options=available_years, default=default_selection, key="_hub_pricefix_years", help="Sélectionnez une ou plusieurs années pour limiter le scan.")
 
     exclude_spam = st.checkbox("🛡️ Exclure les Spams (Statut App 2)", value=True, help="Ignore les assets et dates liés uniquement à des transactions marquées comme Spam dans le journal qualifié.")
 

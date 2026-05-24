@@ -18,21 +18,12 @@ with st.sidebar:
 
     # Load Unified Processing Year from config for persistence
     g_conf = sl.load_global_config()
-    # Use a specific key for appPropri to avoid being overwritten by Step 1/Step 2 defaults if they differ
-    persisted_year = int(g_conf.get("appPropri_year") or g_conf.get("processing_year") or datetime.now().year)
 
-    # Standardized hub key for persistence
-    # We must ensure state is initialized to avoid value/key collision
-    if "_hub_appPropri_year" not in st.session_state:
-        st.session_state["_hub_appPropri_year"] = persisted_year
-
-    target_year_input = st.number_input("Année de consultation", min_value=2015, max_value=2030, key="_hub_appPropri_year")
+    target_year_input = st.number_input("Année de consultation", min_value=2015, max_value=2030, key="_hub_target_year")
     target_year = int(target_year_input)
 
     # Persist change to global config immediately when detected
-    if target_year != g_conf.get("appPropri_year"):
-        g_conf["appPropri_year"] = target_year
-        # Also update the shared processing year for suite consistency
+    if target_year != g_conf.get("processing_year"):
         g_conf["processing_year"] = target_year
         sl.save_global_config(g_conf)
 
@@ -117,7 +108,7 @@ def get_owner_history(year):
 def get_acquisition_history(year):
     """Loads all fiat acquisitions from Step 0 manual registers up to 'year' for absolute reliability."""
     config = sl.load_global_config()
-    start = config.get("start_year", 2015)
+    start = config.get("start_year") or 2021
     all_acq = []
 
     for y in range(start, year + 1):
@@ -125,8 +116,8 @@ def get_acquisition_history(year):
         if os.path.exists(p):
             df = sl.pd_read_csv_safe(p)
             if not df.empty:
-                # Recognition logic: type 'Achat', 'Virement vers Crypto' or 'Dépôt'
-                mask = df['Type'].fillna("").str.contains("Achat|Virement vers Crypto|Dépôt", case=False, na=False)
+                # Robust discovery logic unified in shared_logic
+                mask = sl.get_fiat_inflow_mask(df)
                 df_y = df[mask].copy()
                 if not df_y.empty:
                     df_y["Source_Year"] = y

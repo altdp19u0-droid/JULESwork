@@ -218,7 +218,7 @@ def check_file_freshness(filepath, last_load):
 def load_clean_history(year):
     """GATEWAY: Loads all clean journals from start_year up to year. BLIND TRUST in CLEAN file."""
     config = load_global_config()
-    start = int(config.get("start_year", 2021))
+    start = int(config.get("start_year") or 2021)
     all_dfs = []
     for y in range(start, year + 1):
         p = get_file_path(y, 'qualified_clean')
@@ -525,10 +525,30 @@ def get_price_eur(asset, date_obj, cache=None):
 
     return 0.0
 
+def get_fiat_inflow_mask(df):
+    """
+    Robustly identifies acquisitions/inflows of fiat into the crypto ecosystem.
+    Matches various historical labels while excluding internal transfers and outflows.
+    """
+    if df.empty or 'Type' not in df.columns: return pd.Series([False] * len(df))
+
+    # Standard inflow keywords across different versions/apps
+    inflow_keywords = ["Achat", "Dépôt", "Deposit", "Virement vers", "Buy", "Incoming", "Injection"]
+
+    # Negative filters to exclude internal fiat moves or withdrawals
+    negative_keywords = ["Retrait", "Withdraw", "Virement interne", "Banque -> Banque"]
+
+    type_series = df['Type'].fillna("").astype(str)
+
+    mask_in = type_series.str.contains("|".join(inflow_keywords), case=False, na=False)
+    mask_neg = type_series.str.contains("|".join(negative_keywords), case=False, na=False)
+
+    return mask_in & (~mask_neg)
+
 def get_total_acquisition_value(year):
     """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from Step 0 manual registers up to year."""
     config = load_global_config()
-    start = config.get("start_year", 2021)
+    start = int(config.get("start_year") or 2021)
     total = 0.0
 
     for y in range(start, year + 1):
@@ -536,9 +556,10 @@ def get_total_acquisition_value(year):
         if os.path.exists(p):
             df = pd_read_csv_safe(p)
             if not df.empty:
-                # Recognition logic: include Achat, Virement vers Crypto, and Dépôt (Fiat inflow)
-                mask = df['Type'].fillna("").str.contains("Achat|Virement vers Crypto|Dépôt", case=False, na=False)
-                # Amount is in 'Montant EUR' or 'Amount'
+                # Unified discovery logic
+                mask = get_fiat_inflow_mask(df)
+
+                # Amount is prioritized in 'Montant EUR' (manual entry) then 'Amount'
                 amt_col = "Montant EUR" if "Montant EUR" in df.columns else "Amount"
                 if amt_col in df.columns:
                     total += pd.to_numeric(df[mask][amt_col], errors="coerce").fillna(0.0).abs().sum()

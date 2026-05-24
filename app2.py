@@ -362,7 +362,13 @@ def main():
     st.set_page_config(page_title="Qualif V4", layout="wide")
     sl.show_status()
 
-    year = st.sidebar.selectbox("Année", [2025, 2024], key="_hub_app2_year")
+    # Unified Processing Year
+    g_conf = sl.load_global_config()
+    year = st.sidebar.number_input("Année de traitement", min_value=2015, max_value=2030, key="_hub_target_year")
+
+    if year != g_conf.get("processing_year"):
+        g_conf["processing_year"] = int(year)
+        sl.save_global_config(g_conf)
 
     # Filter reset mechanism using versioned keys
     if "filter_version" not in st.session_state:

@@ -152,7 +152,7 @@ with st.sidebar:
                 except: pass
             st.info(f"{len(pkl_files)} fichiers de cache supprimés.")
 
-    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, value=default_year, key="_hub_target_year")
+    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, key="_hub_target_year")
 
     # Persist change if modified here too
     if target_year != g_conf.get("processing_year"):
@@ -220,8 +220,9 @@ def calculate_acquisition_price(year):
     journal = data.get('journal', pd.DataFrame())
     if journal.empty: return 0.0
 
-    # On filtre sur les catégories "Achat" ou "Dépôt" dans le journal
-    purchases = journal[journal['Category'].fillna("").str.contains("Achat|Dépôt", case=False, na=False)]
+    # Robust filtering for fiat inflows
+    # Step 2 journal maps Step 0 'Type' to 'Category'
+    purchases = journal[sl.get_fiat_inflow_mask(journal.rename(columns={'Category': 'Type'}))]
 
     # On utilise 'Montant EUR' s'il existe ou une valeur calculée
     # Dans le CLEAN journal, on devrait avoir les valeurs EUR
