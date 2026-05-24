@@ -70,6 +70,7 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 
 1. **Stabilité des Index :** Pour l'édition des lignes dans les journaux manuels, il est **interdit** de réinitialiser l'index (`reset_index`) avant l'affichage dans `st.data_editor`. L'index d'origine du DataFrame en session state doit être préservé pour que le bouton "Charger" pointe vers la bonne ligne master, évitant ainsi les doublons ou écrasements accidentels.
 2. **Standard de Chargement :** Le chargement d'une ligne pour modification doit copier l'intégralité du dictionnaire de la ligne source pour garantir que toutes les métadonnées (dont le `Tx_Hash` stable) sont préservées lors de la mise à jour.
+3. **Remplacement Automatique (Swaps/Transferts) :** Lors de l'édition d'une ligne injectée via le formulaire de Swap ou de Transfert, l'action "Enregistrer" doit automatiquement supprimer la ligne source originale avant d'insérer la nouvelle paire (In/Out). Cela évite à l'utilisateur d'avoir à supprimer manuellement la ligne d'injection.
 
 ## V. PHASE 3 : AUDIT, VGP & PATRIMOINE
 

@@ -87,6 +87,12 @@ def load_manual_data(year):
             st.session_state.swaps_journal[col] = st.session_state.swaps_journal[col].astype(str)
         st.session_state.swaps_journal["Imposable"] = st.session_state.swaps_journal["Imposable"].astype(bool)
 
+    # FRESHNESS TRACKING: Record mtimes to detect external injections (from app2)
+    m_f = os.path.getmtime(fiat_path) if os.path.exists(fiat_path) else 0
+    m_p = os.path.getmtime(pos_path) if os.path.exists(pos_path) else 0
+    m_s = os.path.getmtime(swap_path) if os.path.exists(swap_path) else 0
+    st.session_state.last_app0_sync_mtime = m_f + m_p + m_s
+
 if "fiat_journal" not in st.session_state:
     load_manual_data(st.session_state.current_year)
 
@@ -135,6 +141,22 @@ with st.sidebar:
         load_manual_data(target_year)
         st.toast(f"Données de {target_year} rechargées.")
         st.rerun()
+
+    # DATA FRESHNESS GUARD: Detect if app2.py injected data while app0 was open
+    fiat_path_guard = sl.get_file_path(target_year, 'fiat')
+    pos_path_guard = sl.get_file_path(target_year, 'positions')
+    swap_path_guard = sl.get_file_path(target_year, 'swaps')
+
+    m_f_g = os.path.getmtime(fiat_path_guard) if os.path.exists(fiat_path_guard) else 0
+    m_p_g = os.path.getmtime(pos_path_guard) if os.path.exists(pos_path_guard) else 0
+    m_s_g = os.path.getmtime(swap_path_guard) if os.path.exists(swap_path_guard) else 0
+    current_disk_mtime = m_f_g + m_p_g + m_s_g
+
+    if current_disk_mtime > st.session_state.get("last_app0_sync_mtime", 0):
+        st.warning("⚠️ Les fichiers sur le disque sont plus récents que votre session (Injection détectée ?)")
+        if st.button("📥 Recharger pour inclure les injections", type="primary"):
+            load_manual_data(target_year)
+            st.rerun()
 
     st.divider()
     sl.show_status()
@@ -494,7 +516,7 @@ def fragment_swaps():
     if "swap_pending_load" in st.session_state and st.session_state.swap_pending_load is not None:
         row = st.session_state.swap_pending_load
         known_displays = sl.get_owner_display_list()
-        if "Swap" in row["Type"]:
+        if "Swap" in str(row["Type"]):
             st.session_state.swap_date_input = row["Date"]
             st.session_state.sel_swap_acc = row["Account"] if row["Account"] in known_displays else "(Nouveau / Autre...)"
             if row["Account"] not in known_displays: st.session_state.input_swap_acc_new = row["Account"]
@@ -524,6 +546,15 @@ def fragment_swaps():
                 if row["Counterparty"] not in known_displays: st.session_state.input_trans_src_new = row["Counterparty"]
 
         st.session_state.swap_pending_load = None
+
+    # Mode Edition
+    edit_idx = st.session_state.get("swap_edit_idx", None)
+    if edit_idx is not None:
+        st.warning(f"📝 Mode Édition : Transformation de la ligne {edit_idx}")
+        if st.button("❌ Annuler l'édition", key="btn_cancel_swap"):
+            st.session_state.swap_edit_idx = None
+            st.rerun()
+
     default_date = datetime.now() if target_year == datetime.now().year else datetime(target_year, 1, 1)
 
     col_s1, col_s2 = st.columns(2)
@@ -548,14 +579,20 @@ def fragment_swaps():
         s_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...", key="swap_hash_input")
         s_imp = st.checkbox("Imposable", value=False, key="swap_imp_input")
 
-        if st.button("➕ Ajouter le Swap", key="btn_add_swap"):
+        btn_swap_label = "💾 Enregistrer le Swap (Remplace)" if edit_idx is not None else "➕ Ajouter le Swap"
+        if st.button(btn_swap_label, key="btn_add_swap"):
             if s_date.year != target_year:
                 st.error("Année incorrecte.")
             else:
                 row_out = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_out.upper(), "Amount": -s_qty_out, "Type": "Swap Out", "Tx Hash": s_hash, "Source Type": "Manual Swap", "Imposable": s_imp}
                 row_in = {"Date": s_date, "Account": s_acc, "Counterparty": "Swap", "Asset": s_asset_in.upper(), "Amount": s_qty_in, "Type": "Swap In", "Tx Hash": s_hash, "Source Type": "Manual Swap", "Imposable": s_imp}
+
+                if edit_idx is not None:
+                    st.session_state.swaps_journal = st.session_state.swaps_journal.drop(index=edit_idx)
+
                 st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_out, row_in])], ignore_index=True)
-                st.success("Swap ajouté.")
+                st.session_state.swap_edit_idx = None
+                st.success("Opération enregistrée (Ligne d'origine remplacée).")
                 st.rerun()
 
     with col_s2:
@@ -578,14 +615,20 @@ def fragment_swaps():
         t_hash = st.text_input("Tx Hash (Optionnel)", placeholder="0x...", key="trans_hash_input")
         t_imp = st.checkbox("Imposable", value=False, key="trans_imp_input")
 
-        if st.button("➕ Ajouter le Transfert", key="btn_add_trans"):
+        btn_trans_label = "💾 Enregistrer le Transfert (Remplace)" if edit_idx is not None else "➕ Ajouter le Transfert"
+        if st.button(btn_trans_label, key="btn_add_trans"):
             if t_date.year != target_year:
                 st.error("Année incorrecte.")
             else:
                 row_src = {"Date": t_date, "Account": t_acc_src, "Counterparty": t_acc_dst, "Asset": t_asset.upper(), "Amount": -t_qty, "Type": "Transfert Interne Out", "Tx Hash": t_hash, "Source Type": "Manual Transfer", "Imposable": t_imp}
                 row_dst = {"Date": t_date, "Account": t_acc_dst, "Counterparty": t_acc_src, "Asset": t_asset.upper(), "Amount": t_qty, "Type": "Transfert Interne In", "Tx Hash": t_hash, "Source Type": "Manual Transfer", "Imposable": t_imp}
+
+                if edit_idx is not None:
+                    st.session_state.swaps_journal = st.session_state.swaps_journal.drop(index=edit_idx)
+
                 st.session_state.swaps_journal = pd.concat([st.session_state.swaps_journal, pd.DataFrame([row_src, row_dst])], ignore_index=True)
-                st.success("Transfert ajouté.")
+                st.session_state.swap_edit_idx = None
+                st.success("Transfert enregistré (Ligne d'origine remplacée).")
                 st.rerun()
 
     st.divider()
@@ -638,7 +681,8 @@ def fragment_swaps():
         real_idx = selected_rows.index[0]
         cl1, cl2 = st.columns(2)
         if cl1.button(f"📥 Charger la ligne {real_idx}", key="btn_load_swap"):
-            st.session_state.swap_pending_load = selected_rows.iloc[0]
+            st.session_state.swap_edit_idx = real_idx
+            st.session_state.swap_pending_load = st.session_state.swaps_journal.loc[real_idx].to_dict()
             st.rerun()
 
         with cl2.popover("🗑️ Supprimer / Restaurer", width='stretch'):
