@@ -59,13 +59,19 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 1. **Entre Propriétaires :** Si l'expéditeur (`From`) et le destinataire (`To`) sont tous deux dans le registre des comptes propriétaires ET que l'asset est dans la Whitelist (`valid_assets.json`).
 2. **Positions Protocoles :** Si l'une des parties est un propriétaire et l'autre est une adresse de position protocole, ET que l'asset de la transaction correspond à l'un des assets enregistrés pour cette position dans le registre.
 
-- **Injections Fiat :** L'outil d'injection dans `app2.py` permet de transférer des flux vers le registre Step 0 (fiat bank) en choisissant le sens : **Achat** (Banque -> Crypto) ou **Vente** (Crypto -> Banque, imposable par défaut). Les injections peuvent être faites via l'outil dédié (avec option d'ignorer la restriction de signe) ou directement depuis la barre d'action sur une sélection de lignes. Les lignes injectées apparaissent en jaune vif dans l'App 0 et utilisent les libellés "Banque FIAT" et "Compte CRYPTO" pour plus de clarté.
+- **Injections Fiat :** L'outil d'injection dans `app2.py` permet de transférer des flux vers le registre Step 0 (fiat bank) en choisissant le sens : **Achat** (Banque -> Crypto) ou **Vente** (Crypto -> Banque, imposable par défaut). Les injections peuvent être faites via l'outil dédié (avec option d'ignorer la restriction de signe) ou directement depuis la barre d'action sur une sélection de lignes. Les lignes injectées apparaissent en jaune vif dans l'App 0 et utilisent les libellés "Banque FIAT" et "Compte CRYPTO" pour plus de clarté. Les types d'injection doivent impérativement correspondre aux options du formulaire App 0 pour garantir une reconnaissance immédiate.
+- **Transactions Masquées :** En cas de filtres actifs ou de bouton 'Spam' désactivé, `app2.py` doit afficher un message d'alerte indiquant le nombre de lignes masquées avec un bouton 'Voir' ouvrant une `@st.dialog` listant ces transactions.
 - **Gestion des Lignes RAW :** L'App 2 permet l'élimination de transactions erronées dans les fichiers RAW de travail (racine de l'année) via la colonne de sélection `Mod.`. La traçabilité est assurée par la colonne `Source_File`.
 - **Règle Absolue Sanctuary :** Il est **STRICTEMENT INTERDIT** de modifier ou supprimer des lignes dans les fichiers du dossier `/sanctuary/`. Ce dossier sert d'archive de secours inviolable permettant le rétablissement des données via l'onglet "Audit & Recovery".
 
 ---
 
-## IV. PHASE 3 : AUDIT, VGP & PATRIMOINE
+## IV. PHASE 0 : REGISTRE MANUEL (app0.py)
+
+1. **Stabilité des Index :** Pour l'édition des lignes dans les journaux manuels, il est **interdit** de réinitialiser l'index (`reset_index`) avant l'affichage dans `st.data_editor`. L'index d'origine du DataFrame en session state doit être préservé pour que le bouton "Charger" pointe vers la bonne ligne master, évitant ainsi les doublons ou écrasements accidentels.
+2. **Standard de Chargement :** Le chargement d'une ligne pour modification doit copier l'intégralité du dictionnaire de la ligne source pour garantir que toutes les métadonnées (dont le `Tx_Hash` stable) sont préservées lors de la mise à jour.
+
+## V. PHASE 3 : AUDIT, VGP & PATRIMOINE
 
 1. **appPriceFix (Collecteur de Prix) :**
     - Doit scanner exclusivement le journal CLEAN.
@@ -75,6 +81,7 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
     - **Robustesse Date :** Toujours convertir en datetime avant d'utiliser l'accesseur `.dt`.
 2. **appPropri (Dashboard) :**
     - Affiche la synthèse des positions protocoles (selon `position_labels.json`).
+    - **Gestion du Cache & Fraîcheur :** Les fonctions de chargement des historiques doivent inclure le `mtime` des fichiers sources dans leurs clés de cache (`@st.cache_data`). Un mécanisme de détection de fraîcheur en sidebar doit avertir l'utilisateur si les fichiers sur disque ont été modifiés (ex: injection depuis App 2 ou edit manuel en App 0) et proposer un rafraîchissement immédiat.
     - **Filtrage Intelligent :** Pour chaque position protocole, seuls les assets explicitement définis dans le registre sont affichés. Si la liste est vide, tous les assets de la position sont affichés.
     - **Intégrité des Prix :** Les valuations (EUR) utilisent prioritairement les prix USD récoltés dans le journal Step 2 (certifiés) avant de solliciter les APIs externes. **Il est strictement interdit d'utiliser la colonne VGP pour dériver un prix unitaire.**
     - **Anti-Inflation VGP :** Le mirroring des positions protocoles n'est appliqué que si la position n'est pas déjà présente comme compte actif dans l'historique, évitant les doubles comptages. La VGP est calculée comme la somme **nette** des actifs (en excluant les circuits externes) pour refléter la réalité du portefeuille.
@@ -88,7 +95,7 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 
 ---
 
-## V. STANDARDS TECHNIQUES TRANSVERSES (shared_logic.py)
+## VI. STANDARDS TECHNIQUES TRANSVERSES (shared_logic.py)
 
 1. **Persistence Globale :** Utilisation de `global_config.json` pour stocker `start_year`, `processing_year`, et les réglages persistants par application (ex: `appPropri_year`).
 2. **Encodage CSV :** Export systématique en `utf-8-sig` pour assurer la compatibilité Excel/Windows et la préservation des symboles monétaires.

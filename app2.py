@@ -351,6 +351,13 @@ def apply_auto_labels(df):
 
     return df.apply(label_row, axis=1)
 
+@st.dialog("📋 Transactions Masquées", width="large")
+def show_hidden_dialog(df):
+    st.write(f"Il y a **{len(df)}** transactions masquées par vos filtres actuels.")
+    st.dataframe(df, use_container_width=True)
+    if st.button("Fermer"):
+        st.rerun()
+
 def main():
     st.set_page_config(page_title="Qualif V4", layout="wide")
     sl.show_status()
@@ -574,12 +581,18 @@ def main():
         if f_hash_search:
             view_df = view_df[view_df["Tx_Hash"].str.contains(f_hash_search, case=False, na=False)]
 
-        # HIDDEN ROWS ALERT (Moved after definition of view_df)
+        # HIDDEN ROWS ALERT
         num_hidden_qual = len(full_df) - len(view_df)
         if num_hidden_qual > 0:
-            sc_h1, sc_h2 = st.columns([4, 1])
+            sc_h1, sc_h2, sc_h3 = st.columns([3.5, 0.5, 1])
             sc_h1.warning(f"⚠️ {num_hidden_qual} transactions sont actuellement masquées par vos filtres ou le bouton 'Spam'.")
-            if sc_h2.button("♻️ Reset", key="btn_reset_warning"):
+
+            # Find which rows are hidden
+            hidden_df = full_df[~full_df.index.isin(view_df.index)]
+            if sc_h2.button("👁️ Voir", key="btn_show_hidden"):
+                show_hidden_dialog(hidden_df)
+
+            if sc_h3.button("♻️ Reset Filtres", key="btn_reset_warning"):
                 st.session_state.filter_version += 1
                 st.rerun()
 
