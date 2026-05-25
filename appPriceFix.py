@@ -29,7 +29,13 @@ with st.sidebar:
     if not available_years: available_years = [str(datetime.now().year)]
 
     g_conf = sl.load_global_config()
-    hub_year = str(st.session_state.get("_hub_target_year", g_conf.get("processing_year") or datetime.now().year))
+    target_year = st.session_state.get("_hub_target_year")
+    if target_year is None:
+        target_year = g_conf.get("processing_year") or datetime.now().year
+        st.session_state["_hub_target_year"] = target_year
+
+    hub_year = str(target_year)
+    st.write(f"📅 Année active : **{hub_year}**")
 
     # Pre-select the hub processing year if available
     default_selection = [hub_year] if hub_year in available_years else available_years

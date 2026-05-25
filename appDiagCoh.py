@@ -80,11 +80,14 @@ def compute_running_balances(df_j, df_m_legacy):
 with st.sidebar:
     st.header("⚙️ Contrôle")
 
-    # Unified Hub Year
-    if "_hub_target_year" not in st.session_state:
-        st.session_state["_hub_target_year"] = datetime.now().year
+    # Access Unified Processing Year from Hub
+    target_year = st.session_state.get("_hub_target_year")
+    if target_year is None:
+        g_conf = sl.load_global_config()
+        target_year = g_conf.get("processing_year") or datetime.now().year
+        st.session_state["_hub_target_year"] = target_year
 
-    target_year = st.number_input("Année focus (Filtre visuel)", 2015, 2030, key="_hub_target_year")
+    st.write(f"📅 Année active : **{target_year}**")
 
     # Year switch detection
     if "last_diag_year" not in st.session_state:

@@ -358,17 +358,83 @@ def show_hidden_dialog(df):
     if st.button("Fermer"):
         st.rerun()
 
+@st.dialog("🚀 Injection EUR en bloc", width="large")
+def show_bulk_fiat_dialog(df_eur, year):
+    st.write(f"### {len(df_eur)} transactions EUR détectées")
+    st.info("Sélectionnez les lignes à injecter vers l'App 0 (Registre Fiat).")
+
+    # We use a data editor for easy selection and nature modification
+    df_work = df_eur.copy()
+    df_work.insert(0, "Injecter", True)
+
+    # Pre-determine nature based on amount
+    def get_default_nature(amt):
+        return "Vente (Crypto -> Banque)" if amt < 0 else "Achat (Banque -> Crypto)"
+
+    df_work["Nature"] = df_work["Amount"].apply(get_default_nature)
+
+    edited_eur = st.data_editor(
+        df_work,
+        column_config={
+            "Injecter": st.column_config.CheckboxColumn("Injecter", default=True),
+            "Date": st.column_config.DatetimeColumn("Date", disabled=True),
+            "Amount": st.column_config.NumberColumn("Montant", disabled=True),
+            "Account": st.column_config.TextColumn("Compte", disabled=True),
+            "Nature": st.column_config.SelectboxColumn("Nature", options=["Achat (Banque -> Crypto)", "Vente (Crypto -> Banque)"]),
+            "Tx_Hash": st.column_config.TextColumn("Hash", disabled=True),
+        },
+        disabled=["Date", "Chain", "Tx_Hash", "Type", "Method", "Account", "From", "To", "From_Label", "To_Label", "Counterparty", "Asset", "Amount", "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset", "Fee_Asset", "Fee_Amount", "Source_Way", "Audit_Status", "Fee_Audit_Alert", "Source_Exchange_Rate", "Prix de Cession (EUR)", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable", "Source_File"],
+        hide_index=True,
+        use_container_width=True,
+        key="bulk_fiat_editor"
+    )
+
+    if st.button("Confirmer l'injection en bloc", type="primary", use_container_width=True):
+        to_inject = edited_eur[edited_eur["Injecter"] == True]
+        if to_inject.empty:
+            st.warning("Aucune ligne sélectionnée.")
+        else:
+            data = []
+            for _, r in to_inject.iterrows():
+                op_type = "Vente" if "Vente" in r["Nature"] else "Achat"
+                data.append({
+                    "Date": r["Date"],
+                    "Account": r["Account"],
+                    "Counterparty": "banq fiat",
+                    "Amount": r["Amount"],
+                    "Asset": r["Asset"],
+                    "Tx Hash": r["Tx_Hash"],
+                    "Imposable": (op_type == "Vente")
+                })
+
+            # Group by op_type for injection if needed, but inject_to_app0 handles mixed if called multiple times
+            # Actually our sl.inject_to_app0 takes op_type as a param for the whole list.
+            # We'll call it twice or improve it.
+
+            achats = [d for d in data if not d["Imposable"]]
+            ventes = [d for d in data if d["Imposable"]]
+
+            count = 0
+            if achats: count += sl.inject_to_app0(achats, "Fiat", year, op_type="Achat")
+            if ventes: count += sl.inject_to_app0(ventes, "Fiat", year, op_type="Vente")
+
+            st.success(f"✅ {count} transactions injectées avec succès !")
+            time.sleep(1)
+            st.rerun()
+
 def main():
-    st.set_page_config(page_title="Qualif V4", layout="wide")
+    if "is_hub" not in st.session_state:
+        st.set_page_config(page_title="Qualif V4", layout="wide")
     sl.show_status()
 
-    # Unified Processing Year
-    g_conf = sl.load_global_config()
-    year = st.sidebar.number_input("Année de traitement", min_value=2015, max_value=2030, key="_hub_target_year")
+    # Access Unified Processing Year from Hub
+    year = st.session_state.get("_hub_target_year")
+    if year is None:
+        g_conf = sl.load_global_config()
+        year = g_conf.get("processing_year") or datetime.now().year
+        st.session_state["_hub_target_year"] = year
 
-    if year != g_conf.get("processing_year"):
-        g_conf["processing_year"] = int(year)
-        sl.save_global_config(g_conf)
+    st.sidebar.write(f"📅 Année active : **{year}**")
 
     # Filter reset mechanism using versioned keys
     if "filter_version" not in st.session_state:
@@ -529,8 +595,8 @@ def main():
         with st.expander("🔍 Filtres avancés", expanded=True):
             f_cols1 = st.columns(3)
             f_status = f_cols1[0].multiselect("Statut", ["A vérifier", "Valide", "Spam", "Ignoré"], default=["A vérifier", "Valide"], key=f"f_status_{v}")
-            # Selection includes all accounts (on-chain and fiat/manual) found in the journal
-            all_accs = sorted(list(df["Account"].unique()))
+            # Selection includes all registered accounts and those found in the journal
+            all_accs = sl.get_owner_display_list(df)
             f_acc = f_cols1[1].multiselect("Compte", all_accs, key=f"f_acc_{v}")
             f_asset = f_cols1[2].multiselect("Asset", sorted(list(df["Asset"].unique())), key=f"f_asset_{v}")
 
@@ -753,6 +819,13 @@ def main():
         # --- INJECTION TOOLS ---
         st.divider()
         st.subheader("Outils d'injection")
+
+        # BULK INJECTION TRIGGER
+        df_eur = full_df[(full_df["Asset"] == "EUR") & (full_df["Audit_Status"].isin(["A vérifier", "Valide"]))]
+        if not df_eur.empty:
+            if st.button(f"🚀 Lancer l'injection EUR en bloc ({len(df_eur)} tx)", use_container_width=True):
+                show_bulk_fiat_dialog(df_eur, year)
+
         i_cols = st.columns(2)
 
         with i_cols[0]:

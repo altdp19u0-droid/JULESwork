@@ -11,7 +11,8 @@ import io
 import unicodedata
 
 # --- Configuration ---
-st.set_page_config(page_title="Jules Crypto - Import Neverless (appNeverless)", layout="wide")
+if "is_hub" not in st.session_state:
+    st.set_page_config(page_title="Jules Crypto - Import Neverless (appNeverless)", layout="wide")
 st.title("🚜 Importeur Spécialisé Neverless")
 
 EXPORT_BASE_DIR = "sanctuarisation"
@@ -250,9 +251,15 @@ def process_neverless_csv(df):
 # --- Main App ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    # Unified Hub Year
-    if "_hub_target_year" not in st.session_state: st.session_state["_hub_target_year"] = datetime.now().year
-    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, key="_hub_target_year")
+    # Access Unified Processing Year from Hub
+    import shared_logic as sl
+    target_year = st.session_state.get("_hub_target_year")
+    if target_year is None:
+        g_conf = sl.load_global_config()
+        target_year = g_conf.get("processing_year") or datetime.now().year
+        st.session_state["_hub_target_year"] = target_year
+
+    st.write(f"📅 Année active : **{target_year}**")
     st.divider()
     st.info("💡 Ce module transforme les lignes mixtes de Neverless en écritures comptables simples (In/Out/Fees) aux normes RAW V4.")
 

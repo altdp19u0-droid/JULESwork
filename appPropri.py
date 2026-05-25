@@ -16,16 +16,14 @@ EXPORT_BASE_DIR = "sanctuarisation"
 with st.sidebar:
     st.header("⚙️ Paramètres")
 
-    # Load Unified Processing Year from config for persistence
-    g_conf = sl.load_global_config()
+    # Access Unified Processing Year from Hub
+    target_year = st.session_state.get("_hub_target_year")
+    if target_year is None:
+        g_conf = sl.load_global_config()
+        target_year = g_conf.get("processing_year") or datetime.now().year
+        st.session_state["_hub_target_year"] = target_year
 
-    target_year_input = st.number_input("Année de consultation", min_value=2015, max_value=2030, key="_hub_target_year")
-    target_year = int(target_year_input)
-
-    # Persist change to global config immediately when detected
-    if target_year != g_conf.get("processing_year"):
-        g_conf["processing_year"] = target_year
-        sl.save_global_config(g_conf)
+    st.write(f"📅 Année active : **{target_year}**")
 
     # Year switch detection for session clearing
     if "last_propri_year" not in st.session_state:

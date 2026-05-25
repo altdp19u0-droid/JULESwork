@@ -32,16 +32,14 @@ UI_MAPPING_SCHEMAS = {
 with st.sidebar:
     st.header("⚙️ Paramètres d'Import")
 
-    # Load Unified Processing Year
-    g_conf = sl.load_global_config()
-    default_year = g_conf.get("processing_year") or datetime.now().year
+    # Access Unified Processing Year from Hub
+    target_year = st.session_state.get("_hub_target_year")
+    if target_year is None:
+        g_conf = sl.load_global_config()
+        target_year = g_conf.get("processing_year") or datetime.now().year
+        st.session_state["_hub_target_year"] = target_year
 
-    target_year = st.number_input("Année de destination", min_value=2015, max_value=2030, value=default_year, key="_hub_target_year")
-
-    # Persist change if modified here too
-    if target_year != g_conf.get("processing_year"):
-        g_conf["processing_year"] = int(target_year)
-        sl.save_global_config(g_conf)
+    st.write(f"📅 Année active : **{target_year}**")
 
     import_type = st.selectbox("Type de données", list(UI_MAPPING_SCHEMAS.keys()))
 

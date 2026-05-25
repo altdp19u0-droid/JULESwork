@@ -59,7 +59,11 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 1. **Entre Propriétaires :** Si l'expéditeur (`From`) et le destinataire (`To`) sont tous deux dans le registre des comptes propriétaires ET que l'asset est dans la Whitelist (`valid_assets.json`).
 2. **Positions Protocoles :** Si l'une des parties est un propriétaire et l'autre est une adresse de position protocole, ET que l'asset de la transaction correspond à l'un des assets enregistrés pour cette position dans le registre.
 
-- **Injections Fiat :** L'outil d'injection dans `app2.py` permet de transférer des flux vers le registre Step 0 (fiat bank) en choisissant le sens : **Achat** (Banque -> Crypto) ou **Vente** (Crypto -> Banque, imposable par défaut). Les injections peuvent être faites via l'outil dédié (avec option d'ignorer la restriction de signe) ou directement depuis la barre d'action sur une sélection de lignes. Les lignes injectées apparaissent en jaune vif dans l'App 0 et utilisent les libellés "Banque FIAT" et "Compte CRYPTO" pour plus de clarté. Les types d'injection doivent impérativement correspondre aux options du formulaire App 0 pour garantir une reconnaissance immédiate.
+- **Injections Fiat :** L'outil d'injection dans `app2.py` permet de transférer des flux vers le registre Step 0 (fiat bank). Les injections peuvent être faites :
+    1. **Individuellement** via l'outil dédié (popover) avec option d'ignorer la restriction de signe.
+    2. **En Masse** via la barre d'action sur une sélection de lignes (`Mod.`).
+    3. **En Bloc (EUR)** via le bouton "🚀 Injection EUR en bloc" qui scanne automatiquement les lignes EUR "A vérifier" ou "Valide". Une fenêtre de confirmation permet de décocher individuellement les lignes ou de modifier leur nature (Achat/Vente).
+- Les lignes injectées apparaissent en jaune vif dans l'App 0. Pour plus de clarté, elles utilisent les libellés "Banque FIAT" et "Compte CRYPTO". Les types d'injection correspondent strictement aux options du formulaire App 0 pour garantir une reconnaissance immédiate.
 - **Transactions Masquées :** En cas de filtres actifs ou de bouton 'Spam' désactivé, `app2.py` doit afficher un message d'alerte indiquant le nombre de lignes masquées avec un bouton 'Voir' ouvrant une `@st.dialog` listant ces transactions.
 - **Gestion des Lignes RAW :** L'App 2 permet l'élimination de transactions erronées dans les fichiers RAW de travail (racine de l'année) via la colonne de sélection `Mod.`. La traçabilité est assurée par la colonne `Source_File`.
 - **Règle Absolue Sanctuary :** Il est **STRICTEMENT INTERDIT** de modifier ou supprimer des lignes dans les fichiers du dossier `/sanctuary/`. Ce dossier sert d'archive de secours inviolable permettant le rétablissement des données via l'onglet "Audit & Recovery".
@@ -98,7 +102,8 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 
 ## VI. STANDARDS TECHNIQUES TRANSVERSES (shared_logic.py)
 
-1. **Persistence Globale :** Utilisation de `global_config.json` pour stocker `start_year`, `processing_year`, et les réglages persistants par application (ex: `appPropri_year`).
+1. **Gestion Centralisée de l'Année :** La "Première année d'activité" et l'"Année de traitement" sont gérées exclusivement dans la barre latérale du Hub (`main.py`). Il est **formellement interdit** de réintroduire des widgets de sélection d'année (`st.number_input`) dans les sous-modules. Ces derniers doivent consommer `st.session_state["_hub_target_year"]` et afficher un simple rappel textuel de l'année active.
+2. **Persistence Globale :** Utilisation de `global_config.json` pour stocker `start_year`, `processing_year`, et les réglages persistants par application (ex: `appPropri_year`).
 2. **Encodage CSV :** Export systématique en `utf-8-sig` pour assurer la compatibilité Excel/Windows et la préservation des symboles monétaires.
 3. **Nettoyage Automatisé :** Fonction de maintenance en sidebar pour purger les fichiers de travail `raw_*.csv` anciens, en conservant uniquement les deux dates de session les plus récentes.
 4. **Type Safety Datetime :** Toute ingestion de donnée doit forcer `pd.to_datetime(..., utc=True)` pour éviter les plantages lors des tris et calculs temporels.

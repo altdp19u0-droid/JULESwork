@@ -152,12 +152,14 @@ with st.sidebar:
                 except: pass
             st.info(f"{len(pkl_files)} fichiers de cache supprimés.")
 
-    target_year = st.number_input("Année de traitement", min_value=2015, max_value=2030, key="_hub_target_year")
+    # Access Unified Processing Year from Hub
+    target_year = st.session_state.get("_hub_target_year")
+    if target_year is None:
+        g_conf = sl.load_global_config()
+        target_year = g_conf.get("processing_year") or datetime.now().year
+        st.session_state["_hub_target_year"] = target_year
 
-    # Persist change if modified here too
-    if target_year != g_conf.get("processing_year"):
-        g_conf["processing_year"] = int(target_year)
-        sl.save_global_config(g_conf)
+    st.write(f"📅 Année active : **{target_year}**")
 
     # Year switch detection
     if "last_target_year" not in st.session_state:
