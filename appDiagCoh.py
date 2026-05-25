@@ -47,7 +47,8 @@ def compute_running_balances(df_j, df_m_legacy):
     # Journal Movements
     if not df_j.empty:
         for _, r in df_j.iterrows():
-            is_cession = sl.is_imposable_robust(r.get("Imposable")) or "Vente" in str(r.get("Category", ""))
+            # Use unified logic to identify imposable cessions (Excludes EUR and inflows)
+            is_cession = sl.is_cession_imposable_robust(r)
             rows.append({
                 "Date": r["Date"], "Account": str(r["Account"]), "Asset": normalize_asset(r["Asset"]),
                 "Amount": float(r["Amount"]), "Type": "Movement", "Category": r.get("Category", "A vérifier"),
@@ -69,7 +70,14 @@ def compute_running_balances(df_j, df_m_legacy):
 
     # Manual Entries are already in the CLEAN journal as Source Type 'Manual Position'
 
-    full_history = pd.DataFrame(rows).sort_values("Date")
+    full_history = pd.DataFrame(rows)
+
+    # SORTING: We prioritize Inflows (Amount > 0) over Outflows (Amount < 0)
+    # and Manual Positions over Movements when they share the exact same timestamp.
+    # This prevents false negative balances (blocks) due to same-second operations.
+    if not full_history.empty:
+        full_history["_sort_pri"] = full_history["Amount"].apply(lambda x: 0 if x > 0 else 1)
+        full_history = full_history.sort_values(["Date", "_sort_pri"]).drop(columns=["_sort_pri"])
 
     # 2. Compute per Asset/Account
     full_history["Running_Bal"] = full_history.groupby(["Account", "Asset"])["Amount"].cumsum()

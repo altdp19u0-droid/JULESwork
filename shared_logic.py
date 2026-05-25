@@ -740,8 +740,10 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
     res["Prix (EUR)"] = res["Asset"].apply(get_smart_price)
     res["Valeur (EUR)"] = res["Solde"] * res["Prix (EUR)"]
 
-    # VGP Calculation: Net sum of ALL values EXCLUDING External Circuits
-    total_vgp = res[res["Is_Circuit"] == False]["Valeur (EUR)"].sum()
+    # VGP Calculation: Net sum of ALL digital asset values EXCLUDING External Circuits and Fiat EUR
+    # Per Art. 150 VH bis, fiat balances (EUR) are not included in the portfolio valuation.
+    mask_vgp = (res["Is_Circuit"] == False) & (res["Asset"].str.upper() != "EUR")
+    total_vgp = res[mask_vgp]["Valeur (EUR)"].sum()
 
     return res, total_vgp
 

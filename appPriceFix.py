@@ -174,17 +174,18 @@ if "price_explorer_df" in st.session_state:
     else:
         col_t3.success("✨ Prêt pour VGP")
 
-    st.info("💡 **Instructions :** 1. Cliquez sur 'Collecte Automatique'. 2. Saisissez manuellement les prix restant à 0 (⚠️). 3. Cliquez sur 'Sanctuariser'.")
+    st.info("💡 **Instructions :** 1. Cliquez sur 'Collecte Automatique'. 2. Saisissez manuellement les prix restant à 0 (⚠️) ou ajoutez des lignes manuellement en bas du tableau. 3. Cliquez sur 'Sanctuariser'.")
 
     # Data Editor
+    # We enable addition and editing of rows to allow manual entry of price needs
     ed_prices = st.data_editor(
         df,
         column_config={
             "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.6f €"),
-            "Date": st.column_config.DateColumn(disabled=True),
-            "Asset": st.column_config.TextColumn(disabled=True),
-            "Année": st.column_config.TextColumn(disabled=True),
-            "Type": st.column_config.TextColumn(disabled=True),
+            "Date": st.column_config.DateColumn(required=True),
+            "Asset": st.column_config.TextColumn(required=True),
+            "Année": st.column_config.TextColumn(required=True),
+            "Type": st.column_config.SelectboxColumn("Type", options=["Cession", "Fin d'année", "Manuel"]),
             "Status": st.column_config.TextColumn(disabled=True),
         },
         width='stretch',
