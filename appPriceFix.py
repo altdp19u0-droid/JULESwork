@@ -184,7 +184,7 @@ if "price_explorer_df" in st.session_state:
             "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.6f €"),
             "Date": st.column_config.DateColumn(required=True),
             "Asset": st.column_config.TextColumn(required=True),
-            "Année": st.column_config.TextColumn(required=True),
+            "Année": st.column_config.NumberColumn("Année", format="%d", required=True),
             "Type": st.column_config.SelectboxColumn("Type", options=["Cession", "Fin d'année", "Manuel"]),
             "Status": st.column_config.TextColumn(disabled=True),
         },
