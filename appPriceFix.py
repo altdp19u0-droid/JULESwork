@@ -1,0 +1,311 @@
+import os
+import json
+import time
+import requests
+import pandas as pd
+import streamlit as st
+from datetime import datetime
+import unicodedata
+import shared_logic as sl
+
+# --- Configuration ---
+if "is_hub" not in st.session_state:
+    st.set_page_config(page_title="Jules Crypto - Price Fix (appPriceFix)", layout="wide")
+
+st.title("🔍 Explorateur & Collecteur de Prix")
+
+EXPORT_BASE_DIR = "sanctuarisation"
+PRICE_CACHE_FILE = "historical_prices_cache.json"
+SPAM_FILE = "spam_blacklist.json"
+
+# --- Helpers ---
+
+# --- Sidebar ---
+with st.sidebar:
+    st.header("⚙️ Paramètres de Scan")
+
+    # Discovery of available years
+    available_years = sorted([y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))], reverse=True)
+    if not available_years: available_years = [str(datetime.now().year)]
+
+    g_conf = sl.load_global_config()
+    target_year = st.session_state.get("_hub_target_year")
+    if target_year is None:
+        target_year = g_conf.get("processing_year") or datetime.now().year
+        st.session_state["_hub_target_year"] = target_year
+
+    hub_year = str(target_year)
+    st.write(f"📅 Année active : **{hub_year}**")
+
+    # Pre-select the hub processing year if available
+    default_selection = [hub_year] if hub_year in available_years else available_years
+
+    selected_years = st.multiselect("Années à traiter", options=available_years, default=default_selection, key="_hub_pricefix_years", help="Sélectionnez une ou plusieurs années pour limiter le scan.")
+
+    exclude_spam = st.checkbox("🛡️ Exclure les Spams (Statut App 2)", value=True, help="Ignore les assets et dates liés uniquement à des transactions marquées comme Spam dans le journal qualifié.")
+
+    # --- DOUBLE VÉRIFICATION SPAM À L'OUVERTURE ---
+    if exclude_spam:
+        total_leaked = 0
+        for y in selected_years:
+            # We check the FULL journal for leaked spams that shouldn't be there
+            # But the scanner will only work on CLEAN.
+            q_path = sl.get_file_path(int(y), 'qualified_full')
+            if q_path and os.path.exists(q_path):
+                try:
+                    df_q = sl.pd_read_csv_safe(q_path)
+                    leaked = sl.validate_spam_exclusion(df_q)
+                    if leaked: total_leaked += len(leaked)
+                except: pass
+        if total_leaked > 0:
+            st.sidebar.warning(f"🛡️ {total_leaked} lignes suspectes détectées via Blacklist. Elles seront ignorées du scan.")
+
+    st.divider()
+    sl.show_status()
+
+# --- Scanner ---
+def scan_needed_prices(target_years, exclude_spams=True):
+    """GATEWAY EXCLUSIVITY: Scans EXCLUSIVELY the CLEAN journal for price needs."""
+    all_needed = [] # List of dicts: {'Year', 'Asset', 'Date', 'Type'}
+
+    for y in target_years:
+        y_int = int(y)
+        assets_in_year = set()
+
+        # 1. Use the Gateway standard loader (already filters spams if they leaked into CLEAN)
+        df_q = sl.load_clean_history(y_int)
+
+        if not df_q.empty and "Date" in df_q.columns:
+            # Robust conversion before using .dt accessor
+            df_q["Date"] = pd.to_datetime(df_q["Date"], utc=True, errors='coerce')
+            df_q = df_q.dropna(subset=["Date"])
+            # Filter for only THIS year for the scanner
+            df_q = df_q[df_q["Date"].dt.year == y_int]
+
+        if not df_q.empty:
+            # Identify assets held (includes those from manual positions if merged into journal)
+            assets_in_year.update(df_q["Asset"].dropna().unique())
+
+            # Identify cessions
+            mask_cess = (df_q["Imposable"].apply(sl.is_imposable_robust)) | (df_q["Category"].fillna("").str.contains("Vente", case=False))
+            cessions = df_q[mask_cess & (df_q["Asset"] != "EUR")]
+            for _, row in cessions.iterrows():
+                all_needed.append({
+                    "Year": y_int, "Asset": str(row["Asset"]), "Date": row["Date"].date(), "Type": "Cession"
+                })
+
+        # 4. Handle End of Year (31/12) for all identified assets
+        eoy_date = datetime(y_int, 12, 31).date()
+        for a in assets_in_year:
+            a_str = str(a).upper().strip()
+            if a_str not in ["EUR", "NAN", "NONE", ""]:
+                all_needed.append({
+                    "Year": y_int, "Asset": a_str, "Date": eoy_date, "Type": "Fin d'année"
+                })
+
+    if not all_needed: return pd.DataFrame()
+    df_needed = pd.DataFrame(all_needed).drop_duplicates(subset=["Asset", "Date"])
+    return df_needed
+
+# --- Logic ---
+st.subheader("📋 État de la collecte des prix")
+
+# Alerte de conformité
+st.warning("""
+**⚠️ Règle d'Intégrité Strict :** Les calculs de VGP et de fiscalité n'autorisent aucune valeur de repli (approximation).
+Tout prix affiché à **0.000000** bloquera la validation de l'année concernée.
+Vous devez soit obtenir le prix via le bouton **Collecte Automatique**, soit le **saisir manuellement** dans le tableau ci-dessous.
+""")
+
+if st.button("🚀 Scanner les besoins (Cessions & Fins d'années)", width='stretch'):
+    with st.spinner("Analyse des fichiers sanctuarisés..."):
+        df_needed = scan_needed_prices(target_years=selected_years, exclude_spams=exclude_spam)
+        cache = sl.load_price_cache() # Use centralized logic
+
+        results = []
+        for _, row in df_needed.iterrows():
+            a_clean = unicodedata.normalize('NFKC', str(row["Asset"])).upper().strip()
+            d_str = row["Date"].strftime("%d-%m-%Y")
+            cache_key = f"{a_clean}_{d_str}"
+
+            price = float(cache.get(cache_key, 0.0))
+            results.append({
+                "Année": row["Year"],
+                "Asset": row["Asset"],
+                "Date": row["Date"],
+                "Type": row["Type"],
+                "Prix (EUR)": price,
+                "Status": "✅ OK" if price > 0 else "❌ Manquant"
+            })
+
+        if results:
+            df_res = pd.DataFrame(results)
+            st.session_state.price_explorer_df = df_res.sort_values(["Status", "Date"], ascending=[True, False])
+        else:
+            st.session_state.price_explorer_df = pd.DataFrame(columns=["Année", "Asset", "Date", "Type", "Prix (EUR)", "Status"])
+            st.info("✨ Aucun besoin de prix détecté pour les critères sélectionnés.")
+
+if "price_explorer_df" in st.session_state:
+    df = st.session_state.price_explorer_df
+
+    # Pre-calculate normalization for check
+    nuance_map = {
+        "\ua4f4": "U", "\ua4e2": "S", "\ua4d3": "D", "\ua4c1": "G", "\ua4c3": "H",
+        "\u0421": "C", "\u0405": "S", "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041d": "H",
+        "\u041a": "K", "\u041c": "M", "\u041e": "O", "\u0420": "P", "\u0422": "T", "\u0425": "X",
+        "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0443": "y", "\u0445": "x",
+        "\u216d": "C", "\u2160": "I", "\u2164": "V", "\u2169": "X", "\u216c": "L", "\u216f": "M",
+    }
+
+    def normalize_asset(a):
+        s = str(a)
+        for k, v in nuance_map.items(): s = s.replace(k, v)
+        return unicodedata.normalize('NFKC', s).upper().strip()
+
+    col_t1, col_t2, col_t3 = st.columns([2, 1, 1])
+    col_t1.write(f"Nombre de prix identifiés : **{len(df)}**")
+
+    missing_count = len(df[df["Prix (EUR)"] == 0])
+    col_t2.metric("Prix manquants", missing_count, delta=-missing_count if missing_count == 0 else missing_count, delta_color="inverse")
+
+    # Indicateur de blocage
+    if missing_count > 0:
+        col_t3.error("🚨 Intervention Requise")
+    else:
+        col_t3.success("✨ Prêt pour VGP")
+
+    st.info("💡 **Instructions :** 1. Cliquez sur 'Collecte Automatique'. 2. Saisissez manuellement les prix restant à 0 (⚠️) ou ajoutez des lignes manuellement en bas du tableau. 3. Cliquez sur 'Sanctuariser'.")
+
+    # Data Editor
+    # We enable addition and editing of rows to allow manual entry of price needs
+    ed_prices = st.data_editor(
+        df,
+        column_config={
+            "Prix (EUR)": st.column_config.NumberColumn("Prix (EUR)", format="%.6f €"),
+            "Date": st.column_config.DateColumn(required=True),
+            "Asset": st.column_config.TextColumn(required=True),
+            "Année": st.column_config.NumberColumn("Année", format="%d", required=True),
+            "Type": st.column_config.SelectboxColumn("Type", options=["Cession", "Fin d'année", "Manuel"]),
+            "Status": st.column_config.TextColumn(disabled=True),
+        },
+        width='stretch',
+        num_rows="dynamic",
+        key="price_fix_editor"
+    )
+
+    st.download_button(
+        "📥 Exporter ce tableau de collecte (Audit)",
+        ed_prices.to_csv(index=False, encoding="utf-8-sig"),
+        "collecte_prix_audit.csv",
+        "text/csv",
+        width='stretch'
+    )
+
+    col_btn1, col_btn2 = st.columns(2)
+
+    if col_btn1.button("🤖 Collecte Automatique (Manquants)", width='stretch', type="primary"):
+        to_fetch = ed_prices[ed_prices["Prix (EUR)"] == 0].copy()
+        if to_fetch.empty:
+            st.success("Aucun prix manquant à collecter.")
+        else:
+            pbar = st.progress(0)
+            updated_count = 0
+            fail_count = 0
+
+            # Reload cache once before batch
+            cache = sl.load_price_cache()
+
+            # Pre-load available CLEAN journals to look for harvested USD prices
+            # Use Gateway loader to ensure data quality and datetime types
+            all_dfs = []
+            for y in selected_years:
+                all_dfs.append(sl.load_clean_history(int(y)))
+
+            harvested_prices = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
+
+            for idx, (i, row) in enumerate(to_fetch.iterrows()):
+                dt_obj = datetime.combine(row["Date"], datetime.min.time())
+                asset = str(row["Asset"]).upper().strip()
+
+                # 1. First Level: Look for certified price in the Journal (Step 2)
+                new_price = sl.get_price_from_journal(asset, row["Date"], df_h=harvested_prices)
+
+                # 2. Second Level: Fallback to central API logic (CoinGecko/Llama)
+                if new_price <= 0:
+                    new_price = sl.get_price_eur(row["Asset"], dt_obj, cache=cache)
+
+                if new_price > 0:
+                    ed_prices.at[i, "Prix (EUR)"] = new_price
+                    ed_prices.at[i, "Status"] = "✅ Récupéré"
+                    updated_count += 1
+                else:
+                    ed_prices.at[i, "Status"] = "🚨 ÉCHEC (Saisie Manuelle Obligatoire)"
+                    fail_count += 1
+
+                pbar.progress((idx + 1) / len(to_fetch))
+
+                # Simple throttling for CoinGecko free tier if many prices
+                if updated_count % 5 == 0:
+                    time.sleep(0.5)
+
+            st.session_state.price_explorer_df = ed_prices
+            if fail_count > 0:
+                st.error(f"Collecte partielle : {updated_count} récupérés, {fail_count} restants à saisir manuellement.")
+            else:
+                st.success(f"Collecte terminée : {updated_count} prix récupérés.")
+            st.rerun()
+
+    if col_btn2.button("🛡️ Sanctuariser (Global & Annuel)", width='stretch'):
+        cache = sl.load_price_cache()
+        annual_updates = {} # {year: {key: val}}
+
+        count = 0
+        for _, r in ed_prices.iterrows():
+            if r["Prix (EUR)"] > 0:
+                y = str(r["Date"].year)
+                a_clean = normalize_asset(r["Asset"])
+                d_str = r["Date"].strftime("%d-%m-%Y")
+                key = f"{a_clean}_{d_str}"
+                val = float(r["Prix (EUR)"])
+
+                # Update Global Cache
+                cache[key] = val
+
+                # Prepare Annual Sanctuarisation
+                if y not in annual_updates: annual_updates[y] = {}
+                annual_updates[y][key] = val
+                count += 1
+
+        # Save Global
+        sl.save_price_cache(cache)
+
+        # Save Annuals
+        for y, prices in annual_updates.items():
+            y_dir = os.path.join(EXPORT_BASE_DIR, y)
+            os.makedirs(y_dir, exist_ok=True)
+            s_dir = os.path.join(y_dir, "sanctuary"); os.makedirs(s_dir, exist_ok=True)
+
+            path = os.path.join(y_dir, f"verified_prices_{y}.json")
+            s_path = os.path.join(s_dir, f"verified_prices_{y}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+
+            # Merge with existing if any
+            existing = {}
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f: existing = json.load(f)
+                except: pass
+            existing.update(prices)
+
+            # 1. Working copy
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, indent=4)
+
+            # 2. Sanctuary copy (permanent record)
+            with open(s_path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, indent=4)
+
+        st.balloons()
+        st.success(f"✅ {count} prix sanctuarisés (Cache Global + Fichiers Annuels).")
+
+st.sidebar.divider()
+st.sidebar.caption("Price Collector v1.0 - appPriceFix")
