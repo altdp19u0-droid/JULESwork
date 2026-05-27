@@ -248,8 +248,9 @@ def load_clean_history(year):
 
     return res
 
-# --- Registry Management ---
+# --- Registry Management (Optimized with Memory Caching) ---
 
+@st.cache_data(ttl=600)
 def load_owner_accounts():
     if os.path.exists(OWNERS_FILE):
         try:
@@ -259,7 +260,9 @@ def load_owner_accounts():
 
 def save_owner_accounts(data):
     with open(OWNERS_FILE, "w", encoding="utf-8") as f: json.dump({str(k).lower(): v for k, v in data.items()}, f, indent=4)
+    st.cache_data.clear()
 
+@st.cache_data(ttl=600)
 def load_position_labels():
     """Returns a simple mapping {address: label} for display and lookup."""
     if os.path.exists(POSITIONS_FILE):
@@ -270,6 +273,7 @@ def load_position_labels():
         except: return {}
     return {}
 
+@st.cache_data(ttl=600)
 def load_position_registry():
     """Returns the full position objects {address: {'label': name, 'assets': [A1, ...]}}."""
     if os.path.exists(POSITIONS_FILE):
@@ -294,7 +298,9 @@ def save_position_labels(data):
     """Saves position data. Handles both simple {addr: label} and complex {addr: {label, assets}}."""
     with open(POSITIONS_FILE, "w", encoding="utf-8") as f:
         json.dump({str(k).lower(): v for k, v in data.items()}, f, indent=4)
+    st.cache_data.clear()
 
+@st.cache_data(ttl=600)
 def load_external_circuits():
     if os.path.exists(EXTERNAL_CIRCUITS_FILE):
         try:
@@ -308,7 +314,9 @@ def load_external_circuits():
 
 def save_external_circuits(data):
     with open(EXTERNAL_CIRCUITS_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
+    st.cache_data.clear()
 
+@st.cache_data(ttl=600)
 def load_spam_list():
     if os.path.exists(SPAM_FILE):
         try:
@@ -318,11 +326,14 @@ def load_spam_list():
 
 def save_spam_list(spam_set):
     with open(SPAM_FILE, "w", encoding="utf-8") as f: json.dump(sorted(list(spam_set)), f, indent=4)
+    st.cache_data.clear()
 
 def save_price_cache(cache):
     with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=4)
+    st.cache_data.clear()
 
+@st.cache_data(ttl=600)
 def load_valid_assets():
     if os.path.exists(VALID_ASSETS_FILE):
         try:
@@ -332,7 +343,37 @@ def load_valid_assets():
 
 def save_valid_assets(assets_set):
     with open(VALID_ASSETS_FILE, "w", encoding="utf-8") as f: json.dump(sorted(list(assets_set)), f, indent=4)
+    st.cache_data.clear()
 
+@st.cache_data(ttl=600)
+def get_all_labels():
+    m = load_owner_accounts(); m.update(load_position_labels()); m.update(load_external_circuits().get("labels", {}))
+    return m
+
+@st.cache_data(ttl=600)
+def standardize_address_string(addr_str):
+    """Enforces the absolute standard: 'Identifier (Name)'."""
+    if not addr_str or str(addr_str).lower() in ["nan", "none", ""]: return ""
+    s = str(addr_str).strip()
+    raw = resolve_raw_addr(s).lower()
+    mapping = get_all_labels()
+    if raw in mapping: return format_owner_display(raw, mapping[raw])
+
+    label_to_addr = {str(v).lower(): k for k, v in mapping.items() if str(v).lower() != "nan"}
+    if raw in label_to_addr:
+        addr = label_to_addr[raw]
+        return format_owner_display(addr, mapping[addr])
+
+    name = ""
+    if "(" in s and ")" in s:
+        parts = s.split("(")
+        p1, p2 = parts[0].strip(), parts[1].replace(")", "").strip()
+        if p1.lower().startswith("0x"): raw, name = p1.lower(), p2
+        elif p2.lower().startswith("0x"): raw, name = p2.lower(), p1
+        else: raw, name = p1, p2
+    return format_owner_display(raw, name)
+
+@st.cache_data(ttl=600)
 def load_manual_notes():
     if os.path.exists(NOTES_FILE):
         try:
@@ -342,6 +383,7 @@ def load_manual_notes():
 
 def save_manual_notes(notes):
     with open(NOTES_FILE, "w", encoding="utf-8") as f: json.dump(notes, f, indent=4)
+    st.cache_data.clear()
 
 def get_note_key(row):
     """Generates a stable UID for transaction notes."""
@@ -350,10 +392,6 @@ def get_note_key(row):
     ast = str(row.get("Asset", "NOAST")).strip().upper()
     acc = resolve_raw_addr(row.get("Account", "NOACC")).lower()
     return f"{dt}_{h}_{ast}_{acc}"
-
-def get_all_labels():
-    m = load_owner_accounts(); m.update(load_position_labels()); m.update(load_external_circuits().get("labels", {}))
-    return m
 
 def get_owner_addresses(df=None):
     ids = set(load_owner_accounts().keys())
@@ -435,6 +473,7 @@ def validate_spam_exclusion(df):
 
 # --- Fiscal & Pricing ---
 
+@st.cache_data(ttl=86400)
 def get_fiat_rate(from_currency, date_obj):
     if str(from_currency).upper() == "EUR": return 1.0
     date_str = date_obj.strftime("%Y-%m-%d")
@@ -444,6 +483,7 @@ def get_fiat_rate(from_currency, date_obj):
         return float(res["rates"]["EUR"])
     except: return 0.0
 
+@st.cache_data(ttl=3600)
 def load_price_cache():
     if os.path.exists(PRICE_CACHE_FILE):
         try:
@@ -546,25 +586,40 @@ def get_fiat_inflow_mask(df):
 
     return mask_in & (~mask_neg)
 
-def get_total_acquisition_value(year):
-    """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from Step 0 manual registers up to year."""
+def get_total_acquisition_value(year, return_details=False):
+    """
+    STRICT Acquisition Engine:
+    Calculates cumulative sum of all fiat acquisitions (Amount EUR).
+    Filters ONLY for Valid Assets (stable and coins) being purchased.
+    """
     config = load_global_config()
     start = int(config.get("start_year") or 2021)
+    valid_assets = load_valid_assets()
     total = 0.0
+    details = []
 
     for y in range(start, year + 1):
         p = get_file_path(y, 'fiat')
         if os.path.exists(p):
             df = pd_read_csv_safe(p)
             if not df.empty:
-                # Unified discovery logic
-                mask = get_fiat_inflow_mask(df)
+                # 1. Detect acquisition rows
+                mask_fiat = get_fiat_inflow_mask(df)
 
-                # Amount is prioritized in 'Montant EUR' (manual entry) then 'Amount'
-                amt_col = "Montant EUR" if "Montant EUR" in df.columns else "Amount"
-                if amt_col in df.columns:
-                    total += pd.to_numeric(df[mask][amt_col], errors="coerce").fillna(0.0).abs().sum()
+                # 2. Filter for Valid Assets only
+                mask_valid = df["Asset"].str.upper().isin(valid_assets)
 
+                df_purchases = df[mask_fiat & mask_valid].copy()
+
+                if not df_purchases.empty:
+                    amt_col = "Montant EUR" if "Montant EUR" in df_purchases.columns else "Amount"
+                    df_purchases["_val_eur"] = pd.to_numeric(df_purchases[amt_col], errors="coerce").fillna(0.0).abs()
+                    total += df_purchases["_val_eur"].sum()
+                    if return_details:
+                        details.append(df_purchases)
+
+    if return_details:
+        return total, (pd.concat(details) if details else pd.DataFrame())
     return total
 
 def calculate_fiscal_gains(cessions_df, total_acq_price):
@@ -649,73 +704,96 @@ def get_journal_prices(df_h, target_date=None):
 
     return prices
 
-def get_portfolio_snapshot(year, target_date, df_override=None):
-    """Calculates balances and total VGP, ensuring consistency with Journal valuations."""
+def get_portfolio_snapshot(year, target_date, df_override=None, force_full=False):
+    """
+    STRICT Inventory Engine:
+    Calculates balances by Asset and Location, strictly filtering for Valid Assets.
+    Handles EOY Report continuity and all movements (Swaps, Bridges, Fiat).
+    """
     target_date = pd.to_datetime(target_date, utc=True)
+    valid_assets = load_valid_assets()
 
+    # 1. Start with Report from N-1
+    starting_balances = []
+    if not force_full:
+        prev_path = get_file_path(year - 1, 'inventory_eoy')
+        if os.path.exists(prev_path):
+            df_prev = pd_read_csv_safe(prev_path)
+            if not df_prev.empty:
+                # Filter for Valid Assets
+                df_prev = df_prev[df_prev["Asset"].str.upper().isin(valid_assets)]
+                starting_balances.append(df_prev)
+
+    # 2. Get Movements for current year
     if df_override is not None:
         df_j = df_override.copy()
     else:
         df_j = load_clean_history(year)
 
-    if df_j.empty: return pd.DataFrame(), 0.0
+    if df_j.empty and not starting_balances:
+        return pd.DataFrame(), 0.0
 
-    # Force conversion once and drop NaT early
-    df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True, errors='coerce')
-    df_j = df_j.dropna(subset=["Date"])
+    # Process Journal
+    if not df_j.empty:
+        df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True, errors='coerce')
+        df_j = df_j.dropna(subset=["Date"])
+        df_j = df_j[(df_j["Date"] <= target_date) & (df_j["Date"].dt.year == year)]
+        df_j = apply_spam_filter(df_j, drop=True)
+        # Filter for Valid Assets
+        df_j = df_j[df_j["Asset"].str.upper().isin(valid_assets)]
 
-    # Filter by date and spam early to reduce dataset size
-    df_j = df_j[df_j["Date"] <= target_date]
-    df_j = apply_spam_filter(df_j, drop=True)
+    # 3. Handle Mirroring for DeFi Protocol legs
+    df_direct = df_j.copy() if not df_j.empty else pd.DataFrame()
+    if not df_direct.empty:
+        pos_labels = load_position_labels()
+        pos_ids = {str(k).lower().strip() for k in pos_labels.keys()}
+        pos_names = {str(v).lower().strip() for v in pos_labels.values()}
+        owner_accounts = set(load_owner_accounts().keys())
+        active_accounts = set(df_direct["Account"].apply(resolve_raw_addr).str.lower().unique())
 
-    # 1. Base Legs (Account)
-    df_direct = df_j
+        df_direct["cp_raw"] = df_direct["Counterparty"].apply(resolve_raw_addr).str.lower().str.strip()
+        mask_mirror = (df_direct["Category"] == "Transfert Interne") & \
+                      (df_direct["cp_raw"].isin(pos_ids) | df_direct["Counterparty"].str.lower().isin(pos_names)) & \
+                      (~df_direct["cp_raw"].isin(owner_accounts)) & (~df_direct["cp_raw"].isin(active_accounts))
 
-    # 2. Protocol Mirroring (Receivables)
-    pos_labels = load_position_labels()
-    pos_ids = {str(k).lower().strip() for k in pos_labels.keys()}
-    pos_names = {str(v).lower().strip() for v in pos_labels.values()}
-    owner_accounts = set(load_owner_accounts().keys())
-
-    df_j["cp_raw"] = df_j["Counterparty"].apply(resolve_raw_addr).str.lower().str.strip()
-
-    # We mirror Internal Transfers to Protocols that are NOT already in the 'Account' list
-    # to avoid double counting if the protocol is also harvested as an account.
-    df_mirror = df_j[(df_j["Category"] == "Transfert Interne") &
-                     (df_j["cp_raw"].isin(pos_ids) | df_j["Counterparty"].str.lower().isin(pos_names))].copy()
-
-    if not df_mirror.empty:
-        # Check which protocols are NOT already accounts in the history
-        active_accounts = set(df_j["Account"].apply(resolve_raw_addr).str.lower().unique())
-        df_mirror["cp_acc_raw"] = df_mirror["cp_raw"]
-
-        # Mirror only if the target is NOT an owner account and NOT already harvested as an account
-        mask_mirror = (~df_mirror["cp_acc_raw"].isin(owner_accounts)) & (~df_mirror["cp_acc_raw"].isin(active_accounts))
-        df_to_mirror = df_mirror[mask_mirror].copy()
-
+        df_to_mirror = df_direct[mask_mirror].copy()
         if not df_to_mirror.empty:
             df_to_mirror["Account"] = df_to_mirror["Counterparty"]
             df_to_mirror["Amount"] = -df_to_mirror["Amount"]
-            df_final = pd.concat([df_direct, df_to_mirror])
+            df_full_mvt = pd.concat([df_direct, df_to_mirror])
         else:
-            df_final = df_direct
+            df_full_mvt = df_direct
     else:
-        df_final = df_direct
+        df_full_mvt = pd.DataFrame()
 
-    df_final["Location"] = df_final["Account"].apply(standardize_address_string)
+    # 4. Consolidate (Report + Mvt)
+    all_legs = []
 
-    # Calculate detailed snapshot
-    df_final["In"] = df_final["Amount"].apply(lambda x: x if x > 0 else 0.0)
-    df_final["Out"] = df_final["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+    # Legs from Report (already aggregated)
+    if starting_balances:
+        for sb in starting_balances:
+            # Report legs carry over their final balance as an 'In' for the new year
+            all_legs.append(pd.DataFrame({
+                "Location": sb["Location"], "Asset": sb["Asset"],
+                "Amount": sb["Solde"], "In": sb["Solde"], "Out": 0.0, "Report": sb["Solde"]
+            }))
 
-    res = df_final.groupby(["Location", "Asset"]).agg({
-        "Amount": "sum",
-        "In": "sum",
-        "Out": "sum"
+    # Legs from current year movements
+    if not df_full_mvt.empty:
+        df_full_mvt["Location"] = df_full_mvt["Account"].apply(standardize_address_string)
+        df_full_mvt["In"] = df_full_mvt["Amount"].apply(lambda x: x if x > 0 else 0.0)
+        df_full_mvt["Out"] = df_full_mvt["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+        df_full_mvt["Report"] = 0.0
+        all_legs.append(df_full_mvt[["Location", "Asset", "Amount", "In", "Out", "Report"]])
+
+    if not all_legs: return pd.DataFrame(), 0.0
+
+    df_consolidated = pd.concat(all_legs)
+    res = df_consolidated.groupby(["Location", "Asset"]).agg({
+        "Amount": "sum", "In": "sum", "Out": "sum", "Report": "sum"
     }).reset_index()
-    res = res.rename(columns={"Amount": "Solde", "In": "Entrées", "Out": "Sorties"})
-    res["Report"] = 0.0 # Placeholder for EOY carry-over if needed
 
+    res = res.rename(columns={"Amount": "Solde", "In": "Entrées", "Out": "Sorties"})
     res = res[res["Solde"].abs() > 1e-10]
 
     # Identification of External Circuits (Exclusion from VGP)

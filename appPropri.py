@@ -48,13 +48,12 @@ with st.sidebar:
 # --- Logic: Core Engine ---
 
 @st.cache_data
-def get_cessions_summary(year, journal_df_json):
+def get_cessions_summary(year, df_j):
     """Calculates VGP for all unique cession dates found in the journal."""
-    df_j = pd.read_json(journal_df_json)
     if df_j.empty: return pd.DataFrame()
 
-    # Identify Cessions: Outflows, not EUR
-    mask_cess = (df_j["Amount"] < 0) & (df_j["Asset"].str.upper() != "EUR")
+    # Identify Cessions: STRICT Logic (Must be imposable)
+    mask_cess = df_j.apply(sl.is_cession_imposable_robust, axis=1)
     cess_dates = sorted(df_j[mask_cess]["Date"].dt.date.unique(), reverse=True)
 
     # Add EOY
@@ -64,13 +63,13 @@ def get_cessions_summary(year, journal_df_json):
     summary_data = []
     for d in all_dates:
         dt_obj = datetime.combine(d, datetime.max.time())
-        # We pass df_j directly to avoid disk reload
+        # Robust Unpacking (handles 2 return values)
         snap_res = sl.get_portfolio_snapshot(year, dt_obj, df_override=df_j)
         vgp_val = snap_res[1] if isinstance(snap_res, tuple) else 0.0
 
         summary_data.append({
             "Date": d,
-            "Événement": "🏁 Fin d'année" if d == eoy_d else "📉 Cession",
+            "Événement": "🏁 Fin d'année" if d == eoy_d else "📉 Cession Imposable",
             "VGP (€)": vgp_val
         })
     return pd.DataFrame(summary_data)
@@ -78,7 +77,6 @@ def get_cessions_summary(year, journal_df_json):
 @st.cache_data
 def get_unified_inventory(year, t_date):
     """Calculates inventory by Asset and Location (Wallet/Protocol)."""
-    # ROBUST UNPACKING (Handles 2 or more return values)
     snap_res = sl.get_portfolio_snapshot(year, t_date)
     if isinstance(snap_res, tuple):
         snapshot = snap_res[0]
@@ -86,121 +84,76 @@ def get_unified_inventory(year, t_date):
         snapshot = snap_res
 
     if snapshot.empty: return pd.DataFrame()
+
     res = snapshot.rename(columns={
-        "Location": "Emplacement", "Solde": "Solde (QTD)",
-        "In": "Total Entrées", "Out": "Total Sorties",
+        "Location": "Emplacement", "Solde": "Solde Actuel",
+        "In": "Mvts Entrants", "Out": "Mvts Sortants",
+        "Report": "Solde N-1 (Report)",
         "Prix (EUR)": "Prix (€)", "Valeur (EUR)": "Valeur (€)"
     })
+
     def clean_loc(loc):
         if loc.startswith("Account: "): return f"Portefeuille: {sl.resolve_owner_display(loc.replace('Account: ', ''))}"
         return f"Protocole: {loc}"
     res["Emplacement"] = res["Emplacement"].apply(clean_loc)
-    return res
+
+    # Final ordering for requested view
+    cols = ["Asset", "Emplacement", "Solde N-1 (Report)", "Mvts Entrants", "Mvts Sortants", "Solde Actuel", "Prix (€)", "Valeur (€)"]
+    return res[cols + [c for c in res.columns if c not in cols]]
 
 # --- Main Dashboard ---
 
 # 0. SOMMAIRE DES CESSIONS & VGP (Calcul Automatique)
-st.subheader("📈 Sommaire des Cessions & VGP")
-st.info("Ce tableau liste toutes les sorties d'actifs (Cessions) et calcule la VGP à chaque date pour le rapport fiscal.")
+st.subheader("📈 Sommaire des VGP Fiscales")
+st.info("Ce tableau récapitule la VGP à chaque date de cession imposable (Crypto -> Fiat) qualifiée dans l'Etape 2.")
 
-# Load FULL journal for imposable status and cessions
 j_full_path = sl.get_file_path(target_year, 'qualified_full')
 if not os.path.exists(j_full_path):
     st.warning("Veuillez d'abord qualifier vos transactions dans l'étape 2.")
     df_j = pd.DataFrame()
 else:
-    # Optimized load
     df_j = sl.pd_read_csv_safe(j_full_path)
     df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True)
     df_j["Imposable"] = df_j["Imposable"].apply(sl.is_imposable_robust)
 
 if not df_j.empty:
-    # Identify Cessions: Outflows, not EUR
-    mask_cess = (df_j["Amount"] < 0) & (df_j["Asset"].str.upper() != "EUR")
-    cessions = df_j[mask_cess].copy()
-
-    if not cessions.empty:
-        # Calculate VGP for each unique cession date (Optimized with Cache)
-        with st.spinner("Calcul des VGP de cession..."):
-            # We serialize to JSON for the cache key to avoid DataFrame hashing overhead
-            # Use ISO format to avoid Pandas deprecation warning
-            j_json = df_j.to_json(date_format='iso')
-            df_sum = get_cessions_summary(target_year, j_json)
-
-            # Map back to cessions for the editor
-            vgp_map = df_sum.set_index("Date")["VGP (€)"].to_dict()
-            cessions["VGP (€)"] = cessions["Date"].dt.date.map(vgp_map)
-
-            # Map Comments from notes_db
-            notes_db = sl.load_manual_notes()
-            def get_tx_note(r): return notes_db.get(sl.get_note_key(r), "")
-            cessions["Commentaire"] = cessions.apply(get_tx_note, axis=1)
-
-            # Display the quick summary table
-            st.dataframe(df_sum, column_config={"VGP (€)": st.column_config.NumberColumn(format="%.2f €")}, use_container_width=True, hide_index=True)
-
-            st.divider()
-            st.write("**Détail des qualifications :**")
-
-            # Interactive Editor for Cessions
-            ed_cess = st.data_editor(
-                cessions.sort_values("Date", ascending=False),
-                column_config={
-                    "Date": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm", disabled=True),
-                    "Account": st.column_config.TextColumn("Compte", disabled=True),
-                    "Asset": st.column_config.TextColumn("Actif", disabled=True),
-                    "Amount": st.column_config.NumberColumn("Quantité", format="%.6f", disabled=True),
-                    "Prix de Cession (EUR)": st.column_config.NumberColumn("Prix Cession (€)", format="%.2f €"),
-                    "VGP (€)": st.column_config.NumberColumn("VGP à date (€)", format="%.2f €", disabled=True),
-                    "Imposable": st.column_config.CheckboxColumn("⚖️ Imp.", help="Cochez pour qualifier cette cession en imposable."),
-                    "Commentaire": st.column_config.TextColumn("📝 Commentaire", width="medium"),
-                },
-                disabled=["Date", "Chain", "Tx_Hash", "Type", "Method", "Account", "From", "To", "Asset", "Amount", "VGP (€)"],
-                use_container_width=True,
-                hide_index=True,
-                key="cessions_vgp_editor"
+    with st.spinner("Calcul des VGP clés..."):
+        df_sum = get_cessions_summary(target_year, df_j)
+        if not df_sum.empty:
+            st.dataframe(
+                df_sum,
+                column_config={"VGP (€)": st.column_config.NumberColumn(format="%.2f €")},
+                use_container_width=True, hide_index=True
             )
-
-            if st.button("💾 Sauvegarder les Modifications (Cessions)", type="primary"):
-                df_j.update(ed_cess)
-                df_j.to_csv(j_full_path, index=False, encoding="utf-8-sig")
-                clean_path = sl.get_file_path(target_year, 'qualified_clean')
-                sl.apply_spam_filter(df_j, drop=True).to_csv(clean_path, index=False, encoding="utf-8-sig")
-
-                new_notes = notes_db.copy()
-                for _, r in ed_cess.iterrows():
-                    key = sl.get_note_key(r)
-                    if r["Commentaire"]: new_notes[key] = str(r["Commentaire"])
-                    elif key in new_notes: del new_notes[key]
-                sl.save_manual_notes(new_notes)
-
-                st.success("Cessions et qualifications mises à jour.")
-                st.rerun()
-    else:
-        st.info("Aucune cession détectée dans le journal.")
+        else:
+            st.info("Aucune cession imposable détectée pour l'année sélectionnée.")
 
 st.divider()
 
-# 1. INVENTAIRE DÉTAILLÉ (Vue par actif par lieu)
-st.subheader(f"📦 Inventaire détaillé au {target_date.strftime('%d/%m/%Y')}")
+# 1. INVENTAIRE DE CONTRÔLE
+st.subheader(f"📦 Inventaire de Contrôle au {target_date.strftime('%d/%m/%Y')}")
 inventory = get_unified_inventory(target_year, target_date)
 notes_db = sl.load_manual_notes()
 
 if not inventory.empty:
-    # Metric Summary
-    mask_vgp = (inventory["Is_Circuit"] == False) & (inventory["Asset"].str.upper() != "EUR")
+    # Calculation of Capital Investi (A) - Now filtered for Valid Assets
+    total_a, df_a_details = sl.get_total_acquisition_value(target_year, return_details=True)
+
+    # Portfolio VGP (excluding non-taxable assets like EUR)
+    mask_vgp = (inventory["Asset"].str.upper() != "EUR")
     total_vgp = inventory[mask_vgp]["Valeur (€)"].sum()
-    total_a = sl.get_total_acquisition_value(target_year)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("VGP Globale", f"{total_vgp:,.2f} €")
-    c2.metric("Capital Investi (A)", f"{total_a:,.2f} €")
+    c2.metric("Capital Investi (A)", f"{total_a:,.2f} €", help="Cumul des Euros consommés pour l'achat de jetons validés.")
     c3.metric("Performance Latente", f"{total_vgp - total_a:,.2f} €")
 
-    # Prep Manual Overrides
+    st.write("**Détail des soldes par compte :**")
+
+    # Support for manual balance correction
     def get_forced_bal(r):
         k = f"BAL_{target_date.strftime('%Y%m%d')}_{r['Emplacement']}_{r['Asset']}"
-        return float(notes_db.get(k, r["Solde (QTD)"]))
+        return float(notes_db.get(k, r["Solde Actuel"]))
 
     def get_row_note(r):
         k = f"NOTE_{target_date.strftime('%Y%m%d')}_{r['Emplacement']}_{r['Asset']}"
@@ -214,78 +167,66 @@ if not inventory.empty:
         inventory,
         column_config={
             "Asset": st.column_config.TextColumn("🪙 Actif", disabled=True),
-            "Emplacement": st.column_config.TextColumn("📍 Emplacement", disabled=True),
-            "Solde (QTD)": st.column_config.NumberColumn("📦 Solde (Auto)", format="%.6f", disabled=True),
-            "Solde Corrigé": st.column_config.NumberColumn("🛠️ Solde Réel", format="%.6f", help="Forcez le solde si besoin (Point 3)."),
-            "Prix (€)": st.column_config.NumberColumn("🏷️ Prix (€)", format="%.4f €"),
-            "Valeur (€)": st.column_config.NumberColumn("💰 Valeur (€)", format="%.2f €", disabled=True),
+            "Emplacement": st.column_config.TextColumn("📍 Lieu", disabled=True),
+            "Solde N-1 (Report)": st.column_config.NumberColumn(format="%.6f", disabled=True),
+            "Mvts Entrants": st.column_config.NumberColumn(format="%.6f", disabled=True),
+            "Mvts Sortants": st.column_config.NumberColumn(format="%.6f", disabled=True),
+            "Solde Actuel": st.column_config.NumberColumn("📦 Solde (Calculé)", format="%.6f", disabled=True),
+            "Solde Corrigé": st.column_config.NumberColumn("🛠️ Solde Réel", format="%.6f", help="Forcez le solde si le calcul automatique est incomplet."),
+            "Prix (€)": st.column_config.NumberColumn(format="%.4f €"),
+            "Valeur (€)": st.column_config.NumberColumn(format="%.2f €", disabled=True),
             "Commentaires": st.column_config.TextColumn("📝 Commentaire", width="medium"),
         },
-        disabled=["Asset", "Emplacement", "Total Entrées", "Total Sorties", "Solde (QTD)", "Valeur (€)"],
-        use_container_width=True, hide_index=True, key="unified_inv_editor"
+        disabled=["Asset", "Emplacement", "Solde N-1 (Report)", "Mvts Entrants", "Mvts Sortants", "Solde Actuel", "Valeur (€)"],
+        use_container_width=True, hide_index=True, key="unified_control_editor"
     )
 
-    if st.button("💾 Enregistrer l'Inventaire (Notes & Soldes)"):
+    if st.button("💾 Enregistrer les Corrections & Notes"):
         new_notes = notes_db.copy()
         dt_s = target_date.strftime("%Y%m%d")
         for _, r in ed_inv.iterrows():
             k_bal = f"BAL_{dt_s}_{r['Emplacement']}_{r['Asset']}"
-            if float(r["Solde Corrigé"]) != float(r["Solde (QTD)"]): new_notes[k_bal] = str(r["Solde Corrigé"])
+            if float(r["Solde Corrigé"]) != float(r["Solde Actuel"]): new_notes[k_bal] = str(r["Solde Corrigé"])
             elif k_bal in new_notes: del new_notes[k_bal]
             k_note = f"NOTE_{dt_s}_{r['Emplacement']}_{r['Asset']}"
             if r["Commentaires"]: new_notes[k_note] = r["Commentaires"]
             elif k_note in new_notes: del new_notes[k_note]
         sl.save_manual_notes(new_notes)
-        st.success("Inventaire et soldes réels sauvegardés.")
+        st.success("Corrections sauvegardées.")
         st.rerun()
 
-# --- Audit Path ---
 st.divider()
-with st.expander("🕵️ Détail des mouvements & Qualification Imposable", expanded=False):
-    st.write("Consultez l'historique et modifiez le statut **Imposable** directement ici.")
 
-    j_full_path = sl.get_file_path(target_year, 'qualified_full')
-    if not os.path.exists(j_full_path):
-        st.warning("Journal FULL introuvable pour l'audit.")
-        history_audit = sl.load_clean_history(target_year)
-    else:
-        history_audit = sl.pd_read_csv_safe(j_full_path)
-        history_audit["Date"] = pd.to_datetime(history_audit["Date"], utc=True)
-        history_audit["Imposable"] = history_audit["Imposable"].apply(sl.is_imposable_robust)
+# --- Audit & History ---
+with st.expander("🕵️ Audit des Cessions & Qualifications", expanded=False):
+    st.write("Vérifiez ici le détail des transactions qualifiées comme cessions.")
 
-    if history_audit.empty:
-        st.info("Aucun historique disponible.")
-    else:
-        f_asset_audit = st.selectbox("Filtrer par actif", ["Tous"] + sorted(list(history_audit["Asset"].unique())), key="audit_asset_filter")
-        df_audit = history_audit.copy()
-        if f_asset_audit != "Tous":
-            df_audit = df_audit[df_audit["Asset"] == f_asset_audit]
+    if not df_j.empty:
+        # We only show outflows that are potentially cessions
+        mask_out = (df_j["Amount"] < 0) & (df_j["Asset"].str.upper() != "EUR")
+        df_audit = df_j[mask_out].copy()
 
-        st.info("💡 Modifiez la colonne 'Imposable' puis cliquez sur 'Sauvegarder les Qualifications' pour mettre à jour les journaux.")
+        st.info("💡 Seules les lignes avec la case 'Imposable' cochée sont incluses dans le Sommaire VGP ci-dessus.")
 
         edited_audit = st.data_editor(
             df_audit.sort_values("Date", ascending=False),
             column_config={
-                "Imposable": st.column_config.CheckboxColumn("⚖️ Imposable", help="Cochez pour marquer cette transaction comme une cession imposable."),
+                "Imposable": st.column_config.CheckboxColumn("⚖️ Imp.", help="Cochez pour traiter cette vente crypto->fiat fiscalement."),
                 "Date": st.column_config.DatetimeColumn(disabled=True),
                 "Asset": st.column_config.TextColumn(disabled=True),
                 "Amount": st.column_config.NumberColumn(disabled=True),
-                "Account": st.column_config.TextColumn(disabled=True),
-                "Tx_Hash": st.column_config.TextColumn(disabled=True),
-                "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Achat", "Vente", "Transfert", "Swap", "Revenu", "Dépense"]),
+                "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Achat", "Vente", "Transfert", "Swap"]),
             },
-            use_container_width=True,
-            hide_index=True,
-            key="audit_history_editor"
+            use_container_width=True, hide_index=True, key="audit_cession_editor"
         )
 
-        if st.button("💾 Sauvegarder les Qualifications", width='stretch', type="primary"):
-            history_audit.update(edited_audit)
-            history_audit.to_csv(j_full_path, index=False, encoding="utf-8-sig")
+        if st.button("💾 Sauvegarder les Qualifications (Audit)", type="primary"):
+            df_j.update(edited_audit)
+            df_j.to_csv(j_full_path, index=False, encoding="utf-8-sig")
             clean_path = sl.get_file_path(target_year, 'qualified_clean')
-            sl.apply_spam_filter(history_audit, drop=True).to_csv(clean_path, index=False, encoding="utf-8-sig")
-            st.success("Journaux mis à jour (FULL & CLEAN).")
+            sl.apply_spam_filter(df_j, drop=True).to_csv(clean_path, index=False, encoding="utf-8-sig")
+            st.success("Journaux mis à jour.")
             st.rerun()
 
 st.sidebar.divider()
-st.sidebar.caption("Voie de Contrôle VGP v3.2 - appPropri")
+st.sidebar.caption("Voie de Contrôle VGP v3.3 - appPropri")
