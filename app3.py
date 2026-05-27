@@ -352,7 +352,9 @@ with tab_accounts:
 
     eoy_date = datetime(target_year, 12, 31)
     # The Gateway loader handles history automatically, we just need the target year and date
-    full_snapshot, _ = sl.get_portfolio_snapshot(target_year, eoy_date)
+    # ROBUST UNPACKING
+    snap_res = sl.get_portfolio_snapshot(target_year, eoy_date)
+    full_snapshot = snap_res[0] if isinstance(snap_res, tuple) else snap_res
 
     df_manual_snap = pd.DataFrame()
     if full_snapshot.empty:
@@ -758,7 +760,10 @@ with tab_bilan:
                 with st.spinner("Calcul en cours..."):
                     # Use the shared logic to get a factual snapshot
                     eoy_date = datetime(target_year, 12, 31)
-                    _, vgp_val = sl.get_portfolio_snapshot(target_year, eoy_date)
+                    # ROBUST UNPACKING
+                    snap_res = sl.get_portfolio_snapshot(target_year, eoy_date)
+                    vgp_val = snap_res[1] if isinstance(snap_res, tuple) else 0.0
+
                     st.session_state[f"vgp_eoy_{target_year}"] = vgp_val
                     st.success(f"VGP calculée : {vgp_val:,.2f} €")
                     st.rerun()

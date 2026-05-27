@@ -225,7 +225,10 @@ else:
 
                 for idx, (i, row) in enumerate(to_calc.iterrows()):
                     # Use shared logic with current unsaved journal override
-                    _, vgp_val = get_portfolio_snapshot(target_year, row["Date"], df_override=journal)
+                    # ROBUST UNPACKING
+                    snap_res = get_portfolio_snapshot(target_year, row["Date"], df_override=journal)
+                    vgp_val = snap_res[1] if isinstance(snap_res, tuple) else 0.0
+
                     journal.at[i, "VGP (EUR)"] = vgp_val
                     pbar.progress((idx + 1) / len(to_calc))
 
@@ -287,7 +290,13 @@ else:
 
         if selected_date:
             # Use shared logic with current unsaved journal override
-            snapshot_df, total_val = get_portfolio_snapshot(target_year, selected_date, df_override=journal)
+            # ROBUST UNPACKING
+            snap_res = get_portfolio_snapshot(target_year, selected_date, df_override=journal)
+            if isinstance(snap_res, tuple):
+                snapshot_df, total_val = snap_res[0], snap_res[1]
+            else:
+                snapshot_df, total_val = snap_res, 0.0
+
             if not snapshot_df.empty:
                 st.write(f"Composition du portefeuille au **{selected_date}** :")
 

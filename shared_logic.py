@@ -527,20 +527,21 @@ def get_price_eur(asset, date_obj, cache=None):
 
 def get_fiat_inflow_mask(df):
     """
-    Robustly identifies acquisitions/inflows of fiat into the crypto ecosystem.
-    Matches various historical labels while excluding internal transfers and outflows.
+    Robustly identifies ACTUAL acquisitions/inflows of fiat into the crypto ecosystem.
+    Fiscally, only 'Achat' or direct 'Buy' are considered consumption of fiat for acquisition price (A).
+    'Dépôt' and 'Deposit' are treated as treasury movements (disponibilités plateforme) and excluded from 'A'.
     """
     if df.empty or 'Type' not in df.columns: return pd.Series([False] * len(df))
 
-    # Standard inflow keywords across different versions/apps
-    inflow_keywords = ["Achat", "Dépôt", "Deposit", "Virement vers", "Buy", "Incoming", "Injection"]
+    # Real acquisition keywords: things that actually exchange Euros for Digital Assets
+    acquisition_keywords = ["Achat", "Buy", "Virement vers Crypto", "Injection", "Consommation"]
 
     # Negative filters to exclude internal fiat moves or withdrawals
-    negative_keywords = ["Retrait", "Withdraw", "Virement interne", "Banque -> Banque"]
+    negative_keywords = ["Retrait", "Withdraw", "Virement interne", "Banque -> Banque", "Dépôt", "Deposit"]
 
     type_series = df['Type'].fillna("").astype(str)
 
-    mask_in = type_series.str.contains("|".join(inflow_keywords), case=False, na=False)
+    mask_in = type_series.str.contains("|".join(acquisition_keywords), case=False, na=False)
     mask_neg = type_series.str.contains("|".join(negative_keywords), case=False, na=False)
 
     return mask_in & (~mask_neg)
