@@ -353,7 +353,7 @@ with tab_accounts:
 
     eoy_date = datetime(target_year, 12, 31)
     # The Gateway loader handles history automatically, we just need the target year and date
-    full_snapshot, _ = sl.get_portfolio_snapshot(target_year, eoy_date)
+    full_snapshot, _, _, _ = sl.get_portfolio_snapshot(target_year, eoy_date, force_full=force_full)
 
     df_manual_snap = pd.DataFrame()
     if full_snapshot.empty:
@@ -759,12 +759,21 @@ with tab_bilan:
                 with st.spinner("Calcul en cours..."):
                     # Use the shared logic to get a factual snapshot
                     eoy_date = datetime(target_year, 12, 31)
-                    _, vgp_val = sl.get_portfolio_snapshot(target_year, eoy_date)
+                    _, vgp_val, consumed, vgp_raw = sl.get_portfolio_snapshot(target_year, eoy_date, force_full=force_full)
                     st.session_state[f"vgp_eoy_{target_year}"] = vgp_val
                     st.success(f"VGP calculée : {vgp_val:,.2f} €")
+                    # Display consumption
+                    st.info(f"💡 Consommation de stables : EURA {consumed.get('EURA', {}).get('consumed', 0.0):.2f} | EURC {consumed.get('EURC', {}).get('consumed', 0.0):.2f}")
                     st.rerun()
 
-        c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme factuelle des soldes par compte.")
+        # Check for manual override for display label
+        key_ov = f"{target_year}_{datetime(target_year, 12, 31).strftime('%Y%m%d')}"
+        ov_data = sl.load_vgp_overrides()
+        is_overridden = key_ov in ov_data
+
+        c_inf2.metric(f"VGP consolidée (31/12/{target_year})" + (" (FORCÉE)" if is_overridden else ""),
+                      f"{vgp_end:,.2f} €",
+                      help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme factuelle ou forcée manuellement.")
 
         # --- NOUVEAU : SYNTHÈSE PERFORMANCE ---
         st.divider()

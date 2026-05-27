@@ -11,7 +11,8 @@ from shared_logic import (
     resolve_raw_addr, get_portfolio_snapshot, get_price_eur,
     validate_spam_exclusion, load_spam_list, get_file_path,
     check_file_freshness, pd_read_csv_safe, standardize_df_addresses,
-    is_imposable_robust, show_status, clean_session_state
+    is_imposable_robust, show_status, clean_session_state,
+    load_vgp_overrides, save_vgp_overrides
 )
 
 # --- Configuration ---
@@ -225,7 +226,11 @@ else:
 
                 for idx, (i, row) in enumerate(to_calc.iterrows()):
                     # Use shared logic with current unsaved journal override
-                    _, vgp_val = get_portfolio_snapshot(target_year, row["Date"], df_override=journal)
+                    _, vgp_val, consumed, vgp_raw = get_portfolio_snapshot(
+                        target_year, row["Date"],
+                        df_override=journal,
+                        force_full=force_full
+                    )
                     journal.at[i, "VGP (EUR)"] = vgp_val
                     pbar.progress((idx + 1) / len(to_calc))
 
@@ -287,7 +292,11 @@ else:
 
         if selected_date:
             # Use shared logic with current unsaved journal override
-            snapshot_df, total_val = get_portfolio_snapshot(target_year, selected_date, df_override=journal)
+            snapshot_df, total_val, consumed, total_raw = get_portfolio_snapshot(
+                target_year, selected_date,
+                df_override=journal,
+                force_full=force_full
+            )
             if not snapshot_df.empty:
                 st.write(f"Composition du portefeuille au **{selected_date}** :")
 
@@ -357,7 +366,57 @@ else:
                     mask_vgp_ed = pd.Series(True, index=ed_snapshot.index)
 
                 new_total = ed_snapshot[mask_vgp_ed]["Valeur (EUR)"].sum()
-                st.metric("VGP Totale Corrigée (Excl. Circuits)", f"{new_total:,.2f} €")
+
+                # --- DISPLAY CORRECTED VGP (EXCLUDING CONSUMED STABLECOINS) ---
+                st.markdown("### 📊 Analyse de la VGP Corrigée (Hors redondance Fiat)")
+                cols_st = st.columns(2)
+                for i, stable in enumerate(["EURA", "EURC"]):
+                    data = consumed.get(stable, {"fiat_inflow": 0, "consumed": 0, "current_bal": 0, "deduction": 0})
+                    with cols_st[i]:
+                        st.write(f"**{stable}**")
+                        st.write(f"- Acheté via Fiat : `{data['fiat_inflow']:.2f}`")
+                        st.write(f"- Consommé : `{data['consumed']:.2f}`")
+                        st.write(f"- Solde : `{data['current_bal']:.2f}`")
+                        st.write(f"- Déduction VGP : `-{data['deduction']:.2f} €`")
+
+                # --- MANUAL OVERRIDE SYSTEM ---
+                st.divider()
+                st.subheader("🛡️ Forçage Manuel de la VGP")
+                overrides = load_vgp_overrides()
+                key_ov = f"{target_year}_{selected_date.strftime('%Y%m%d')}"
+
+                # If it's a cession, we might want to override the VGP used for that specific transaction
+                # But here we are in the audit view of a specific date.
+
+                col_ov1, col_ov2 = st.columns([2, 1])
+                ov_val = col_ov1.number_input("Valeur VGP Nette à sanctuariser (EUR)",
+                                             value=float(overrides.get(key_ov, total_val)),
+                                             step=10.0, format="%.2f")
+
+                if col_ov2.button("🎯 Appliquer & Enregistrer ce forçage", use_container_width=True):
+                    overrides[key_ov] = ov_val
+                    save_vgp_overrides(overrides)
+                    st.success(f"VGP pour le {selected_date.strftime('%d/%m/%Y')} fixée à {ov_val:,.2f} €")
+                    st.rerun()
+
+                if is_overridden:
+                    if st.button("🗑️ Supprimer le forçage manuel", type="secondary"):
+                        del overrides[key_ov]
+                        save_vgp_overrides(overrides)
+                        st.info("Forçage supprimé. Le système utilisera à nouveau le calcul automatique.")
+                        st.rerun()
+
+                st.divider()
+                c1, c2 = st.columns(2)
+                c1.metric("VGP Brute (Audit)", f"{total_raw:,.2f} €", help="Valeur totale incluant les stablecoins tokenisés depuis du fiat.")
+
+                # Check if override exists
+                final_vgp_display = overrides.get(key_ov, total_val)
+                is_overridden = key_ov in overrides
+
+                c2.metric("VGP Nette Corrigée" + (" (FORCÉE)" if is_overridden else ""),
+                          f"{final_vgp_display:,.2f} €",
+                          help="VGP après déduction des stablecoins ou forçage manuel.")
 
                 col_save_audit1, col_save_audit2 = st.columns(2)
 

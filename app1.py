@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import json
+import shared_logic as sl
 
 
 # --- Configuration ---
@@ -48,9 +49,6 @@ with st.sidebar:
 
     st.divider()
     sl.show_status()
-
-# --- Helpers (Centralized logic) ---
-import shared_logic as sl
 
 # --- Main App ---
 uploaded_file = st.file_uploader("Choisir un fichier CSV", type="csv")

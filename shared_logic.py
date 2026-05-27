@@ -15,6 +15,7 @@ EXTERNAL_CIRCUITS_FILE = "external_circuits.json"
 OWNERS_FILE = "owner_accounts.json"
 SPAM_FILE = "spam_blacklist.json"
 NOTES_FILE = "manual_notes.json"
+VGP_OVERRIDE_FILE = "vgp_overrides.json"
 VALID_ASSETS_FILE = "valid_assets.json"
 GLOBAL_CONFIG_FILE = "global_config.json"
 
@@ -343,6 +344,16 @@ def load_manual_notes():
 def save_manual_notes(notes):
     with open(NOTES_FILE, "w", encoding="utf-8") as f: json.dump(notes, f, indent=4)
 
+def load_vgp_overrides():
+    if os.path.exists(VGP_OVERRIDE_FILE):
+        try:
+            with open(VGP_OVERRIDE_FILE, "r", encoding="utf-8") as f: return json.load(f)
+        except: pass
+    return {}
+
+def save_vgp_overrides(overrides):
+    with open(VGP_OVERRIDE_FILE, "w", encoding="utf-8") as f: json.dump(overrides, f, indent=4)
+
 def get_note_key(row):
     """Generates a stable UID for transaction notes."""
     dt = pd.to_datetime(row.get("Date")).strftime("%Y%m%d%H%M%S") if row.get("Date") else "NODATE"
@@ -445,11 +456,31 @@ def get_fiat_rate(from_currency, date_obj):
     except: return 0.0
 
 def load_price_cache():
+    """
+    Loads historical prices from global cache and merges with all annual sanctuarized
+    verified_prices_{year}.json files found in EXPORT_BASE_DIR.
+    """
+    cache = {}
+    # 1. Load Global Cache
     if os.path.exists(PRICE_CACHE_FILE):
         try:
-            with open(PRICE_CACHE_FILE, "r", encoding="utf-8") as f: return json.load(f)
+            with open(PRICE_CACHE_FILE, "r", encoding="utf-8") as f:
+                cache = json.load(f)
         except: pass
-    return {}
+
+    # 2. Merge with Annual Sanctuarized Prices (Absolute Truth)
+    if os.path.exists(EXPORT_BASE_DIR):
+        years = [y for y in os.listdir(EXPORT_BASE_DIR) if os.path.isdir(os.path.join(EXPORT_BASE_DIR, y))]
+        for y in years:
+            p = os.path.join(EXPORT_BASE_DIR, y, f"verified_prices_{y}.json")
+            if os.path.exists(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        annual = json.load(f)
+                        cache.update(annual)
+                except: pass
+
+    return cache
 
 def get_coingecko_id(asset):
     """Maps common assets to CoinGecko IDs."""
@@ -545,11 +576,12 @@ def get_fiat_inflow_mask(df):
 
     return mask_in & (~mask_neg)
 
-def get_total_acquisition_value(year):
+def get_total_acquisition_value(year, return_details=False):
     """Calculates cumulative sum of all fiat acquisitions (Amount EUR) from Step 0 manual registers up to year."""
     config = load_global_config()
     start = int(config.get("start_year") or 2021)
     total = 0.0
+    all_details = []
 
     for y in range(start, year + 1):
         p = get_file_path(y, 'fiat')
@@ -562,8 +594,15 @@ def get_total_acquisition_value(year):
                 # Amount is prioritized in 'Montant EUR' (manual entry) then 'Amount'
                 amt_col = "Montant EUR" if "Montant EUR" in df.columns else "Amount"
                 if amt_col in df.columns:
-                    total += pd.to_numeric(df[mask][amt_col], errors="coerce").fillna(0.0).abs().sum()
+                    valid_df = df[mask].copy()
+                    vals = pd.to_numeric(valid_df[amt_col], errors="coerce").fillna(0.0).abs()
+                    total += vals.sum()
+                    if return_details:
+                        all_details.append(valid_df)
 
+    if return_details:
+        df_details = pd.concat(all_details) if all_details else pd.DataFrame()
+        return total, df_details
     return total
 
 def calculate_fiscal_gains(cessions_df, total_acq_price):
@@ -580,9 +619,21 @@ def calculate_fiscal_gains(cessions_df, total_acq_price):
 
     current_acq_base = float(total_acq_price)
 
+    # Load manual overrides once
+    vgp_overrides = load_vgp_overrides()
+
     for idx, row in df.iterrows():
         p_vent = float(row.get(p_vent_col, 0.0))
-        vgp = float(row.get(vgp_col, 0.0))
+
+        # Check if there's a manual override for this specific date and year
+        dt_obj = pd.to_datetime(row.get("Date"))
+        y_val = dt_obj.year
+        key_ov = f"{y_val}_{dt_obj.strftime('%Y%m%d')}"
+
+        if key_ov in vgp_overrides:
+            vgp = float(vgp_overrides[key_ov])
+        else:
+            vgp = float(row.get(vgp_col, 0.0))
 
         if vgp > 0:
             fraction = p_vent / vgp
@@ -648,7 +699,7 @@ def get_journal_prices(df_h, target_date=None):
 
     return prices
 
-def get_portfolio_snapshot(year, target_date, df_override=None):
+def get_portfolio_snapshot(year, target_date, df_override=None, force_full=False):
     """Calculates balances and total VGP, ensuring consistency with Journal valuations."""
     target_date = pd.to_datetime(target_date, utc=True)
 
@@ -657,7 +708,21 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
     else:
         df_j = load_clean_history(year)
 
-    if df_j.empty: return pd.DataFrame(), 0.0
+    if df_j.empty: return pd.DataFrame(), 0.0, {}, 0.0
+
+    # --- INVENTORY CONTINUITY (EOY Report) ---
+    report_df = pd.DataFrame()
+    prev_year = year - 1
+    # We only use Report if we are calculating for the current year or if specifically asked
+    inv_path = get_file_path(prev_year, 'inventory_eoy')
+    if os.path.exists(inv_path) and not force_full:
+        report_df = pd_read_csv_safe(inv_path)
+        if not report_df.empty:
+            # Normalize Report columns: Location, Asset, Solde
+            if "Solde" in report_df.columns:
+                report_df = report_df.rename(columns={"Solde": "Report"})
+            if "Location" not in report_df.columns and "Account" in report_df.columns:
+                report_df["Location"] = report_df["Account"].apply(standardize_address_string)
 
     df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True)
     df_j = df_j[df_j["Date"] <= target_date]
@@ -709,7 +774,14 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
         "Out": "sum"
     }).reset_index()
     res = res.rename(columns={"Amount": "Solde", "In": "Entrées", "Out": "Sorties"})
-    res["Report"] = 0.0 # Placeholder for EOY carry-over if needed
+
+    # Merge Report
+    if not report_df.empty:
+        # We merge on Location and Asset
+        res = pd.merge(res, report_df[["Location", "Asset", "Report"]], on=["Location", "Asset"], how="outer").fillna(0.0)
+        res["Solde"] = res["Solde"] + res["Report"]
+    else:
+        res["Report"] = 0.0
 
     res = res[res["Solde"].abs() > 1e-10]
 
@@ -743,9 +815,60 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
     # VGP Calculation: Net sum of ALL digital asset values EXCLUDING External Circuits and Fiat EUR
     # Per Art. 150 VH bis, fiat balances (EUR) are not included in the portfolio valuation.
     mask_vgp = (res["Is_Circuit"] == False) & (res["Asset"].str.upper() != "EUR")
-    total_vgp = res[mask_vgp]["Valeur (EUR)"].sum()
+    total_vgp_raw = res[mask_vgp]["Valeur (EUR)"].sum()
 
-    return res, total_vgp
+    # --- ADVANCED TRACKING: EURA/EURC Consumption & Redundancy ---
+    adjustment_total = 0.0
+    consumed_data = {}
+
+    # Pre-load acquisitions once for efficiency
+    res_acq = get_total_acquisition_value(year, return_details=True)
+    if isinstance(res_acq, tuple):
+        _, df_acq_all = res_acq
+    else:
+        df_acq_all = pd.DataFrame()
+
+    for stable in ["EURA", "EURC"]:
+        # 1. Total Inflow of this stable from Fiat (up to target_date)
+        if not df_acq_all.empty:
+            df_acq_all["Date"] = pd.to_datetime(df_acq_all["Date"], utc=True)
+            fiat_inflow = df_acq_all[(df_acq_all["Asset"].str.upper() == stable) & (df_acq_all["Date"] <= target_date)]["Quantité"].sum()
+        else:
+            fiat_inflow = 0.0
+
+        # 2. Total Outflow (already recorded in journal)
+        df_stable_out = df_j[(df_j["Asset"].str.upper() == stable) & (df_j["Amount"] < 0)]
+        total_out = abs(df_stable_out["Amount"].sum())
+
+        # 3. Current balance of this stable in the snapshot
+        current_bal = res[res["Asset"].str.upper() == stable]["Solde"].sum()
+
+        # 4. Adjustment logic: We deduct stablecoins that are basically tokenized fiat
+        # already accounted for in the Acquisition Price (A).
+        # This solves 'Redundancy' and fixes VGP even if some outflows were missed.
+        fiat_remaining = max(0.0, fiat_inflow - total_out)
+        deduction = min(current_bal, fiat_remaining)
+
+        adjustment_total += deduction
+
+        consumed_data[stable] = {
+            "fiat_inflow": fiat_inflow,
+            "total_out": total_out,
+            "consumed": total_out, # Actually consumed/spent
+            "fiat_remaining": fiat_remaining,
+            "current_bal": current_bal,
+            "deduction": deduction
+        }
+
+    total_vgp_adj = max(0.0, total_vgp_raw - adjustment_total)
+
+    # --- APPLY MANUAL OVERRIDES ---
+    overrides = load_vgp_overrides()
+    key_ov = f"{year}_{target_date.strftime('%Y%m%d')}"
+    if key_ov in overrides:
+        total_vgp_adj = float(overrides[key_ov])
+
+    return res, total_vgp_adj, consumed_data, total_vgp_raw
 
 def get_price_from_journal(asset, target_date, df_h=None, year=None):
     """Searches for a certified price in the Step 2 Journal for a given asset and date."""

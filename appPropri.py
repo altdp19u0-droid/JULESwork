@@ -39,6 +39,9 @@ with st.sidebar:
     nav_mode = st.radio("Navigation", ["📊 Dashboard", "⚖️ Détails Fiscaux (A & Cessions)"], key="propri_nav_v3")
 
     st.divider()
+    force_full = st.checkbox("Recalculer tout l'historique", value=False, help="Ignore l'inventaire N-1 et recalcule depuis le début.")
+
+    st.divider()
     if st.button("🔄 Actualiser les données"):
         st.cache_data.clear()
         st.rerun()
@@ -272,7 +275,7 @@ def get_protocol_summary(year):
 
     # --- PROTOCOL DETECTION LOGIC ---
     # We leverage the centralized portfolio snapshot to ensure consistency
-    snapshot, _ = sl.get_portfolio_snapshot(year, datetime(year, 12, 31))
+    snapshot, _, _, _ = sl.get_portfolio_snapshot(year, datetime(year, 12, 31), force_full=force_full)
 
     if snapshot.empty: return pd.DataFrame()
 
@@ -564,11 +567,30 @@ else:
 
     # Portfolio Value (VGP) at EOY
     eoy_date = datetime(target_year, 12, 31)
-    snapshot_df, vgp_eoy = sl.get_portfolio_snapshot(target_year, eoy_date)
+    snapshot_df, vgp_eoy, consumed_data, vgp_raw = sl.get_portfolio_snapshot(target_year, eoy_date, force_full=force_full)
+
+    # UI Enhancement: Display Consumed Stablecoins
+    st.markdown("### 📊 Suivi des Stablecoins Fiat-Sourcing (EURA / EURC)")
+    cols_st = st.columns(2)
+    for i, stable in enumerate(["EURA", "EURC"]):
+        data = consumed_data.get(stable, {"fiat_inflow": 0, "consumed": 0, "current_bal": 0, "deduction": 0})
+        with cols_st[i]:
+            st.write(f"**{stable}**")
+            st.write(f"- Acheté via Fiat : `{data['fiat_inflow']:.2f}`")
+            st.write(f"- Consommé (Swaps/Ventes) : `{data['consumed']:.2f}`")
+            st.write(f"- Solde Portefeuille : `{data['current_bal']:.2f}`")
+            st.write(f"- Déduction VGP : `-{data['deduction']:.2f} €`")
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Prix d'Acquisition Total (A)", f"{total_acq:,.2f} €", help="Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
-    c2.metric(f"Valeur Patrimoniale (31/12/{target_year})", f"{vgp_eoy:,.2f} €", help="Valeur totale du portefeuille (VGP) à la fin de l'année.")
+    # Check for manual override
+    key_ov = f"{target_year}_{eoy_date.strftime('%Y%m%d')}"
+    ov_data = sl.load_vgp_overrides()
+    is_overridden = key_ov in ov_data
+
+    c2.metric(f"Valeur Patrimoniale (VGP Net)" + (" (FORCÉE)" if is_overridden else ""),
+              f"{vgp_eoy:,.2f} €",
+              help="Valeur totale du portefeuille (VGP) corrigée (Hors EUR et redondance fiat).")
 
     perf_net = vgp_eoy - total_acq
     c3.metric("Performance Latente Globale", f"{perf_net:,.2f} €", delta=perf_net, delta_color="normal")
