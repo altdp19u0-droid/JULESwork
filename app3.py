@@ -24,7 +24,6 @@ POSITIONS_FILE = "position_labels.json"
 # --- Helpers ---
 def load_eoy_prices(year):
     path = sl.get_file_path(year, 'prices')
-    path = sl.get_file_path(year, 'prices')
     if path and os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:

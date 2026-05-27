@@ -83,6 +83,49 @@ def get_unified_inventory(year, t_date):
 
 # --- Main Dashboard ---
 
+# 0. SOMMAIRE DES VGP (Cessions & EOY)
+st.subheader("📊 Sommaire des VGP (Cessions & Fin d'année)")
+with st.spinner("Calcul des VGP clés..."):
+    # GATEWAY: Load clean history to find all cessions
+    df_j = sl.load_clean_history(target_year)
+    key_dates = []
+
+    if not df_j.empty:
+        # Find imposable cessions
+        mask_cess = df_j.apply(sl.is_cession_imposable_robust, axis=1)
+        cess_dates = sorted(df_j[mask_cess]["Date"].dt.date.unique())
+        for d in cess_dates:
+            key_dates.append({"Date": d, "Type": "📉 Cession"})
+
+    # Add EOY
+    eoy_d = datetime(target_year, 12, 31).date()
+    key_dates.append({"Date": eoy_d, "Type": "🏁 Fin d'année"})
+
+    # Calculate VGP for each date
+    summary_data = []
+    for entry in key_dates:
+        # Convert date to datetime at end of day for snapshot
+        dt_obj = datetime.combine(entry["Date"], datetime.max.time())
+        _, vgp_val = sl.get_portfolio_snapshot(target_year, dt_obj)
+        summary_data.append({
+            "Date": entry["Date"],
+            "Événement": entry["Type"],
+            "VGP (€)": vgp_val
+        })
+
+    df_summary = pd.DataFrame(summary_data).sort_values("Date", ascending=False)
+    st.dataframe(
+        df_summary,
+        column_config={
+            "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
+            "VGP (€)": st.column_config.NumberColumn("VGP Totale (€)", format="%.2f €"),
+        },
+        use_container_width=True,
+        hide_index=True
+    )
+
+st.divider()
+
 # 1. LOAD DATA
 inventory = get_unified_inventory(target_year, target_date)
 notes_db = sl.load_manual_notes()
@@ -123,16 +166,22 @@ else:
 
     inventory["Commentaires"] = inventory.apply(get_note, axis=1)
 
-    # Add "Imposable" checkbox
+    # Add "Imposable" checkbox and Manual Balance Override
     def get_imposable(r):
         dt_s = target_date.strftime("%Y%m%d")
         k = f"IMP_{dt_s}_{r['Emplacement']}_{r['Asset']}"
-        # Default: True if not EUR, otherwise check saved preference
-        if k in notes_db:
-            return notes_db[k] == "True"
+        if k in notes_db: return notes_db[k] == "True"
         return r["Asset"].upper() != "EUR"
 
+    def get_forced_bal(r):
+        dt_s = target_date.strftime("%Y%m%d")
+        k = f"BAL_{dt_s}_{r['Emplacement']}_{r['Asset']}"
+        if k in notes_db: return float(notes_db[k])
+        return float(r["Solde (QTD)"])
+
     inventory["Imposable"] = inventory.apply(get_imposable, axis=1)
+    inventory["Solde Corrigé"] = inventory.apply(get_forced_bal, axis=1)
+    inventory["Valeur (€)"] = inventory["Solde Corrigé"] * inventory["Prix (€)"]
 
     # Column configuration
     col_config = {
@@ -140,7 +189,8 @@ else:
         "Emplacement": st.column_config.TextColumn("📍 Emplacement", disabled=True),
         "Total Entrées": st.column_config.NumberColumn("➕ Entrées", format="%.6f", disabled=True),
         "Total Sorties": st.column_config.NumberColumn("➖ Sorties", format="%.6f", disabled=True),
-        "Solde (QTD)": st.column_config.NumberColumn("📦 Solde (QTD)", format="%.6f", disabled=True),
+        "Solde (QTD)": st.column_config.NumberColumn("📦 Solde (Auto)", format="%.6f", disabled=True),
+        "Solde Corrigé": st.column_config.NumberColumn("🛠️ Solde Réel", format="%.6f", help="Saisissez ici le solde réel si le calcul automatique est incomplet."),
         "Prix (€)": st.column_config.NumberColumn("🏷️ Prix (€)", format="%.4f €"),
         "Valeur (€)": st.column_config.NumberColumn("💰 Valeur (€)", format="%.2f €", disabled=True),
         "Commentaires": st.column_config.TextColumn("📝 Commentaires", width="large"),
@@ -162,7 +212,7 @@ else:
     col_s1, col_s2 = st.columns(2)
 
     if col_s1.button("💾 Enregistrer les Modifications", width='stretch'):
-        # 1. Update Notes & Imposable Status
+        # 1. Update Notes, Imposable Status & Manual Balances
         new_notes = notes_db.copy()
         dt_s = target_date.strftime("%Y%m%d")
         for _, r in edited_inv.iterrows():
@@ -176,6 +226,13 @@ else:
             # Imposable Status
             k_imp = f"IMP_{dt_s}_{r['Emplacement']}_{r['Asset']}"
             new_notes[k_imp] = str(r["Imposable"])
+
+            # Balance Override
+            k_bal = f"BAL_{dt_s}_{r['Emplacement']}_{r['Asset']}"
+            if float(r["Solde Corrigé"]) != float(r["Solde (QTD)"]):
+                new_notes[k_bal] = str(r["Solde Corrigé"])
+            elif k_bal in new_notes:
+                del new_notes[k_bal]
 
         sl.save_manual_notes(new_notes)
 
@@ -199,17 +256,61 @@ else:
 
 # --- Audit Path ---
 st.divider()
-with st.expander("🕵️ Détail des mouvements (Audit chronologique)"):
-    st.write("Consultez l'historique complet pour vérifier un solde spécifique.")
-    history = sl.load_clean_history(target_year)
-    if history.empty:
+with st.expander("🕵️ Détail des mouvements & Qualification Imposable", expanded=False):
+    st.write("Consultez l'historique et modifiez le statut **Imposable** directement ici.")
+
+    # Reload full journal to ensure we have Imposable column
+    # Use qualified_full for audit to allow toggling back from Spam or checking everything
+    j_full_path = sl.get_file_path(target_year, 'qualified_full')
+    if not os.path.exists(j_full_path):
+        st.warning("Journal FULL introuvable pour l'audit.")
+        history_audit = sl.load_clean_history(target_year)
+    else:
+        history_audit = sl.pd_read_csv_safe(j_full_path)
+        history_audit["Date"] = pd.to_datetime(history_audit["Date"], utc=True)
+        history_audit["Imposable"] = history_audit["Imposable"].apply(sl.is_imposable_robust)
+
+    if history_audit.empty:
         st.info("Aucun historique disponible.")
     else:
-        f_asset = st.selectbox("Filtrer par actif", ["Tous"] + sorted(list(history["Asset"].unique())))
-        df_audit = history.copy()
-        if f_asset != "Tous":
-            df_audit = df_audit[df_audit["Asset"] == f_asset]
-        st.dataframe(df_audit.sort_values("Date", ascending=False), use_container_width=True)
+        f_asset_audit = st.selectbox("Filtrer par actif", ["Tous"] + sorted(list(history_audit["Asset"].unique())), key="audit_asset_filter")
+        df_audit = history_audit.copy()
+        if f_asset_audit != "Tous":
+            df_audit = df_audit[df_audit["Asset"] == f_asset_audit]
+
+        st.info("💡 Modifiez la colonne 'Imposable' puis cliquez sur 'Sauvegarder les Qualifications' pour mettre à jour les journaux.")
+
+        # Display editable editor
+        edited_audit = st.data_editor(
+            df_audit.sort_values("Date", ascending=False),
+            column_config={
+                "Imposable": st.column_config.CheckboxColumn("⚖️ Imposable", help="Cochez pour marquer cette transaction comme une cession imposable."),
+                "Date": st.column_config.DatetimeColumn(disabled=True),
+                "Asset": st.column_config.TextColumn(disabled=True),
+                "Amount": st.column_config.NumberColumn(disabled=True),
+                "Account": st.column_config.TextColumn(disabled=True),
+                "Tx_Hash": st.column_config.TextColumn(disabled=True),
+                "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Achat", "Vente", "Transfert", "Swap", "Revenu", "Dépense"]),
+            },
+            use_container_width=True,
+            hide_index=True,
+            key="audit_history_editor"
+        )
+
+        if st.button("💾 Sauvegarder les Qualifications", width='stretch', type="primary"):
+            # Update the main history audit with changes
+            history_audit.update(edited_audit)
+
+            # 1. Save FULL
+            history_audit.to_csv(j_full_path, index=False, encoding="utf-8-sig")
+
+            # 2. Save CLEAN (No Spams)
+            clean_path = sl.get_file_path(target_year, 'qualified_clean')
+            clean_df = sl.apply_spam_filter(history_audit, drop=True)
+            clean_df.to_csv(clean_path, index=False, encoding="utf-8-sig")
+
+            st.success("Journaux mis à jour (FULL & CLEAN).")
+            st.rerun()
 
 st.sidebar.divider()
 st.sidebar.caption("Voie de Contrôle VGP v2.0 - appPropri")
