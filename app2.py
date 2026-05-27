@@ -355,7 +355,7 @@ def apply_auto_labels(df):
 @st.dialog("📋 Transactions Masquées", width="large")
 def show_hidden_dialog(df):
     st.write(f"Il y a **{len(df)}** transactions masquées par vos filtres actuels.")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
     if st.button("Fermer"):
         st.rerun()
 
@@ -386,11 +386,11 @@ def show_bulk_fiat_dialog(df_eur, year):
         },
         disabled=["Date", "Chain", "Tx_Hash", "Type", "Method", "Account", "From", "To", "From_Label", "To_Label", "Counterparty", "Asset", "Amount", "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset", "Fee_Asset", "Fee_Amount", "Source_Way", "Audit_Status", "Fee_Audit_Alert", "Source_Exchange_Rate", "Prix de Cession (EUR)", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable", "Source_File"],
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
         key="bulk_fiat_editor"
     )
 
-    if st.button("Confirmer l'injection en bloc", type="primary", use_container_width=True):
+    if st.button("Confirmer l'injection en bloc", type="primary", width='stretch'):
         to_inject = edited_eur[edited_eur["Injecter"] == True]
         if to_inject.empty:
             st.warning("Aucune ligne sélectionnée.")
@@ -824,7 +824,7 @@ def main():
         # BULK INJECTION TRIGGER
         df_eur = full_df[(full_df["Asset"] == "EUR") & (full_df["Audit_Status"].isin(["A vérifier", "Valide"]))]
         if not df_eur.empty:
-            if st.button(f"🚀 Lancer l'injection EUR en bloc ({len(df_eur)} tx)", use_container_width=True):
+            if st.button(f"🚀 Lancer l'injection EUR en bloc ({len(df_eur)} tx)", width='stretch'):
                 show_bulk_fiat_dialog(df_eur, year)
 
         i_cols = st.columns(2)
@@ -916,7 +916,7 @@ def main():
             # Distinguish between Root and Sanctuary
             missing["Origin"] = missing["Source_File"].apply(lambda f: "Sanctuary (Archive)" if "sanctuary" in str(sl.get_all_raw_files(year)) else "RAW Racine")
 
-            st.dataframe(missing.drop(columns=["_uid"]), use_container_width=True)
+            st.dataframe(missing.drop(columns=["_uid"]), width='stretch')
 
             c_rec1, c_rec2 = st.columns(2)
             if c_rec1.button("♻️ Récupérer TOUT le manquant", type="primary", width='stretch'):

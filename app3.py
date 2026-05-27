@@ -259,7 +259,7 @@ if is_blocked:
 # --- Tabs ---
 tab_accounts, tab_acq, tab_cessions, tab_bilan = st.tabs([
     "📂 Comptes & Positions",
-    "💰 Prix d'Acquisition",
+    "💰 Capital Global Investi",
     "📈 Cessions (2086)",
     "📋 Bilan Final"
 ])
@@ -581,8 +581,8 @@ with tab_accounts:
                 )
 
 with tab_acq:
-    st.subheader("💵 Suivi du Prix d'Acquisition Global")
-    st.write("Le prix d'acquisition est le total des montants en Euros investis pour acquérir des actifs numériques.")
+    st.subheader("💵 Suivi du Capital Global Investi (A)")
+    st.write("Le Capital Global Investi est le total des montants en Euros injectés pour acquérir des actifs numériques.")
 
     # UNIFICATION: Use central Step 0 logic for absolute reliability
     total_acq_price = sl.get_total_acquisition_value(target_year)
@@ -590,10 +590,10 @@ with tab_acq:
     col_acq1, col_acq2 = st.columns(2)
     with col_acq1:
         st.session_state.total_acq_price_shared = total_acq_price
-        st.metric("Prix d'acquisition Total (A)", f"{total_acq_price:,.2f} €")
+        st.metric("Capital Global Investi (A)", f"{total_acq_price:,.2f} €")
 
     with col_acq2:
-        st.info("Cette valeur 'A' est utilisée dans la formule de calcul de la plus-value brute.")
+        st.info("Cette valeur 'A' est le cumul de vos investissements en Euros. Elle est utilisée pour calculer la fraction du capital récupérée à chaque vente.")
 
 with tab_cessions:
     st.subheader("📝 Calcul des Cessions Imposables (Formulaire 2086)")
@@ -737,7 +737,7 @@ with tab_bilan:
 
         # 1. Récupération du prix d'achat total (A)
         total_acq = st.session_state.get("total_acq_price_shared", 0.0)
-        c_inf1.metric("Prix d'achat total (A)", f"{total_acq:,.2f} €", help="Capital investi (A) : Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
+        c_inf1.metric("Capital Global Investi (A)", f"{total_acq:,.2f} €", help="Capital investi (A) : Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
 
         # 2. Calcul de la VGP consolidée au 31/12 (Calcul Réel)
         y_dir = os.path.join(EXPORT_BASE_DIR, str(target_year))
@@ -778,7 +778,7 @@ with tab_bilan:
         gain_realise = total_pv
 
         # 2. Plus-Value Non Réalisée (Latente)
-        # Formule : VGP 31/12 - Capital Restant (Prix d'achat non encore utilisé pour des cessions)
+    # Formule : VGP 31/12 - Capital Restant (Capital investi non encore utilisé pour des cessions)
         capital_restant = st.session_state.get("final_acq_remaining", total_acq)
         gain_latent = vgp_end - capital_restant
 
@@ -807,7 +807,7 @@ with tab_bilan:
         else:
             c_perf3.metric("Perte Globale", f"{gain_global:,.2f} €", delta_color="inverse")
 
-        st.info(f"💡 **Explication :** Votre performance globale ({gain_global:,.2f}€) combine les gains/pertes déjà 'encaissés' par vos ventes et la valeur actuelle de ce qu'il vous reste en portefeuille par rapport à ce qu'il vous a coûté ({capital_restant:,.2f}€ de capital restant).")
+    st.info(f"💡 **Explication :** Votre performance globale ({gain_global:,.2f}€) combine les gains/pertes déjà 'encaissés' par vos ventes et la valeur actuelle de ce qu'il vous reste en portefeuille par rapport à ce qu'il vous a coûté ({capital_restant:,.2f}€ de capital investi restant).")
 
         st.divider()
         st.subheader("📥 Export de l'Historique Fiscal")
@@ -951,7 +951,7 @@ with tab_bilan:
                     pdf.set_y(y_start + h_row)
                 pdf.ln(10)
 
-            # --- Page 2: Prix d'Acquisition ---
+            # --- Page 2: Capital Global Investi ---
             pdf.add_page()
             pdf.set_font(main_font, 'B', 14)
             pdf.cell(0, 10, "SECTION 2 : HISTORIQUE DES ACHATS (FIAT)", ln=True)
@@ -1033,7 +1033,7 @@ with tab_bilan:
             pdf.ln(5)
 
             pdf.set_font(main_font, 'B', 9)
-            cols_c = ["Date", "Asset", "Prix Cession", "VGP", "Abattement Acq", "PV Brute"]
+            cols_c = ["Date", "Asset", "Prix Cession", "VGP", "Fraction Cap.", "PV Brute"]
             w_c = [40, 30, 50, 50, 50, 50]
             for i, c in enumerate(cols_c): pdf.cell(w_c[i], 8, c, border=1, fill=True)
             pdf.ln()
@@ -1051,7 +1051,7 @@ with tab_bilan:
                 pdf.cell(w_c[1], 8, pdf_safe_str(row["Asset"], use_uni), border=1)
                 pdf.cell(w_c[2], 8, f"{row.get(pc_col, 0):.2f} EUR", border=1)
                 pdf.cell(w_c[3], 8, f"{row.get(vgp_col, 0):.2f} EUR", border=1)
-                pdf.cell(w_c[4], 8, f"{row['Abattement Acq']:.2f} EUR", border=1)
+                pdf.cell(w_c[4], 8, f"{row['Fraction du Capital Consommé']:.2f} EUR", border=1)
                 pdf.cell(w_c[5], 8, f"{row['Plus-Value Brute']:.2f} EUR", border=1)
                 pdf.ln()
 

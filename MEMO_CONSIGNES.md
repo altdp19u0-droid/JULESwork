@@ -17,7 +17,7 @@ Ce document est le référentiel unique de la structure, des fonctions critiques
 6. **Principes Comptables Validés (Session Reprise) :**
     - **QTD :** Quantité Totale Détenue suivie **par actif** (Entrées - Sorties).
     - **VGP :** Valeur Globale du Portefeuille = **Valeur de Marché** au jour de la cession (Art. 150 VH bis).
-    - **Prix d'Acquisition (A) :** Capital global investi en Euros, consommé par fraction lors des cessions.
+    - **Capital Global Investi (A) :** Capital global investi en Euros, consommé par fraction lors des cessions.
     - **Swaps DeFi :** Option B validée. Les échanges d'actifs (ex: ETH -> stETH) sont traités comme des **Swaps** (neutres fiscalement mais changeant la QTD par actif) et non comme des transferts internes.
 
 ---

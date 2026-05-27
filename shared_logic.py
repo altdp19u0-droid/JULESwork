@@ -58,27 +58,6 @@ def resolve_raw_addr(addr_str):
     if "(" in s and ")" in s: return s.split("(")[0].strip()
     return s
 
-def standardize_address_string(addr_str):
-    """Enforces the absolute standard: 'Identifier (Name)'."""
-    if not addr_str or str(addr_str).lower() in ["nan", "none", ""]: return ""
-    s = str(addr_str).strip()
-    raw = resolve_raw_addr(s).lower()
-    mapping = get_all_labels()
-    if raw in mapping: return format_owner_display(raw, mapping[raw])
-
-    label_to_addr = {str(v).lower(): k for k, v in mapping.items() if str(v).lower() != "nan"}
-    if raw in label_to_addr:
-        addr = label_to_addr[raw]
-        return format_owner_display(addr, mapping[addr])
-
-    name = ""
-    if "(" in s and ")" in s:
-        parts = s.split("(")
-        p1, p2 = parts[0].strip(), parts[1].replace(")", "").strip()
-        if p1.lower().startswith("0x"): raw, name = p1.lower(), p2
-        elif p2.lower().startswith("0x"): raw, name = p2.lower(), p1
-        else: raw, name = p1, p2
-    return format_owner_display(raw, name)
 
 def resolve_owner_display(addr):
     raw = resolve_raw_addr(addr).lower()
@@ -632,7 +611,7 @@ def calculate_fiscal_gains(cessions_df, total_acq_price):
     vgp_col = "VGP (EUR)"
 
     df["Plus-Value Brute"] = 0.0
-    df["Abattement Acq"] = 0.0
+    df["Fraction du Capital Consommé"] = 0.0
 
     current_acq_base = float(total_acq_price)
 
@@ -646,7 +625,7 @@ def calculate_fiscal_gains(cessions_df, total_acq_price):
             gain = p_vent - abattement
 
             df.at[idx, "Plus-Value Brute"] = gain
-            df.at[idx, "Abattement Acq"] = abattement
+            df.at[idx, "Fraction du Capital Consommé"] = abattement
 
             # Update base (Art 150 VH bis: acquisition price is reduced by the fraction used)
             current_acq_base -= abattement
@@ -739,6 +718,12 @@ def get_portfolio_snapshot(year, target_date, df_override=None, force_full=False
         df_j = df_j.dropna(subset=["Date"])
         df_j = df_j[(df_j["Date"] <= target_date) & (df_j["Date"].dt.year == year)]
         df_j = apply_spam_filter(df_j, drop=True)
+
+        # GLOBAL RULE: EURA Redundancy Protection
+        # We exclude all manual/imported entries (Way_3) for EURA to prioritize blockchain data.
+        mask_eura_way3 = (df_j["Asset"].str.upper() == "EURA") & (df_j["Source_Way"] == "Way_3")
+        df_j = df_j[~mask_eura_way3]
+
         # Filter for Valid Assets
         df_j = df_j[df_j["Asset"].str.upper().isin(valid_assets)]
 

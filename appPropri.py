@@ -87,7 +87,7 @@ def get_unified_inventory(year, t_date):
 
     res = snapshot.rename(columns={
         "Location": "Emplacement", "Solde": "Solde Actuel",
-        "In": "Mvts Entrants", "Out": "Mvts Sortants",
+        "Entrées": "Mvts Entrants", "Sorties": "Mvts Sortants",
         "Report": "Solde N-1 (Report)",
         "Prix (EUR)": "Prix (€)", "Valeur (EUR)": "Valeur (€)"
     })
@@ -103,102 +103,130 @@ def get_unified_inventory(year, t_date):
 
 # --- Main Dashboard ---
 
-# 0. SOMMAIRE DES CESSIONS & VGP (Calcul Automatique)
-st.subheader("📈 Sommaire des VGP Fiscales")
-st.info("Ce tableau récapitule la VGP à chaque date de cession imposable (Crypto -> Fiat) qualifiée dans l'Etape 2.")
+t_dashboard, t_acq, t_audit = st.tabs(["📊 Dashboard VGP", "💰 Historique Acquisitions", "🕵️ Audit Cessions"])
 
 j_full_path = sl.get_file_path(target_year, 'qualified_full')
 if not os.path.exists(j_full_path):
-    st.warning("Veuillez d'abord qualifier vos transactions dans l'étape 2.")
     df_j = pd.DataFrame()
 else:
     df_j = sl.pd_read_csv_safe(j_full_path)
     df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True)
     df_j["Imposable"] = df_j["Imposable"].apply(sl.is_imposable_robust)
 
-if not df_j.empty:
-    with st.spinner("Calcul des VGP clés..."):
-        df_sum = get_cessions_summary(target_year, df_j)
-        if not df_sum.empty:
-            st.dataframe(
-                df_sum,
-                column_config={"VGP (€)": st.column_config.NumberColumn(format="%.2f €")},
-                use_container_width=True, hide_index=True
-            )
-        else:
-            st.info("Aucune cession imposable détectée pour l'année sélectionnée.")
+with t_dashboard:
+    # 0. SOMMAIRE DES CESSIONS & VGP (Calcul Automatique)
+    st.subheader("📈 Sommaire des VGP Fiscales")
+    st.info("Ce tableau récapitule la VGP à chaque date de cession imposable (Crypto -> Fiat) qualifiée dans l'Etape 2.")
 
-st.divider()
+    if not df_j.empty:
+        with st.spinner("Calcul des VGP clés..."):
+            df_sum = get_cessions_summary(target_year, df_j)
+            if not df_sum.empty:
+                st.dataframe(
+                    df_sum,
+                    column_config={"VGP (€)": st.column_config.NumberColumn(format="%.2f €")},
+                    width='stretch', hide_index=True
+                )
+            else:
+                st.info("Aucune cession imposable détectée pour l'année sélectionnée.")
+    else:
+        st.warning("Veuillez d'abord qualifier vos transactions dans l'étape 2.")
 
-# 1. INVENTAIRE DE CONTRÔLE
-st.subheader(f"📦 Inventaire de Contrôle au {target_date.strftime('%d/%m/%Y')}")
-inventory = get_unified_inventory(target_year, target_date)
-notes_db = sl.load_manual_notes()
+    st.divider()
 
-if not inventory.empty:
-    # Calculation of Capital Investi (A) - Now filtered for Valid Assets
-    total_a, df_a_details = sl.get_total_acquisition_value(target_year, return_details=True)
+    # 1. INVENTAIRE DE CONTRÔLE
+    st.subheader(f"📦 Inventaire de Contrôle au {target_date.strftime('%d/%m/%Y')}")
+    inventory = get_unified_inventory(target_year, target_date)
+    notes_db = sl.load_manual_notes()
 
-    # Portfolio VGP (excluding non-taxable assets like EUR)
-    mask_vgp = (inventory["Asset"].str.upper() != "EUR")
-    total_vgp = inventory[mask_vgp]["Valeur (€)"].sum()
+    if not inventory.empty:
+        # Calculation of Capital Investi (A) - Now filtered for Valid Assets
+        total_a, df_a_details = sl.get_total_acquisition_value(target_year, return_details=True)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("VGP Globale", f"{total_vgp:,.2f} €")
-    c2.metric("Capital Investi (A)", f"{total_a:,.2f} €", help="Cumul des Euros consommés pour l'achat de jetons validés.")
-    c3.metric("Performance Latente", f"{total_vgp - total_a:,.2f} €")
+        # Portfolio VGP (excluding non-taxable assets like EUR)
+        mask_vgp = (inventory["Asset"].str.upper() != "EUR")
+        total_vgp = inventory[mask_vgp]["Valeur (€)"].sum()
 
-    st.write("**Détail des soldes par compte :**")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Valeur de Marché (VGP)", f"{total_vgp:,.2f} €", help="Valeur totale du portefeuille aux cours du jour (Art. 150 VH bis).")
+        c2.metric("Capital Global Investi (A)", f"{total_a:,.2f} €", help="Cumul des Euros investis pour l'achat d'actifs numériques.")
+        c3.metric("Performance Latente", f"{total_vgp - total_a:,.2f} €")
 
-    # Support for manual balance correction
-    def get_forced_bal(r):
-        k = f"BAL_{target_date.strftime('%Y%m%d')}_{r['Emplacement']}_{r['Asset']}"
-        return float(notes_db.get(k, r["Solde Actuel"]))
+        st.write("**Détail des soldes par compte :**")
 
-    def get_row_note(r):
-        k = f"NOTE_{target_date.strftime('%Y%m%d')}_{r['Emplacement']}_{r['Asset']}"
-        return notes_db.get(k, "")
+        # Support for manual balance correction
+        def get_forced_bal(r):
+            k = f"BAL_{target_date.strftime('%Y%m%d')}_{r['Emplacement']}_{r['Asset']}"
+            return float(notes_db.get(k, r["Solde Actuel"]))
 
-    inventory["Solde Corrigé"] = inventory.apply(get_forced_bal, axis=1)
-    inventory["Commentaires"] = inventory.apply(get_row_note, axis=1)
-    inventory["Valeur (€)"] = inventory["Solde Corrigé"] * inventory["Prix (€)"]
+        def get_row_note(r):
+            k = f"NOTE_{target_date.strftime('%Y%m%d')}_{r['Emplacement']}_{r['Asset']}"
+            return notes_db.get(k, "")
 
-    ed_inv = st.data_editor(
-        inventory,
-        column_config={
-            "Asset": st.column_config.TextColumn("🪙 Actif", disabled=True),
-            "Emplacement": st.column_config.TextColumn("📍 Lieu", disabled=True),
-            "Solde N-1 (Report)": st.column_config.NumberColumn(format="%.6f", disabled=True),
-            "Mvts Entrants": st.column_config.NumberColumn(format="%.6f", disabled=True),
-            "Mvts Sortants": st.column_config.NumberColumn(format="%.6f", disabled=True),
-            "Solde Actuel": st.column_config.NumberColumn("📦 Solde (Calculé)", format="%.6f", disabled=True),
-            "Solde Corrigé": st.column_config.NumberColumn("🛠️ Solde Réel", format="%.6f", help="Forcez le solde si le calcul automatique est incomplet."),
-            "Prix (€)": st.column_config.NumberColumn(format="%.4f €"),
-            "Valeur (€)": st.column_config.NumberColumn(format="%.2f €", disabled=True),
-            "Commentaires": st.column_config.TextColumn("📝 Commentaire", width="medium"),
-        },
-        disabled=["Asset", "Emplacement", "Solde N-1 (Report)", "Mvts Entrants", "Mvts Sortants", "Solde Actuel", "Valeur (€)"],
-        use_container_width=True, hide_index=True, key="unified_control_editor"
-    )
+        inventory["Solde Corrigé"] = inventory.apply(get_forced_bal, axis=1)
+        inventory["Commentaires"] = inventory.apply(get_row_note, axis=1)
+        inventory["Valeur (€)"] = inventory["Solde Corrigé"] * inventory["Prix (€)"]
 
-    if st.button("💾 Enregistrer les Corrections & Notes"):
-        new_notes = notes_db.copy()
-        dt_s = target_date.strftime("%Y%m%d")
-        for _, r in ed_inv.iterrows():
-            k_bal = f"BAL_{dt_s}_{r['Emplacement']}_{r['Asset']}"
-            if float(r["Solde Corrigé"]) != float(r["Solde Actuel"]): new_notes[k_bal] = str(r["Solde Corrigé"])
-            elif k_bal in new_notes: del new_notes[k_bal]
-            k_note = f"NOTE_{dt_s}_{r['Emplacement']}_{r['Asset']}"
-            if r["Commentaires"]: new_notes[k_note] = r["Commentaires"]
-            elif k_note in new_notes: del new_notes[k_note]
-        sl.save_manual_notes(new_notes)
-        st.success("Corrections sauvegardées.")
-        st.rerun()
+        ed_inv = st.data_editor(
+            inventory,
+            column_config={
+                "Asset": st.column_config.TextColumn("🪙 Actif", disabled=True),
+                "Emplacement": st.column_config.TextColumn("📍 Lieu", disabled=True),
+                "Solde N-1 (Report)": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                "Mvts Entrants": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                "Mvts Sortants": st.column_config.NumberColumn(format="%.6f", disabled=True),
+                "Solde Actuel": st.column_config.NumberColumn("📦 Solde (Calculé)", format="%.6f", disabled=True),
+                "Solde Corrigé": st.column_config.NumberColumn("🛠️ Solde Réel", format="%.6f", help="Forcez le solde si le calcul automatique est incomplet."),
+                "Prix (€)": st.column_config.NumberColumn(format="%.4f €"),
+                "Valeur (€)": st.column_config.NumberColumn(format="%.2f €", disabled=True),
+                "Commentaires": st.column_config.TextColumn("📝 Commentaire", width="medium"),
+            },
+            disabled=["Asset", "Emplacement", "Solde N-1 (Report)", "Mvts Entrants", "Mvts Sortants", "Solde Actuel", "Valeur (€)"],
+            width='stretch', hide_index=True, key="unified_control_editor"
+        )
 
-st.divider()
+        if st.button("💾 Enregistrer les Corrections & Notes"):
+            new_notes = notes_db.copy()
+            dt_s = target_date.strftime("%Y%m%d")
+            for _, r in ed_inv.iterrows():
+                k_bal = f"BAL_{dt_s}_{r['Emplacement']}_{r['Asset']}"
+                if float(r["Solde Corrigé"]) != float(r["Solde Actuel"]): new_notes[k_bal] = str(r["Solde Corrigé"])
+                elif k_bal in new_notes: del new_notes[k_bal]
+                k_note = f"NOTE_{dt_s}_{r['Emplacement']}_{r['Asset']}"
+                if r["Commentaires"]: new_notes[k_note] = r["Commentaires"]
+                elif k_note in new_notes: del new_notes[k_note]
+            sl.save_manual_notes(new_notes)
+            st.success("Corrections sauvegardées.")
+            st.rerun()
 
-# --- Audit & History ---
-with st.expander("🕵️ Audit des Cessions & Qualifications", expanded=False):
+with t_acq:
+    st.subheader("💵 Historique Détaillé des Acquisitions (Fiat)")
+    st.info("Ce tableau affiche toutes les contributions fiat (Euros) reconnues comme prix d'acquisition.")
+
+    total_a_tab, df_a_details_tab = sl.get_total_acquisition_value(target_year, return_details=True)
+
+    if not df_a_details_tab.empty:
+        # Standardize display
+        df_disp_acq = df_a_details_tab.copy()
+
+        # Cleanup columns for UI
+        cols_to_show = ["Date", "Compte/Label", "Asset", "Quantité", "Montant EUR", "Tx Hash"]
+        available_cols = [c for c in cols_to_show if c in df_disp_acq.columns]
+
+        st.dataframe(
+            df_disp_acq[available_cols].sort_values("Date", ascending=False),
+            column_config={
+                "Montant EUR": st.column_config.NumberColumn(format="%.2f €"),
+                "Quantité": st.column_config.NumberColumn(format="%.6f"),
+            },
+            width='stretch', hide_index=True
+        )
+        st.metric("Total Capital Investi (A)", f"{total_a_tab:,.2f} €")
+    else:
+        st.warning("Aucune acquisition fiat détectée dans les registres manuels (App 0).")
+
+with t_audit:
+    st.subheader("🕵️ Audit des Cessions & Qualifications")
     st.write("Vérifiez ici le détail des transactions qualifiées comme cessions.")
 
     if not df_j.empty:
@@ -217,11 +245,19 @@ with st.expander("🕵️ Audit des Cessions & Qualifications", expanded=False):
                 "Amount": st.column_config.NumberColumn(disabled=True),
                 "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Achat", "Vente", "Transfert", "Swap"]),
             },
-            use_container_width=True, hide_index=True, key="audit_cession_editor"
+            width='stretch', hide_index=True, key="audit_cession_editor"
         )
 
         if st.button("💾 Sauvegarder les Qualifications (Audit)", type="primary"):
-            df_j.update(edited_audit)
+            # Update df_j with edits from edited_audit
+            # We match on Tx Hash, Asset and Account
+            for idx, row in edited_audit.iterrows():
+                # Find corresponding row in df_j
+                mask = (df_j["Tx_Hash"] == row["Tx_Hash"]) & (df_j["Asset"] == row["Asset"]) & (df_j["Account"] == row["Account"])
+                if mask.any():
+                    df_j.loc[mask, "Imposable"] = row["Imposable"]
+                    df_j.loc[mask, "Category"] = row["Category"]
+
             df_j.to_csv(j_full_path, index=False, encoding="utf-8-sig")
             clean_path = sl.get_file_path(target_year, 'qualified_clean')
             sl.apply_spam_filter(df_j, drop=True).to_csv(clean_path, index=False, encoding="utf-8-sig")
