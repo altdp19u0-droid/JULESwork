@@ -123,7 +123,8 @@ if not df_j.empty:
         # Calculate VGP for each unique cession date (Optimized with Cache)
         with st.spinner("Calcul des VGP de cession..."):
             # We serialize to JSON for the cache key to avoid DataFrame hashing overhead
-            j_json = df_j.to_json()
+            # Use ISO format to avoid Pandas deprecation warning
+            j_json = df_j.to_json(date_format='iso')
             df_sum = get_cessions_summary(target_year, j_json)
 
             # Map back to cessions for the editor
