@@ -583,14 +583,7 @@ else:
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Prix d'Acquisition Total (A)", f"{total_acq:,.2f} €", help="Somme cumulée de vos apports fiat (Euros) dans l'écosystème crypto.")
-    # Check for manual override
-    key_ov = f"{target_year}_{eoy_date.strftime('%Y%m%d')}"
-    ov_data = sl.load_vgp_overrides()
-    is_overridden = key_ov in ov_data
-
-    c2.metric(f"Valeur Patrimoniale (VGP Net)" + (" (FORCÉE)" if is_overridden else ""),
-              f"{vgp_eoy:,.2f} €",
-              help="Valeur totale du portefeuille (VGP) corrigée (Hors EUR et redondance fiat).")
+    c2.metric(f"Valeur Patrimoniale (VGP Net)", f"{vgp_eoy:,.2f} €", help="Valeur totale du portefeuille (VGP) corrigée (Hors EUR et redondance fiat).")
 
     perf_net = vgp_eoy - total_acq
     c3.metric("Performance Latente Globale", f"{perf_net:,.2f} €", delta=perf_net, delta_color="normal")

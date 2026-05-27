@@ -384,6 +384,7 @@ else:
                 st.subheader("🛡️ Forçage Manuel de la VGP")
                 overrides = load_vgp_overrides()
                 key_ov = f"{target_year}_{selected_date.strftime('%Y%m%d')}"
+                is_overridden = key_ov in overrides
 
                 # If it's a cession, we might want to override the VGP used for that specific transaction
                 # But here we are in the audit view of a specific date.
@@ -399,20 +400,12 @@ else:
                     st.success(f"VGP pour le {selected_date.strftime('%d/%m/%Y')} fixée à {ov_val:,.2f} €")
                     st.rerun()
 
-                if is_overridden:
-                    if st.button("🗑️ Supprimer le forçage manuel", type="secondary"):
-                        del overrides[key_ov]
-                        save_vgp_overrides(overrides)
-                        st.info("Forçage supprimé. Le système utilisera à nouveau le calcul automatique.")
-                        st.rerun()
-
                 st.divider()
                 c1, c2 = st.columns(2)
                 c1.metric("VGP Brute (Audit)", f"{total_raw:,.2f} €", help="Valeur totale incluant les stablecoins tokenisés depuis du fiat.")
 
                 # Check if override exists
                 final_vgp_display = overrides.get(key_ov, total_val)
-                is_overridden = key_ov in overrides
 
                 c2.metric("VGP Nette Corrigée" + (" (FORCÉE)" if is_overridden else ""),
                           f"{final_vgp_display:,.2f} €",

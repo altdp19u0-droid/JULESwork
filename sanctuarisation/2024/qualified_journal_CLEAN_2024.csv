@@ -1,4 +1,0 @@
-Date,Account,Asset,Amount,Category,Counterparty,Tx_Hash,Type,Chain,Audit_Status,Method
-2024-01-01 12:00:00,wallet1,EURA,1000.0,Achat,fiat,h1,CEX_Mvt,ETH,RAW,Topup
-2024-06-01 12:00:00,wallet1,EURA,-400.0,Swap,swap,h2,CEX_Mvt,ETH,RAW,Exchange
-2024-06-01 12:00:00,wallet1,BTC,0.01,Swap,swap,h2,CEX_Mvt,ETH,RAW,Exchange

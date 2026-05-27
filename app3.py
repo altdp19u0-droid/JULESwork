@@ -766,14 +766,7 @@ with tab_bilan:
                     st.info(f"💡 Consommation de stables : EURA {consumed.get('EURA', {}).get('consumed', 0.0):.2f} | EURC {consumed.get('EURC', {}).get('consumed', 0.0):.2f}")
                     st.rerun()
 
-        # Check for manual override for display label
-        key_ov = f"{target_year}_{datetime(target_year, 12, 31).strftime('%Y%m%d')}"
-        ov_data = sl.load_vgp_overrides()
-        is_overridden = key_ov in ov_data
-
-        c_inf2.metric(f"VGP consolidée (31/12/{target_year})" + (" (FORCÉE)" if is_overridden else ""),
-                      f"{vgp_end:,.2f} €",
-                      help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme factuelle ou forcée manuellement.")
+        c_inf2.metric(f"VGP consolidée (31/12/{target_year})", f"{vgp_end:,.2f} €", help="Valeur Globale du Portefeuille (VGP) au 31/12 : Somme factuelle des soldes par compte.")
 
         # --- NOUVEAU : SYNTHÈSE PERFORMANCE ---
         st.divider()

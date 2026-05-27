@@ -619,21 +619,9 @@ def calculate_fiscal_gains(cessions_df, total_acq_price):
 
     current_acq_base = float(total_acq_price)
 
-    # Load manual overrides once
-    vgp_overrides = load_vgp_overrides()
-
     for idx, row in df.iterrows():
         p_vent = float(row.get(p_vent_col, 0.0))
-
-        # Check if there's a manual override for this specific date and year
-        dt_obj = pd.to_datetime(row.get("Date"))
-        y_val = dt_obj.year
-        key_ov = f"{y_val}_{dt_obj.strftime('%Y%m%d')}"
-
-        if key_ov in vgp_overrides:
-            vgp = float(vgp_overrides[key_ov])
-        else:
-            vgp = float(row.get(vgp_col, 0.0))
+        vgp = float(row.get(vgp_col, 0.0))
 
         if vgp > 0:
             fraction = p_vent / vgp
