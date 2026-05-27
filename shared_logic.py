@@ -660,12 +660,16 @@ def get_portfolio_snapshot(year, target_date, df_override=None):
 
     if df_j.empty: return pd.DataFrame(), 0.0
 
-    df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True)
+    # Force conversion once and drop NaT early
+    df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True, errors='coerce')
+    df_j = df_j.dropna(subset=["Date"])
+
+    # Filter by date and spam early to reduce dataset size
     df_j = df_j[df_j["Date"] <= target_date]
     df_j = apply_spam_filter(df_j, drop=True)
 
     # 1. Base Legs (Account)
-    df_direct = df_j.copy()
+    df_direct = df_j
 
     # 2. Protocol Mirroring (Receivables)
     pos_labels = load_position_labels()

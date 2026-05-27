@@ -48,6 +48,34 @@ with st.sidebar:
 # --- Logic: Core Engine ---
 
 @st.cache_data
+def get_cessions_summary(year, journal_df_json):
+    """Calculates VGP for all unique cession dates found in the journal."""
+    df_j = pd.read_json(journal_df_json)
+    if df_j.empty: return pd.DataFrame()
+
+    # Identify Cessions: Outflows, not EUR
+    mask_cess = (df_j["Amount"] < 0) & (df_j["Asset"].str.upper() != "EUR")
+    cess_dates = sorted(df_j[mask_cess]["Date"].dt.date.unique(), reverse=True)
+
+    # Add EOY
+    eoy_d = datetime(year, 12, 31).date()
+    all_dates = sorted(list(set(list(cess_dates) + [eoy_d])), reverse=True)
+
+    summary_data = []
+    for d in all_dates:
+        dt_obj = datetime.combine(d, datetime.max.time())
+        # We pass df_j directly to avoid disk reload
+        snap_res = sl.get_portfolio_snapshot(year, dt_obj, df_override=df_j)
+        vgp_val = snap_res[1] if isinstance(snap_res, tuple) else 0.0
+
+        summary_data.append({
+            "Date": d,
+            "Événement": "🏁 Fin d'année" if d == eoy_d else "📉 Cession",
+            "VGP (€)": vgp_val
+        })
+    return pd.DataFrame(summary_data)
+
+@st.cache_data
 def get_unified_inventory(year, t_date):
     """Calculates inventory by Asset and Location (Wallet/Protocol)."""
     # ROBUST UNPACKING (Handles 2 or more return values)
@@ -81,6 +109,7 @@ if not os.path.exists(j_full_path):
     st.warning("Veuillez d'abord qualifier vos transactions dans l'étape 2.")
     df_j = pd.DataFrame()
 else:
+    # Optimized load
     df_j = sl.pd_read_csv_safe(j_full_path)
     df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True)
     df_j["Imposable"] = df_j["Imposable"].apply(sl.is_imposable_robust)
@@ -91,28 +120,26 @@ if not df_j.empty:
     cessions = df_j[mask_cess].copy()
 
     if not cessions.empty:
-        # Calculate VGP for each unique cession date
+        # Calculate VGP for each unique cession date (Optimized with Cache)
         with st.spinner("Calcul des VGP de cession..."):
-            unique_dates = sorted(cessions["Date"].dt.date.unique(), reverse=True)
-            vgp_map = {}
-            for d in unique_dates:
-                dt_obj = datetime.combine(d, datetime.max.time())
+            # We serialize to JSON for the cache key to avoid DataFrame hashing overhead
+            j_json = df_j.to_json()
+            df_sum = get_cessions_summary(target_year, j_json)
 
-                # ROBUST UNPACKING
-                snap_res = sl.get_portfolio_snapshot(target_year, dt_obj)
-                if isinstance(snap_res, tuple):
-                    vgp_val = snap_res[1]
-                else:
-                    vgp_val = 0.0
-
-                vgp_map[d] = vgp_val
-
+            # Map back to cessions for the editor
+            vgp_map = df_sum.set_index("Date")["VGP (€)"].to_dict()
             cessions["VGP (€)"] = cessions["Date"].dt.date.map(vgp_map)
 
             # Map Comments from notes_db
             notes_db = sl.load_manual_notes()
             def get_tx_note(r): return notes_db.get(sl.get_note_key(r), "")
             cessions["Commentaire"] = cessions.apply(get_tx_note, axis=1)
+
+            # Display the quick summary table
+            st.dataframe(df_sum, column_config={"VGP (€)": st.column_config.NumberColumn(format="%.2f €")}, use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.write("**Détail des qualifications :**")
 
             # Interactive Editor for Cessions
             ed_cess = st.data_editor(
