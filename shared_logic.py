@@ -573,11 +573,12 @@ def get_fiat_inflow_mask(df):
 
     return mask_in & (~mask_neg)
 
-def get_total_acquisition_value(year, return_details=False):
+def get_total_acquisition_value(year, return_details=False, until_date=None):
     """
     STRICT Acquisition Engine:
     Calculates cumulative sum of all fiat acquisitions (Amount EUR).
     Filters ONLY for Valid Assets (stable and coins) being purchased.
+    If until_date is provided, only acquisitions up to that date are counted.
     """
     config = load_global_config()
     start = int(config.get("start_year") or 2021)
@@ -585,18 +586,31 @@ def get_total_acquisition_value(year, return_details=False):
     total = 0.0
     details = []
 
+    if until_date:
+        until_date = pd.to_datetime(until_date, utc=True)
+
     for y in range(start, year + 1):
         p = get_file_path(y, 'fiat')
         if os.path.exists(p):
             df = pd_read_csv_safe(p)
             if not df.empty:
+                # Ensure Date is datetime for filtering
+                df["Date"] = pd.to_datetime(df["Date"], utc=True, errors='coerce')
+                df = df.dropna(subset=["Date"])
+
                 # 1. Detect acquisition rows
                 mask_fiat = get_fiat_inflow_mask(df)
 
                 # 2. Filter for Valid Assets only
                 mask_valid = df["Asset"].str.upper().isin(valid_assets)
 
-                df_purchases = df[mask_fiat & mask_valid].copy()
+                # 3. Filter by date if requested
+                if until_date:
+                    mask_date = (df["Date"] <= until_date)
+                else:
+                    mask_date = pd.Series([True] * len(df))
+
+                df_purchases = df[mask_fiat & mask_valid & mask_date].copy()
 
                 if not df_purchases.empty:
                     amt_col = "Montant EUR" if "Montant EUR" in df_purchases.columns else "Amount"

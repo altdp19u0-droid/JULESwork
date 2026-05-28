@@ -140,8 +140,8 @@ with t_dashboard:
     notes_db = sl.load_manual_notes()
 
     if not inventory.empty:
-        # Calculation of Capital Investi (A) - Now filtered for Valid Assets
-        total_a, df_a_details = sl.get_total_acquisition_value(target_year, return_details=True)
+        # Calculation of Capital Investi (A) - Now filtered for Valid Assets and date
+        total_a, df_a_details = sl.get_total_acquisition_value(target_year, return_details=True, until_date=target_date)
 
         # Portfolio VGP (excluding non-taxable assets like EUR)
         mask_vgp = (inventory["Asset"].str.upper() != "EUR")
