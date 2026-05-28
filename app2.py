@@ -88,7 +88,7 @@ def merge_raw_data(year):
                     "USD prix asset reçu": float(r.get(p_rec_c, 0.0)) if p_rec_c else 0.0,
                     "USD prix asset envoyé": float(r.get(p_sent_c, 0.0)) if p_sent_c else 0.0,
                     "USD prix de fée asset": float(r.get(p_fee_c, 0.0)) if p_fee_c else 0.0,
-                    "Source_Way": "Voie 3", "Audit_Status": "Valide",
+                    "Source_Way": "Way_3", "Audit_Status": "Valide",
                     "Source_File": fn
                 })
             continue
@@ -111,6 +111,9 @@ def merge_raw_data(year):
         # Fee Asset/Amount Discovery
         f_ast_c = discover_col(df_raw, ["feeasset", "tokenfrais", "devisefrais"])
         f_amt_c = discover_col(df_raw, ["feeamount", "montantfrais", "valeurfrais", "fees"])
+
+        # Way Discovery
+        way_c = discover_col(df_raw, ["sourceway", "source_way", "way"])
 
         from_c = discover_col(df_raw, ["from", "expediteur"])
         to_c = discover_col(df_raw, ["to", "destinataire"])
@@ -143,7 +146,8 @@ def merge_raw_data(year):
                     "To": sl.standardize_address_string(r.get(to_c, "")),
                     "Counterparty": str(r.get(cp_c, "")),
                     "Type": str(r.get(type_c, "Transfer")),
-                    "Source_Way": "Blockchain", "Audit_Status": "A vérifier",
+                    "Source_Way": str(r.get(way_c, "Blockchain")) if way_c else "Blockchain",
+                    "Audit_Status": "A vérifier",
                     "Source_File": fn
                 })
             except: continue

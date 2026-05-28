@@ -14,10 +14,11 @@ Ce document est le référentiel unique de la structure, des fonctions critiques
 4. **Sanctuarisation Annuelle :** Chaque année fiscale est isolée dans `/sanctuarisation/{year}/`. Les fichiers qualifiés dans ce dossier sont la source de vérité absolue.
 5. **Protection du Code Réussi :** Il est strictement interdit de modifier les modules moteurs sans accord formel.
     - **Modules Sanctuarisés :** `app.py` (Harvest engine), `appNeverless.py`.
-6. **Principes Comptables Validés (Session Reprise) :**
+6. **Principes Comptables & Terminologie Validés (Session Reprise) :**
     - **QTD :** Quantité Totale Détenue suivie **par actif** (Entrées - Sorties).
-    - **VGP :** Valeur Globale du Portefeuille = **Valeur de Marché** au jour de la cession (Art. 150 VH bis).
-    - **Capital Global Investi (A) :** Capital global investi en Euros, consommé par fraction lors des cessions.
+    - **Valeur de Marché (VGP) :** Valeur totale du portefeuille aux cours du jour au moment de la cession (Art. 150 VH bis).
+    - **Capital Global Investi (A) :** Somme cumulée des Euros injectés dans l'écosystème crypto, diminuée de la fraction consommée lors de chaque vente.
+    - **Fraction du Capital Consommé :** Part de l'investissement initial (A) déduite du prix de vente pour calculer la plus-value brute.
     - **Swaps DeFi :** Option B validée. Les échanges d'actifs (ex: ETH -> stETH) sont traités comme des **Swaps** (neutres fiscalement mais changeant la QTD par actif) et non comme des transferts internes.
 
 ---
@@ -90,13 +91,15 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
         2. **Second Niveau :** Recherche automatique via APIs externes (CoinGecko, DeFiLlama) intégrée dans `sl.get_price_eur`.
     - **Robustesse Date :** Toujours convertir en datetime avant d'utiliser l'accesseur `.dt`.
 2. **appPropri (Dashboard) :**
+    - **Structure en Onglets :** Organisé en trois sections majeures : 1. Dashboard VGP (Contrôle), 2. Historique Acquisitions (Détail Fiat), 3. Audit Cessions.
     - Affiche la synthèse des positions protocoles (selon `position_labels.json`).
     - **Gestion du Cache & Fraîcheur :** Les fonctions de chargement des historiques doivent inclure le `mtime` des fichiers sources dans leurs clés de cache (`@st.cache_data`). Un mécanisme de détection de fraîcheur en sidebar doit avertir l'utilisateur si les fichiers sur disque ont été modifiés (ex: injection depuis App 2 ou edit manuel en App 0) et proposer un rafraîchissement immédiat.
     - **Filtrage Intelligent :** Pour chaque position protocole, seuls les assets explicitement définis dans le registre sont affichés. Si la liste est vide, tous les assets de la position sont affichés.
     - **Intégrité des Prix :** Les valuations (EUR) utilisent prioritairement les prix USD récoltés dans le journal Step 2 (certifiés) avant de solliciter les APIs externes. **Il est strictement interdit d'utiliser la colonne VGP pour dériver un prix unitaire.**
     - **Anti-Inflation VGP :** Le mirroring des positions protocoles n'est appliqué que si la position n'est pas déjà présente comme compte actif dans l'historique, évitant les doubles comptages. La VGP est calculée comme la somme **nette** des **actifs numériques** (en excluant les circuits externes et l'actif **EUR**) pour refléter strictement le périmètre de l'Art. 150 VH bis.
-    - **Unité de Calcul :** Le prix d'acquisition total (A) est calculé prioritairement à partir des registres manuels Step 0 via `sl.get_total_acquisition_value` pour une fidélité absolue à l'historique fiat.
-    - **Standard d'Affichage Acquisition :** Le tableau détaillé des acquisitions doit obligatoirement afficher : Fiat Mobilisé (à l'achat), Quantité acquise et Valeur au 31/12. Pour une fiabilité absolue, ces données sont extraites directement du registre manuel Step 0 (`manual_fiat`).
+    - **Unité de Calcul :** Le Capital Global Investi (A) est calculé prioritairement à partir des registres manuels Step 0 via `sl.get_total_acquisition_value` pour une fidélité absolue à l'historique fiat.
+    - **Protection Anti-Redondance EURA :** La VGP et l'inventaire excluent systématiquement les entrées de nature 'Import/Manuel' (`Source_Way == 'Way_3'`) pour l'actif **EURA** afin de ne comptabiliser que les mouvements blockchain réels.
+    - **Standard d'Affichage Acquisition :** Le tableau détaillé des acquisitions (Onglet 2) affiche : Date, Compte/Label, Asset, Quantité, Montant EUR. Ces données proviennent du registre `manual_fiat`.
     - Consomme les données via `sl.load_clean_history` pour les indicateurs, mais interroge les registres manuels pour les détails d'acquisition.
     - **Identification des Cessions :** Pour être identifiée comme une cession imposable, une transaction doit obligatoirement être un flux de sortie (`Amount < 0`), ne pas être de l'actif `EUR`, et être soit cochée `Imposable`, soit appartenir à une catégorie de type `Vente` ou `Cession`. Cette logique est centralisée dans `sl.is_cession_imposable_robust`.
 3. **app3 (Fiscalité) :**
@@ -111,5 +114,6 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
 2. **Persistence Globale :** Utilisation de `global_config.json` pour stocker `start_year`, `processing_year`, et les réglages persistants par application (ex: `appPropri_year`).
 2. **Encodage CSV :** Export systématique en `utf-8-sig` pour assurer la compatibilité Excel/Windows et la préservation des symboles monétaires.
 3. **Nettoyage Automatisé :** Fonction de maintenance en sidebar pour purger les fichiers de travail `raw_*.csv` anciens, en conservant uniquement les deux dates de session les plus récentes.
-4. **Type Safety Datetime :** Toute ingestion de donnée doit forcer `pd.to_datetime(..., utc=True)` pour éviter les plantages lors des tris et calculs temporels.
+4. **Standard UI Streamlit :** Pour éviter les avertissements de dépréciation (post 2025), remplacer systématiquement `use_container_width=True` par `width='stretch'` dans tous les widgets supportant ce paramètre (data_editor, dataframe, button...).
+5. **Type Safety Datetime :** Toute ingestion de donnée doit forcer `pd.to_datetime(..., utc=True)` pour éviter les plantages lors des tris et calculs temporels.
 5. **Identité Unifiée :** Format standard `Identifiant (Label)` imposé par `sl.standardize_address_string`.

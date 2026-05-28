@@ -720,9 +720,17 @@ def get_portfolio_snapshot(year, target_date, df_override=None, force_full=False
         df_j = apply_spam_filter(df_j, drop=True)
 
         # GLOBAL RULE: EURA Redundancy Protection
-        # We exclude all manual/imported entries (Way_3) for EURA to prioritize blockchain data.
-        mask_eura_way3 = (df_j["Asset"].str.upper() == "EURA") & (df_j["Source_Way"] == "Way_3")
-        df_j = df_j[~mask_eura_way3]
+        # We exclude all manual/imported entries (Way_3 or Manuel) for EURA to prioritize blockchain data.
+        # This prevents redundancy between CEX imports and on-chain movements.
+        mask_eura_redundant = (df_j["Asset"].str.upper() == "EURA") & \
+                              (df_j["Source_Way"].isin(["Way_3", "Manuel", "Voie 3", "Import"]))
+        df_j = df_j[~mask_eura_redundant]
+
+        # ANTI-REDUNDANCY: Exclude Snapshot/Position rows from algebraic sum
+        # These rows represent a state, not a movement. Including them in sum would double-count.
+        # They are still used by get_journal_prices for valuation.
+        mask_snapshot = df_j["Type"].fillna("").str.contains("Position|Snapshot|Initial", case=False, na=False)
+        df_j = df_j[~mask_snapshot]
 
         # Filter for Valid Assets
         df_j = df_j[df_j["Asset"].str.upper().isin(valid_assets)]

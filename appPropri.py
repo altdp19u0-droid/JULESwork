@@ -32,7 +32,7 @@ with st.sidebar:
     val_date_type = st.radio("Cible de contrôle", ["Fin d'année (31/12)", "Date libre (Audit)"])
 
     if val_date_type == "Fin d'année (31/12)":
-        target_date = datetime(target_year, 12, 31)
+        target_date = datetime(target_year, 12, 31, 23, 59, 59)
     else:
         target_date = st.date_input("Saisir une date", datetime(target_year, 6, 30))
         target_date = datetime.combine(target_date, datetime.max.time())
