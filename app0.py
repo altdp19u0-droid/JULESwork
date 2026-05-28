@@ -45,12 +45,19 @@ def load_manual_data(year):
         if 'Acquisition' not in df.columns:
             # Auto-init for legacy data based on 'Achat' type
             df['Acquisition'] = df['Type'].str.contains("Achat", case=False, na=False)
+
+        # Force boolean for editor stability
+        df["Imposable"] = df["Imposable"].apply(sl.is_imposable_robust)
+        df["Acquisition"] = df["Acquisition"].apply(sl.is_imposable_robust)
+
         st.session_state.fiat_journal = df
     else:
         cols = ["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash", "Imposable", "Acquisition"]
         st.session_state.fiat_journal = pd.DataFrame(columns=cols)
         for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
             st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
+        st.session_state.fiat_journal["Imposable"] = st.session_state.fiat_journal["Imposable"].astype(bool)
+        st.session_state.fiat_journal["Acquisition"] = st.session_state.fiat_journal["Acquisition"].astype(bool)
 
     if os.path.exists(pos_path):
         df = sl.pd_read_csv_safe(pos_path)
