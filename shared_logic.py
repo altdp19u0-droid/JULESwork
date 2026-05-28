@@ -547,11 +547,19 @@ def get_price_eur(asset, date_obj, cache=None):
 def get_fiat_inflow_mask(df):
     """
     Robustly identifies ACTUAL acquisitions/inflows of fiat into the crypto ecosystem.
-    Fiscally, only 'Achat' or direct 'Buy' are considered consumption of fiat for acquisition price (A).
+    Prioritizes the explicit 'Acquisition' column if present.
+    Fallback: only 'Achat' or direct 'Buy' are considered consumption of fiat for acquisition price (A).
     'Dépôt' and 'Deposit' are treated as treasury movements (disponibilités plateforme) and excluded from 'A'.
     """
-    if df.empty or 'Type' not in df.columns: return pd.Series([False] * len(df))
+    if df.empty: return pd.Series([False] * len(df))
 
+    # PRIORITY 1: Explicit pointer column 'Acquisition'
+    if 'Acquisition' in df.columns:
+        return df['Acquisition'].apply(is_imposable_robust)
+
+    if 'Type' not in df.columns: return pd.Series([False] * len(df))
+
+    # PRIORITY 2: Heuristic based on Type
     # Real acquisition keywords: things that actually exchange Euros for Digital Assets
     acquisition_keywords = ["Achat", "Buy", "Virement vers Crypto", "Injection", "Consommation"]
 

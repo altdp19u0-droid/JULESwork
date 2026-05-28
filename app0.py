@@ -42,9 +42,13 @@ def load_manual_data(year):
 
         if 'Imposable' not in df.columns:
             df['Imposable'] = False
+        if 'Acquisition' not in df.columns:
+            # Auto-init for legacy data based on 'Achat' type
+            df['Acquisition'] = df['Type'].str.contains("Achat", case=False, na=False)
         st.session_state.fiat_journal = df
     else:
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash", "Imposable"])
+        cols = ["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash", "Imposable", "Acquisition"]
+        st.session_state.fiat_journal = pd.DataFrame(columns=cols)
         for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
             st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
 
@@ -120,7 +124,8 @@ with st.sidebar:
 
     st.divider()
     if st.button("🗑️ Vider la saisie en cours"):
-        st.session_state.fiat_journal = pd.DataFrame(columns=["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash", "Imposable"])
+        cols_fiat = ["Date", "Account", "Counterparty", "Compte/Label", "Plateforme", "Montant EUR", "Type", "Asset", "Quantité", "Tx Hash", "Imposable", "Acquisition"]
+        st.session_state.fiat_journal = pd.DataFrame(columns=cols_fiat)
         for col in ["Account", "Counterparty", "Compte/Label", "Plateforme", "Asset", "Type", "Tx Hash"]:
             st.session_state.fiat_journal[col] = st.session_state.fiat_journal[col].astype(str)
 
@@ -177,6 +182,7 @@ def fragment_fiat():
         st.session_state.fiat_hash_input = row["Tx Hash"]
         st.session_state.fiat_qty_input = float(row["Quantité"])
         st.session_state.fiat_imp_checkbox = bool(row["Imposable"])
+        st.session_state.fiat_acq_checkbox = bool(row.get("Acquisition", False))
 
         known_displays = sl.get_owner_display_list()
         st.session_state.sel_fiat_label = row["Compte/Label"] if row["Compte/Label"] in known_displays else "(Nouveau / Autre...)"
@@ -239,18 +245,21 @@ def fragment_fiat():
     f_qty = c_acc3.number_input("🔢 Quantité Token", min_value=0.0, format="%.8f", key="fiat_qty_input")
 
     st.markdown("---")
-    c_hash, c_addr_f, c_imp = st.columns([2, 2, 0.5])
+    c_hash, c_addr_f, c_imp, c_acq = st.columns([2, 2, 0.5, 0.5])
     f_hash = c_hash.text_input("🔗 Tx Hash (Audit)", placeholder="0x...", key="fiat_hash_input")
 
     f_addr_sel = c_addr_f.selectbox("📍 Adresse Tech (0x...)", options_acc, key="sel_fiat_addr", help="Adresse technique de destination on-chain si applicable.")
     f_addr_new = c_addr_f.text_input("Saisir Adresse", placeholder="0x...", key="fiat_addr_input")
     f_addr = sl.standardize_address_string(f_addr_new if f_addr_sel == "(Saisie libre / Autre...)" else f_addr_sel)
 
-    # Automatisation intelligente de la coche imposable
+    # Automatisation intelligente des coches
     if "fiat_imp_checkbox" not in st.session_state:
         st.session_state["fiat_imp_checkbox"] = ("Vente" in f_type)
+    if "fiat_acq_checkbox" not in st.session_state:
+        st.session_state["fiat_acq_checkbox"] = ("Achat" in f_type)
 
     f_imposable = c_imp.checkbox("Imp.", key="fiat_imp_checkbox", help="Cochez si cette opération est une cession imposable (Vente).")
+    f_acquisition = c_acq.checkbox("Acq.", key="fiat_acq_checkbox", help="Cochez pour inclure ce mouvement dans le calcul du Capital Global Investi (A).")
 
     btn_label = "💾 Enregistrer les modifications" if edit_idx is not None else "➕ Ajouter au journal"
     if st.button(btn_label, width='stretch', type="primary" if edit_idx is not None else "secondary"):
@@ -261,7 +270,7 @@ def fragment_fiat():
                 "Date": f_date, "Account": f_addr if f_addr else f_label, "Counterparty": f_plat,
                 "Compte/Label": f_label, "Plateforme": f_plat,
                 "Montant EUR": f_amount, "Type": f_type, "Asset": f_asset.upper(),
-                "Quantité": f_qty, "Tx Hash": f_hash, "Imposable": f_imposable
+                "Quantité": f_qty, "Tx Hash": f_hash, "Imposable": f_imposable, "Acquisition": f_acquisition
             }
 
             if edit_idx is not None:
@@ -320,6 +329,7 @@ def fragment_fiat():
             "Asset": st.column_config.TextColumn("🪙 Token"),
             "Quantité": st.column_config.NumberColumn("🔢 Quantité", format="%.8f"),
             "Imposable": st.column_config.CheckboxColumn("Imp."),
+            "Acquisition": st.column_config.CheckboxColumn("Acq."),
             "Account": st.column_config.TextColumn("📍 Adresse Tech"),
             "Tx Hash": st.column_config.TextColumn("🔗 Tx Hash"),
             "Counterparty": None, # Hide legacy technical col

@@ -14,7 +14,7 @@ QUALIFIED_V4_COLUMNS = [
     "From_Label", "To_Label", "Counterparty", "Asset", "Amount",
     "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset",
     "Fee_Asset", "Fee_Amount", "Source_Way", "Audit_Status", "Fee_Audit_Alert",
-    "Source_Exchange_Rate", "Prix de Cession (EUR)", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable",
+    "Source_Exchange_Rate", "Prix de Cession (EUR)", "VGP (EUR)", "Linked_ID", "Link_Status", "Category", "Imposable", "Acquisition",
     "Source_File"
 ]
 
@@ -268,7 +268,7 @@ def run_fidelity_engine(raw_df, existing_df):
     # Les colonnes à préserver (celles que l'utilisateur modifie ou enrichies par récolte)
     preservable = [
         "Audit_Status", "Category", "From_Label", "To_Label", "Counterparty",
-        "Prix de Cession (EUR)", "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable",
+        "Prix de Cession (EUR)", "VGP (EUR)", "Linked_ID", "Link_Status", "Imposable", "Acquisition",
         "Valeur $", "USD prix asset reçu", "USD prix asset envoyé", "USD prix de fée asset",
         "Fee_Asset", "Fee_Amount"
     ]
@@ -688,6 +688,7 @@ def main():
                 "Audit_Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam", "Ignoré"]),
                 "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Revenu", "Dépense", "Transfert", "Transfert Interne", "Swap", "Achat", "Vente"]),
                 "Imposable": st.column_config.CheckboxColumn("Imposable"),
+            "Acquisition": st.column_config.CheckboxColumn("Acq."),
                 "Valeur $": st.column_config.NumberColumn(format="$ %.2f"),
                 "USD prix asset reçu": st.column_config.NumberColumn(format="$ %.4f"),
                 "USD prix asset envoyé": st.column_config.NumberColumn(format="$ %.4f"),

@@ -593,7 +593,7 @@ with tab_acq:
         st.metric("Capital Global Investi (A)", f"{total_acq_price:,.2f} €")
 
     with col_acq2:
-        st.info("Cette valeur 'A' est le cumul de vos investissements en Euros. Elle est utilisée pour calculer la fraction du capital récupérée à chaque vente.")
+        st.info("Cette valeur 'A' est le cumul de vos investissements en Euros (Uniquement les lignes cochées 'Acq.' dans le Registre Step 0). Elle est utilisée pour calculer la fraction du capital récupérée à chaque vente.")
 
 with tab_cessions:
     st.subheader("📝 Calcul des Cessions Imposables (Formulaire 2086)")
