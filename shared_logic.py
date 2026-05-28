@@ -785,7 +785,35 @@ def get_portfolio_snapshot(year, target_date, df_override=None, force_full=False
         df_full_mvt["In"] = df_full_mvt["Amount"].apply(lambda x: x if x > 0 else 0.0)
         df_full_mvt["Out"] = df_full_mvt["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
         df_full_mvt["Report"] = 0.0
-        all_legs.append(df_full_mvt[["Location", "Asset", "Amount", "In", "Out", "Report"]])
+
+        # --- WEALTH PROTECTION LOGIC ---
+        # A movement only adds "wealth" (VGP) if it's an Acquisition or a Portfolio Position (initial state).
+        # Otherwise, if we have an inflow without a matching outflow (internal transfer),
+        # it's likely a redundancy from multiple harvests (e.g., CEX buy appearing on-chain but already in manual fiat).
+
+        # --- WEALTH PROTECTION LOGIC ---
+        # Any movement that is NOT an explicit Acquisition or a Portfolio Position
+        # must be balanced in the global "Patrimoine" referential to avoid redundancy.
+
+        # Identify rows that are NOT wealth entries
+        mask_not_wealth = (~df_full_mvt["Category"].str.contains("Achat|Position|Snapshot", case=False, na=False)) & \
+                          (~df_full_mvt.get("Acquisition", pd.Series([False]*len(df_full_mvt))).apply(is_imposable_robust))
+
+        df_to_compensate = df_full_mvt[mask_not_wealth].copy()
+
+        if not df_to_compensate.empty:
+            df_wealth_comp = df_to_compensate.copy()
+            # Compensation leg: opposite amount to a virtual counter-location
+            df_wealth_comp["Amount"] = -df_wealth_comp["Amount"]
+            df_wealth_comp["Location"] = "🌍 Référentiel Patrimoine (Compensation)"
+            df_wealth_comp["In"] = df_wealth_comp["Amount"].apply(lambda x: x if x > 0 else 0.0)
+            df_wealth_comp["Out"] = df_wealth_comp["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+            df_wealth_comp["Report"] = 0.0
+
+            all_legs.append(df_full_mvt[["Location", "Asset", "Amount", "In", "Out", "Report"]])
+            all_legs.append(df_wealth_comp[["Location", "Asset", "Amount", "In", "Out", "Report"]])
+        else:
+            all_legs.append(df_full_mvt[["Location", "Asset", "Amount", "In", "Out", "Report"]])
 
     if not all_legs: return pd.DataFrame(), 0.0
 

@@ -36,8 +36,9 @@ def ensure_columns(df):
         if usd_col in df.columns:
             df[usd_col] = pd.to_numeric(df[usd_col], errors="coerce").fillna(0.0)
 
-    # Conversion stricte de Imposable en booléen pour l'éditeur Streamlit
+    # Conversion stricte des booleens pour l'éditeur Streamlit
     df["Imposable"] = df["Imposable"].apply(sl.is_imposable_robust)
+    df["Acquisition"] = df["Acquisition"].apply(sl.is_imposable_robust)
     return df[QUALIFIED_V4_COLUMNS]
 
 def discover_col(df, candidates):
