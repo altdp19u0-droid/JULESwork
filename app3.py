@@ -582,10 +582,10 @@ with tab_accounts:
 
 with tab_acq:
     st.subheader("💵 Suivi du Capital Global Investi (A)")
-    st.write("Le Capital Global Investi est le total des montants en Euros injectés pour acquérir des actifs numériques.")
+    st.write("Le Capital Global Investi (A) est le total des montants en Euros injectés pour acquérir des actifs numériques, augmentés des revenus imposés à la réception (Intérêts & Bonus).")
 
     # UNIFICATION: Use central Step 0 logic for absolute reliability
-    total_acq_price = sl.get_total_acquisition_value(target_year)
+    total_acq_price, df_acq_details = sl.get_total_acquisition_value(target_year, return_details=True)
 
     col_acq1, col_acq2 = st.columns(2)
     with col_acq1:
@@ -593,7 +593,22 @@ with tab_acq:
         st.metric("Capital Global Investi (A)", f"{total_acq_price:,.2f} €")
 
     with col_acq2:
-        st.info("Cette valeur 'A' est le cumul de vos investissements en Euros (Uniquement les lignes cochées 'Acq.' dans le Registre Step 0). Elle est utilisée pour calculer la fraction du capital récupérée à chaque vente.")
+        st.info("Cette valeur 'A' est le cumul de vos apports Fiat et de vos revenus (Intérêts/Bonus) valorisés au jour de réception. Elle constitue la base d'acquisition pour le calcul des plus-values (Formulaire 2086).")
+
+    if not df_acq_details.empty:
+        st.write("**Détail des apports au capital :**")
+        # Standardize for display
+        df_disp = df_acq_details.copy()
+        if "Category" not in df_disp.columns: df_disp["Category"] = "Acquisition"
+
+        st.dataframe(
+            df_disp[["Date", "Asset", "Amount", "Montant EUR", "Category"]].sort_values("Date", ascending=False),
+            column_config={
+                "Montant EUR": st.column_config.NumberColumn("Valeur (€)", format="%.2f €"),
+                "Amount": st.column_config.NumberColumn("Quantité", format="%.8f"),
+            },
+            width='stretch', hide_index=True
+        )
 
 with tab_cessions:
     st.subheader("📝 Calcul des Cessions Imposables (Formulaire 2086)")
@@ -640,7 +655,7 @@ with tab_cessions:
                 return ['background-color: #ffcccc' if float(row.get("VGP (EUR)", 0)) <= 0 else '' for _ in row]
 
             edited_cessions = st.data_editor(
-                cessions.style.apply(style_cessions, axis=1),
+                cessions,
                 column_config={
                     "VGP (EUR)": st.column_config.NumberColumn("VGP (EUR)", format="%.2f", required=True),
                     "Prix de Cession (EUR)": st.column_config.NumberColumn("Prix Cession (EUR)", format="%.2f"),
@@ -652,8 +667,8 @@ with tab_cessions:
             )
 
             if st.button("🧮 Calculer les Plus-Values", key="btn_calc_pv"):
-                # Use centralized fiscal logic
-                df_results, final_acq = sl.calculate_fiscal_gains(edited_cessions, total_acq_price)
+                # Use centralized fiscal logic (New Dynamic Version)
+                df_results, final_acq = sl.calculate_fiscal_gains(edited_cessions, target_year)
 
                 if not df_results.empty:
                     st.session_state.bilan_fiscale = df_results
@@ -782,7 +797,6 @@ with tab_bilan:
         capital_restant = st.session_state.get("final_acq_remaining", total_acq)
         gain_latent = vgp_end - capital_restant
 
-        # 3. Plus-Value Globale (Théorique)
         gain_global = gain_realise + gain_latent
 
         c_perf1, c_perf2, c_perf3 = st.columns(3)
@@ -807,320 +821,312 @@ with tab_bilan:
         else:
             c_perf3.metric("Perte Globale", f"{gain_global:,.2f} €", delta_color="inverse")
 
-    st.info(f"💡 **Explication :** Votre performance globale ({gain_global:,.2f}€) combine les gains/pertes déjà 'encaissés' par vos ventes et la valeur actuelle de ce qu'il vous reste en portefeuille par rapport à ce qu'il vous a coûté ({capital_restant:,.2f}€ de capital investi restant).")
+        st.info(f"💡 **Explication :** Votre performance globale ({gain_global:,.2f}€) combine les gains/pertes déjà 'encaissés' par vos ventes et la valeur actuelle de ce qu'il vous reste en portefeuille par rapport à ce qu'il vous a coûté ({capital_restant:,.2f}€ de capital investi restant).")
+        if st.button("📊 Préparer l'export Historique (Sans Spam)", width='stretch', key="btn_export_hist_fiscal"):
+            # GATEWAY: Use consolidated clean history
+            df_hist_full = sl.load_clean_history(target_year)
 
-st.divider()
-st.subheader("📥 Export de l'Historique Fiscal")
-st.write("Ce bouton génère un fichier CSV contenant l'intégralité des transactions (hors spams) utilisées pour la constitution de l'inventaire et le calcul des plus-values.")
+            if not df_hist_full.empty:
+                # Apply labels for audit clarity
+                df_hist_full = apply_position_labels(df_hist_full)
 
-if st.button("📊 Préparer l'export Historique (Sans Spam)", width='stretch', key="btn_export_hist_fiscal"):
-    # GATEWAY: Use consolidated clean history
-    df_hist_full = sl.load_clean_history(target_year)
+                # Convert to CSV bytes
+                csv_bytes = df_hist_full.to_csv(index=False, encoding="utf-8-sig")
+                st.session_state.hist_fiscal_csv = csv_bytes
+                st.success(f"Historique prêt ({len(df_hist_full)} lignes).")
+            else:
+                st.warning("Aucune transaction trouvée dans les journaux qualifiés.")
 
-    if not df_hist_full.empty:
-        # Apply labels for audit clarity
-        df_hist_full = apply_position_labels(df_hist_full)
+        if "hist_fiscal_csv" in st.session_state:
+            st.download_button(
+                label="💾 Télécharger l'historique complet (CSV)",
+                data=st.session_state.hist_fiscal_csv,
+                file_name=f"historique_fiscal_complet_{target_year}.csv",
+                mime="text/csv",
+                width='stretch',
+                key="btn_download_hist_fiscal"
+            )
 
-        # Convert to CSV bytes
-        csv_bytes = df_hist_full.to_csv(index=False, encoding="utf-8-sig")
-        st.session_state.hist_fiscal_csv = csv_bytes
-        st.success(f"Historique prêt ({len(df_hist_full)} lignes).")
-    else:
-        st.warning("Aucune transaction trouvée dans les journaux qualifiés.")
+        st.divider()
+        if total_pv >= 0:
+            st.write("📝 **Montant à reporter dans la case 3AN (Plus-value) :**")
+        else:
+            st.write("📝 **Montant à reporter dans la case 3BN (Moins-value) :**")
+            st.code(f"{abs(round(total_pv))}")
 
-if "hist_fiscal_csv" in st.session_state:
-    st.download_button(
-        label="💾 Télécharger l'historique complet (CSV)",
-        data=st.session_state.hist_fiscal_csv,
-        file_name=f"historique_fiscal_complet_{target_year}.csv",
-        mime="text/csv",
-        width='stretch',
-        key="btn_download_hist_fiscal"
-    )
+            st.info("💡 N'oubliez pas de joindre l'annexe 2086 à votre déclaration de revenus.")
 
-st.divider()
-if total_pv >= 0:
-    st.write("📝 **Montant à reporter dans la case 3AN (Plus-value) :**")
-else:
-    st.write("📝 **Montant à reporter dans la case 3BN (Moins-value) :**")
-    st.code(f"{abs(round(total_pv))}")
+            # PDF Export for Fiscality (Full Report)
+            def generate_fiscal_pdf_full(year, accounts, local_pos, proto_pos, manual_pos, fiat_df, bilan_df, total_pv, impot):
+                import fpdf
+                f_ver = getattr(fpdf, "__version__", "1.0")
+                is_fpdf2 = int(f_ver.split(".")[0]) >= 2
 
-    st.info("💡 N'oubliez pas de joindre l'annexe 2086 à votre déclaration de revenus.")
+                pdf = FPDF(orientation='L', unit='mm', format='A4')
+                pdf.set_auto_page_break(auto=True, margin=15)
 
-    # PDF Export for Fiscality (Full Report)
-    def generate_fiscal_pdf_full(year, accounts, local_pos, proto_pos, manual_pos, fiat_df, bilan_df, total_pv, impot):
-        import fpdf
-        f_ver = getattr(fpdf, "__version__", "1.0")
-        is_fpdf2 = int(f_ver.split(".")[0]) >= 2
+                # Unicode Font Registration
+                font_path = "DejaVuSans.ttf"
+                font_bold_path = "DejaVuSans-Bold.ttf"
+                main_font = "helvetica"
 
-        pdf = FPDF(orientation='L', unit='mm', format='A4')
-        pdf.set_auto_page_break(auto=True, margin=15)
+                if os.path.exists(font_path) and os.path.exists(font_bold_path):
+                    try:
+                        # On force l'utilisation des fichiers TTF
+                        pdf.add_font("DejaVu", "", font_path)
+                        pdf.add_font("DejaVu", "B", font_bold_path)
+                        main_font = "DejaVu"
+                    except: pass
 
-        # Unicode Font Registration
-        font_path = "DejaVuSans.ttf"
-        font_bold_path = "DejaVuSans-Bold.ttf"
-        main_font = "helvetica"
+                # Gestion des glyphes manquants pour fpdf2
+                if is_fpdf2 and main_font == "DejaVu":
+                    try: pdf.set_fallback_fonts(["DejaVu"])
+                    except: pass
 
-        if os.path.exists(font_path) and os.path.exists(font_bold_path):
-            try:
-                # On force l'utilisation des fichiers TTF
-                pdf.add_font("DejaVu", "", font_path)
-                pdf.add_font("DejaVu", "B", font_bold_path)
-                main_font = "DejaVu"
-            except: pass
+                # --- Page 1: Comptes et Positions ---
+                pdf.add_page()
+                pdf.set_font(main_font, 'B', 18)
+                pdf.cell(0, 15, f"RAPPORT FISCAL CRYPTO - {year}", ln=True, align='C')
+                pdf.set_font(main_font, 'B', 14)
+                pdf.cell(0, 10, "SECTION 1 : COMPTES & POSITIONS", ln=True)
+                pdf.ln(5)
 
-        # Gestion des glyphes manquants pour fpdf2
-        if is_fpdf2 and main_font == "DejaVu":
-            try: pdf.set_fallback_fonts(["DejaVu"])
-            except: pass
+                pdf.set_font(main_font, 'B', 10)
+                use_uni = (main_font == "DejaVu")
+                acc_str = ", ".join([pdf_safe_str(a, use_uni) for a in accounts]) if accounts else "Aucun"
+                pdf.multi_cell(0, 10, f"Comptes identifies : {acc_str}")
+                pdf.ln(5)
 
-        # --- Page 1: Comptes et Positions ---
-        pdf.add_page()
-        pdf.set_font(main_font, 'B', 18)
-        pdf.cell(0, 15, f"RAPPORT FISCAL CRYPTO - {year}", ln=True, align='C')
-        pdf.set_font(main_font, 'B', 14)
-        pdf.cell(0, 10, "SECTION 1 : COMPTES & POSITIONS", ln=True)
-        pdf.ln(5)
+                # Table Local Wallets
+                pdf.set_font(main_font, 'B', 11)
+                pdf.cell(0, 10, "Positions Portefeuilles (Local)", ln=True)
+                pdf.set_fill_color(220, 220, 220)
 
-        pdf.set_font(main_font, 'B', 10)
-        use_uni = (main_font == "DejaVu")
-        acc_str = ", ".join([pdf_safe_str(a, use_uni) for a in accounts]) if accounts else "Aucun"
-        pdf.multi_cell(0, 10, f"Comptes identifies : {acc_str}")
-        pdf.ln(5)
+                has_val = "Valeur (EUR)" in local_pos.columns
+                cols_p = ["Account", "Asset", "Quantite", "Valeur EUR"] if has_val else ["Account", "Asset", "Quantite"]
+                w_p = [100, 50, 55, 60] if has_val else [140, 60, 60]
 
-        # Table Local Wallets
-        pdf.set_font(main_font, 'B', 11)
-        pdf.cell(0, 10, "Positions Portefeuilles (Local)", ln=True)
-        pdf.set_fill_color(220, 220, 220)
+                for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
+                pdf.ln()
+                pdf.set_font(main_font, '', 10)
+                for _, r in local_pos.iterrows():
+                    # Standardize Account name for PDF
+                    disp_acc = sl.resolve_owner_display(r["Account"])
+                    pdf.cell(w_p[0], 8, pdf_safe_str(disp_acc, use_uni)[:45], border=1)
+                    pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"], use_uni), border=1)
+                    pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
+                    if has_val:
+                        pdf.cell(w_p[3], 8, f"{r.get('Valeur (EUR)', 0):,.2f} EUR", border=1)
+                    pdf.ln()
+                pdf.ln(10)
 
-        has_val = "Valeur (EUR)" in local_pos.columns
-        cols_p = ["Account", "Asset", "Quantite", "Valeur EUR"] if has_val else ["Account", "Asset", "Quantite"]
-        w_p = [100, 50, 55, 60] if has_val else [140, 60, 60]
-
-        for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
-        pdf.ln()
-        pdf.set_font(main_font, '', 10)
-        for _, r in local_pos.iterrows():
-            # Standardize Account name for PDF
-            disp_acc = sl.resolve_owner_display(r["Account"])
-            pdf.cell(w_p[0], 8, pdf_safe_str(disp_acc, use_uni)[:45], border=1)
-            pdf.cell(w_p[1], 8, pdf_safe_str(r["Asset"], use_uni), border=1)
-            pdf.cell(w_p[2], 8, f"{r['Amount']:.6f}", border=1)
-            if has_val:
-                pdf.cell(w_p[3], 8, f"{r.get('Valeur (EUR)', 0):,.2f} EUR", border=1)
-            pdf.ln()
-        pdf.ln(10)
-
-        # Table Protocols
-        if not proto_pos.empty:
-            pdf.set_font(main_font, 'B', 11)
-            pdf.cell(0, 10, "Positions Protocoles (Staking / Vaults)", ln=True)
-            for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
-            pdf.ln()
-            pdf.set_font(main_font, '', 10)
-            for _, r in proto_pos.iterrows():
-                # Calculer la hauteur nécessaire pour la ligne (basée sur Account)
-                # On utilise multi_cell en mode calcul si possible, sinon on estime
-                txt_acc = pdf_safe_str(r["Account"], use_uni)
-
-                # Approche robuste pour multi-colonne avec renvoi
-                y_start = pdf.get_y()
-                x_start = pdf.get_x()
-
-                if y_start > 180:
-                    pdf.add_page()
-                    y_start = pdf.get_y()
-                    x_start = pdf.get_x()
+                # Table Protocols
+                if not proto_pos.empty:
                     pdf.set_font(main_font, 'B', 11)
+                    pdf.cell(0, 10, "Positions Protocoles (Staking / Vaults)", ln=True)
                     for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
                     pdf.ln()
-                    y_start = pdf.get_y()
                     pdf.set_font(main_font, '', 10)
+                    for _, r in proto_pos.iterrows():
+                        # Calculer la hauteur nécessaire pour la ligne (basée sur Account)
+                        # On utilise multi_cell en mode calcul si possible, sinon on estime
+                        txt_acc = pdf_safe_str(r["Account"], use_uni)
 
-                # On dessine d'abord la cellule qui peut déborder pour obtenir la hauteur
-                pdf.multi_cell(w_p[0], 8, txt_acc, border=1)
-                h_row = pdf.get_y() - y_start
+                        # Approche robuste pour multi-colonne avec renvoi
+                        y_start = pdf.get_y()
+                        x_start = pdf.get_x()
 
-                # On revient en haut pour dessiner les autres cellules avec la même hauteur
-                pdf.set_xy(x_start + w_p[0], y_start)
-                pdf.cell(w_p[1], h_row, pdf_safe_str(r["Asset"], use_uni), border=1)
-                pdf.cell(w_p[2], h_row, f"{r['Amount']:.6f}", border=1)
-                if has_val:
-                    pdf.cell(w_p[3], h_row, f"{r.get('Valeur (EUR)', 0):,.2f} EUR", border=1)
+                        if y_start > 180:
+                            pdf.add_page()
+                            y_start = pdf.get_y()
+                            x_start = pdf.get_x()
+                            pdf.set_font(main_font, 'B', 11)
+                            for i, c in enumerate(cols_p): pdf.cell(w_p[i], 8, c, border=1, fill=True)
+                            pdf.ln()
+                            y_start = pdf.get_y()
+                            pdf.set_font(main_font, '', 10)
 
-                pdf.set_y(y_start + h_row)
-            pdf.ln(10)
+                        # On dessine d'abord la cellule qui peut déborder pour obtenir la hauteur
+                        pdf.multi_cell(w_p[0], 8, txt_acc, border=1)
+                        h_row = pdf.get_y() - y_start
 
-        # --- Page 2: Capital Global Investi ---
-        pdf.add_page()
-        pdf.set_font(main_font, 'B', 14)
-        pdf.cell(0, 10, "SECTION 2 : HISTORIQUE DES ACHATS (FIAT)", ln=True)
-        pdf.ln(5)
+                        # On revient en haut pour dessiner les autres cellules avec la même hauteur
+                        pdf.set_xy(x_start + w_p[0], y_start)
+                        pdf.cell(w_p[1], h_row, pdf_safe_str(r["Asset"], use_uni), border=1)
+                        pdf.cell(w_p[2], h_row, f"{r['Amount']:.6f}", border=1)
+                        if has_val:
+                            pdf.cell(w_p[3], h_row, f"{r.get('Valeur (EUR)', 0):,.2f} EUR", border=1)
 
-        pdf.set_font(main_font, 'B', 10)
-        # Adjusting widths to avoid overlap: Type needs more space, and total must fit A4 Landscape (~277mm usable)
-        cols_f = ["Date", "Compte", "Asset", "Type", "Montant EUR", "Quantite"]
-        w_f = [25, 45, 20, 85, 40, 40] # Total: 255mm
-        for i, c in enumerate(cols_f): pdf.cell(w_f[i], 8, c, border=1, fill=True)
-        pdf.ln()
-        pdf.set_font(main_font, '', 9)
-        for _, r in fiat_df.iterrows():
-            try: ds_f = pd.to_datetime(r["Date"]).strftime("%d/%m/%Y")
-            except: ds_f = "N/A"
+                        pdf.set_y(y_start + h_row)
+                    pdf.ln(10)
 
-            # Calcul de la hauteur maximale nécessaire pour la ligne
-            # On vérifie Account et Type qui sont les plus susceptibles de déborder
-            disp_acc = sl.resolve_owner_display(r.get("Account", "Manual"))
-            txt_acc = pdf_safe_str(disp_acc, use_uni)
-            txt_type = pdf_safe_str(r.get("Type", ""), use_uni)
-
-            y_start = pdf.get_y()
-            x_start = pdf.get_x()
-
-            # Gestion du saut de page manuel si la hauteur estimée dépasse la page
-            if y_start > 180: # Marge de sécurité pour le bas de page A4 Paysage
+                # --- Page 2: Capital Global Investi ---
                 pdf.add_page()
-                y_start = pdf.get_y()
-                x_start = pdf.get_x()
-                # Répéter l'entête si nécessaire (optionnel mais recommandé pour la clarté)
+                pdf.set_font(main_font, 'B', 14)
+                pdf.cell(0, 10, "SECTION 2 : HISTORIQUE DU CAPITAL INVESTI (FIAT & REVENUS)", ln=True)
+                pdf.ln(5)
+
                 pdf.set_font(main_font, 'B', 10)
+                # Adjusting widths to avoid overlap: Type needs more space, and total must fit A4 Landscape (~277mm usable)
+                cols_f = ["Date", "Compte", "Asset", "Type", "Montant EUR", "Quantite"]
+                w_f = [25, 45, 20, 85, 40, 40] # Total: 255mm
                 for i, c in enumerate(cols_f): pdf.cell(w_f[i], 8, c, border=1, fill=True)
                 pdf.ln()
-                y_start = pdf.get_y()
+                pdf.set_font(main_font, '', 9)
+                for _, r in fiat_df.iterrows():
+                    try: ds_f = pd.to_datetime(r["Date"]).strftime("%d/%m/%Y")
+                    except: ds_f = "N/A"
+
+                    # Calcul de la hauteur maximale nécessaire pour la ligne
+                    # On vérifie Account et Type qui sont les plus susceptibles de déborder
+                    disp_acc = sl.resolve_owner_display(r.get("Account", "Manual"))
+                    txt_acc = pdf_safe_str(disp_acc, use_uni)
+                    txt_type = pdf_safe_str(r.get("Type", ""), use_uni)
+
+                    y_start = pdf.get_y()
+                    x_start = pdf.get_x()
+
+                    # Gestion du saut de page manuel si la hauteur estimée dépasse la page
+                    if y_start > 180: # Marge de sécurité pour le bas de page A4 Paysage
+                        pdf.add_page()
+                        y_start = pdf.get_y()
+                        x_start = pdf.get_x()
+                        # Répéter l'entête si nécessaire (optionnel mais recommandé pour la clarté)
+                        pdf.set_font(main_font, 'B', 10)
+                        for i, c in enumerate(cols_f): pdf.cell(w_f[i], 8, c, border=1, fill=True)
+                        pdf.ln()
+                        y_start = pdf.get_y()
+                        pdf.set_font(main_font, '', 9)
+
+                    # On simule ou on trace pour obtenir les hauteurs
+                    # Colonne 1: Date (fixe)
+                    # Colonne 2: Compte (wrap)
+                    pdf.set_xy(x_start + w_f[0], y_start)
+                    pdf.multi_cell(w_f[1], 7, txt_acc, border=0) # On trace sans bordure d'abord pour mesurer
+                    h_acc = pdf.get_y() - y_start
+
+                    # Colonne 4: Type (wrap)
+                    pdf.set_xy(x_start + w_f[0] + w_f[1] + w_f[2], y_start)
+                    pdf.multi_cell(w_f[3], 7, txt_type, border=0)
+                    h_type = pdf.get_y() - y_start
+
+                    h_row = max(h_acc, h_type, 8)
+
+                    # Maintenant on trace la ligne réelle avec la hauteur unifiée
+                    pdf.set_xy(x_start, y_start)
+                    pdf.cell(w_f[0], h_row, ds_f, border=1)
+
+                    # Compte avec multi_cell et bordure manuelle si nécessaire ou juste multi_cell
+                    pdf.set_xy(x_start + w_f[0], y_start)
+                    pdf.multi_cell(w_f[1], 7, txt_acc, border=0)
+                    # Bordure rectangulaire pour la cellule multi_cell
+                    pdf.rect(x_start + w_f[0], y_start, w_f[1], h_row)
+
+                    pdf.set_xy(x_start + w_f[0] + w_f[1], y_start)
+                    pdf.cell(w_f[2], h_row, pdf_safe_str(r.get("Asset", "EUR"), use_uni), border=1)
+
+                    pdf.set_xy(x_start + w_f[0] + w_f[1] + w_f[2], y_start)
+                    pdf.multi_cell(w_f[3], 7, txt_type, border=0)
+                    pdf.rect(x_start + w_f[0] + w_f[1] + w_f[2], y_start, w_f[3], h_row)
+
+                    pdf.set_xy(x_start + w_f[0] + w_f[1] + w_f[2] + w_f[3], y_start)
+                    pdf.cell(w_f[4], h_row, f"{r.get('Montant EUR', 0):.2f} EUR", border=1)
+                    pdf.cell(w_f[5], h_row, f"{r.get('Quantité', 0):.6f}", border=1)
+
+                    pdf.set_y(y_start + h_row)
+
+                # --- Page 3: Cessions ---
+                pdf.add_page()
+                pdf.set_font(main_font, 'B', 14)
+                pdf.cell(0, 10, "SECTION 3 : DETAIL DES CESSIONS (FORMULAIRE 2086)", ln=True)
+                pdf.ln(5)
+
+                pdf.set_font(main_font, 'B', 9)
+                cols_c = ["Date", "Asset", "Prix Cession", "VGP", "Fraction Cap.", "PV Brute"]
+                w_c = [40, 30, 50, 50, 50, 50]
+                for i, c in enumerate(cols_c): pdf.cell(w_c[i], 8, c, border=1, fill=True)
+                pdf.ln()
                 pdf.set_font(main_font, '', 9)
 
-            # On simule ou on trace pour obtenir les hauteurs
-            # Colonne 1: Date (fixe)
-            # Colonne 2: Compte (wrap)
-            pdf.set_xy(x_start + w_f[0], y_start)
-            pdf.multi_cell(w_f[1], 7, txt_acc, border=0) # On trace sans bordure d'abord pour mesurer
-            h_acc = pdf.get_y() - y_start
+                # Robust column identification for PDF
+                pc_col = 'Prix de Cession (EUR)' if 'Prix de Cession (EUR)' in bilan_df.columns else ('Prix Cession' if 'Prix Cession' in bilan_df.columns else 'VGP (EUR)')
+                vgp_col = 'VGP (EUR)' if 'VGP (EUR)' in bilan_df.columns else 'VGP'
 
-            # Colonne 4: Type (wrap)
-            pdf.set_xy(x_start + w_f[0] + w_f[1] + w_f[2], y_start)
-            pdf.multi_cell(w_f[3], 7, txt_type, border=0)
-            h_type = pdf.get_y() - y_start
+                for _, row in bilan_df.iterrows():
+                    try: ds_c = pd.to_datetime(row["Date"]).strftime("%d/%m/%Y")
+                    except: ds_c = str(row["Date"])
 
-            h_row = max(h_acc, h_type, 8)
+                    pdf.cell(w_c[0], 8, ds_c, border=1)
+                    pdf.cell(w_c[1], 8, pdf_safe_str(row["Asset"], use_uni), border=1)
+                    pdf.cell(w_c[2], 8, f"{row.get(pc_col, 0):.2f} EUR", border=1)
+                    pdf.cell(w_c[3], 8, f"{row.get(vgp_col, 0):.2f} EUR", border=1)
+                    pdf.cell(w_c[4], 8, f"{row['Fraction du Capital Consommé']:.2f} EUR", border=1)
+                    pdf.cell(w_c[5], 8, f"{row['Plus-Value Brute']:.2f} EUR", border=1)
+                    pdf.ln()
 
-            # Maintenant on trace la ligne réelle avec la hauteur unifiée
-            pdf.set_xy(x_start, y_start)
-            pdf.cell(w_f[0], h_row, ds_f, border=1)
+                # --- Page 4: Bilan Final ---
+                pdf.add_page()
+                pdf.set_font(main_font, 'B', 16)
+                pdf.cell(0, 15, "BILAN FISCAL RECAPITULATIF", ln=True, align='C')
+                pdf.ln(10)
 
-            # Compte avec multi_cell et bordure manuelle si nécessaire ou juste multi_cell
-            pdf.set_xy(x_start + w_f[0], y_start)
-            pdf.multi_cell(w_f[1], 7, txt_acc, border=0)
-            # Bordure rectangulaire pour la cellule multi_cell
-            pdf.rect(x_start + w_f[0], y_start, w_f[1], h_row)
+                pdf.set_font(main_font, 'B', 14)
+                pdf.cell(100, 12, "PLUS-VALUE BRUTE TOTALE :", border=0)
+                pdf.cell(0, 12, f"{total_pv:,.2f} EUR", border=0, ln=True, align='R')
 
-            pdf.set_xy(x_start + w_f[0] + w_f[1], y_start)
-            pdf.cell(w_f[2], h_row, pdf_safe_str(r.get("Asset", "EUR"), use_uni), border=1)
+                pdf.cell(100, 12, "IMPOT ESTIME (PFU 30%) :", border=0)
+                pdf.cell(0, 12, f"{impot:,.2f} EUR", border=0, ln=True, align='R')
 
-            pdf.set_xy(x_start + w_f[0] + w_f[1] + w_f[2], y_start)
-            pdf.multi_cell(w_f[3], 7, txt_type, border=0)
-            pdf.rect(x_start + w_f[0] + w_f[1] + w_f[2], y_start, w_f[3], h_row)
+                pdf.ln(20)
+                # If DejaVu is used, we only have Regular and Bold.
+                # Style 'I' would require DejaVuSans-Oblique.ttf
+                footer_style = 'I' if main_font == "helvetica" else ""
+                pdf.set_font(main_font, footer_style, 10)
+                pdf.multi_cell(0, 8, "Ce document est un assistant au calcul fiscal base sur les donnees fournies. Il appartient a l'utilisateur de verifier l'exactitude des montants reportes dans la declaration officielle.")
 
-            pdf.set_xy(x_start + w_f[0] + w_f[1] + w_f[2] + w_f[3], y_start)
-            pdf.cell(w_f[4], h_row, f"{r.get('Montant EUR', 0):.2f} EUR", border=1)
-            pdf.cell(w_f[5], h_row, f"{r.get('Quantité', 0):.6f}", border=1)
+                # Extraction des bytes (Directement en mémoire pour éviter les erreurs de fichier/encodage sur Windows)
+                return bytes(pdf.output())
 
-            pdf.set_y(y_start + h_row)
-
-        # --- Page 3: Cessions ---
-        pdf.add_page()
-        pdf.set_font(main_font, 'B', 14)
-        pdf.cell(0, 10, "SECTION 3 : DETAIL DES CESSIONS (FORMULAIRE 2086)", ln=True)
-        pdf.ln(5)
-
-        pdf.set_font(main_font, 'B', 9)
-        cols_c = ["Date", "Asset", "Prix Cession", "VGP", "Fraction Cap.", "PV Brute"]
-        w_c = [40, 30, 50, 50, 50, 50]
-        for i, c in enumerate(cols_c): pdf.cell(w_c[i], 8, c, border=1, fill=True)
-        pdf.ln()
-        pdf.set_font(main_font, '', 9)
-
-        # Robust column identification for PDF
-        pc_col = 'Prix de Cession (EUR)' if 'Prix de Cession (EUR)' in bilan_df.columns else ('Prix Cession' if 'Prix Cession' in bilan_df.columns else 'VGP (EUR)')
-        vgp_col = 'VGP (EUR)' if 'VGP (EUR)' in bilan_df.columns else 'VGP'
-
-        for _, row in bilan_df.iterrows():
-            try: ds_c = pd.to_datetime(row["Date"]).strftime("%d/%m/%Y")
-            except: ds_c = str(row["Date"])
-
-            pdf.cell(w_c[0], 8, ds_c, border=1)
-            pdf.cell(w_c[1], 8, pdf_safe_str(row["Asset"], use_uni), border=1)
-            pdf.cell(w_c[2], 8, f"{row.get(pc_col, 0):.2f} EUR", border=1)
-            pdf.cell(w_c[3], 8, f"{row.get(vgp_col, 0):.2f} EUR", border=1)
-            pdf.cell(w_c[4], 8, f"{row['Fraction du Capital Consommé']:.2f} EUR", border=1)
-            pdf.cell(w_c[5], 8, f"{row['Plus-Value Brute']:.2f} EUR", border=1)
-            pdf.ln()
-
-        # --- Page 4: Bilan Final ---
-        pdf.add_page()
-        pdf.set_font(main_font, 'B', 16)
-        pdf.cell(0, 15, "BILAN FISCAL RECAPITULATIF", ln=True, align='C')
-        pdf.ln(10)
-
-        pdf.set_font(main_font, 'B', 14)
-        pdf.cell(100, 12, "PLUS-VALUE BRUTE TOTALE :", border=0)
-        pdf.cell(0, 12, f"{total_pv:,.2f} EUR", border=0, ln=True, align='R')
-
-        pdf.cell(100, 12, "IMPOT ESTIME (PFU 30%) :", border=0)
-        pdf.cell(0, 12, f"{impot:,.2f} EUR", border=0, ln=True, align='R')
-
-        pdf.ln(20)
-        # If DejaVu is used, we only have Regular and Bold.
-        # Style 'I' would require DejaVuSans-Oblique.ttf
-        footer_style = 'I' if main_font == "helvetica" else ""
-        pdf.set_font(main_font, footer_style, 10)
-        pdf.multi_cell(0, 8, "Ce document est un assistant au calcul fiscal base sur les donnees fournies. Il appartient a l'utilisateur de verifier l'exactitude des montants reportes dans la declaration officielle.")
-
-        # Extraction des bytes (Directement en mémoire pour éviter les erreurs de fichier/encodage sur Windows)
-        return bytes(pdf.output())
-
-    # Explicit trigger for PDF generation to ensure data is present
-    if st.button("📊 Préparer le Rapport PDF Complet", width='stretch', key="btn_gen_pdf", disabled=is_blocked):
-        if df_bilan.empty:
-            st.error("Le bilan est vide, impossible de générer le PDF.")
-        elif is_blocked:
-            st.error("Génération impossible : des anomalies de solde subsistent.")
-        else:
-            # Clear stale cache
-            if "fiscal_pdf_bytes" in st.session_state: del st.session_state.fiscal_pdf_bytes
-
-            try:
-                # Collect fiat movements from Journal for PDF
-                journal = data.get('journal', pd.DataFrame())
-                fiat_movements = journal[journal['Chain'] == 'Fiat'] if not journal.empty else pd.DataFrame()
-
-                final_bytes = generate_fiscal_pdf_full(
-                    target_year, accounts, derived_local, df_protocols, pd.DataFrame(), fiat_movements,
-                    df_bilan, total_pv, impot
-                )
-                # Convert to bytes if it came as string/bytearray
-                if not isinstance(final_bytes, bytes):
-                    final_bytes = bytes(final_bytes)
-
-                if len(final_bytes) > 1000:
-                    st.session_state.fiscal_pdf_bytes = final_bytes
-                    st.success(f"Rapport complet prêt ({len(final_bytes)} octets).")
-                    st.rerun()
+            # Explicit trigger for PDF generation to ensure data is present
+            if st.button("📊 Préparer le Rapport PDF Complet", width='stretch', key="btn_gen_pdf", disabled=is_blocked):
+                if df_bilan.empty:
+                    st.error("Le bilan est vide, impossible de générer le PDF.")
+                elif is_blocked:
+                    st.error("Génération impossible : des anomalies de solde subsistent.")
                 else:
-                    st.error("Erreur : Le PDF généré est anormalement court.")
-            except Exception as e:
-                st.error(f"Erreur de génération : {e}")
-                st.expander("Détails technique de l'erreur").code(traceback.format_exc())
+                    # Clear stale cache
+                    if "fiscal_pdf_bytes" in st.session_state: del st.session_state.fiscal_pdf_bytes
 
-    if "fiscal_pdf_bytes" in st.session_state:
-        st.download_button(
-            "📄 Télécharger le Rapport Fiscal PDF",
-            data=st.session_state.fiscal_pdf_bytes,
-            file_name=f"Rapport_Fiscal_{target_year}.pdf",
-                mime="application/pdf",
-                width='stretch'
-            )
-    else:
-        st.info("Réalisez le calcul dans l'onglet 'Cessions' pour voir le bilan.")
+                    try:
+                        # Collect fiat movements from Journal for PDF
+                        journal = data.get('journal', pd.DataFrame())
+                        fiat_movements = journal[journal['Chain'] == 'Fiat'] if not journal.empty else pd.DataFrame()
 
+                        final_bytes = generate_fiscal_pdf_full(
+                            target_year, accounts, derived_local, df_protocols, pd.DataFrame(), fiat_movements,
+                            df_bilan, total_pv, impot
+                        )
+                        # Convert to bytes if it came as string/bytearray
+                        if not isinstance(final_bytes, bytes):
+                            final_bytes = bytes(final_bytes)
+
+                        if len(final_bytes) > 1000:
+                            st.session_state.fiscal_pdf_bytes = final_bytes
+                            st.success(f"Rapport complet prêt ({len(final_bytes)} octets).")
+                            st.rerun()
+                        else:
+                            st.error("Erreur : Le PDF généré est anormalement court.")
+                    except Exception as e:
+                        st.error(f"Erreur de génération : {e}")
+                        st.expander("Détails technique de l'erreur").code(traceback.format_exc())
+
+            if "fiscal_pdf_bytes" in st.session_state:
+                st.download_button(
+                    "📄 Télécharger le Rapport Fiscal PDF",
+                    data=st.session_state.fiscal_pdf_bytes,
+                    file_name=f"Rapport_Fiscal_{target_year}.pdf",
+                        mime="application/pdf",
+                        width='stretch'
+                    )
 st.sidebar.divider()
 st.sidebar.caption("Fiscalité v1.0 - app3")

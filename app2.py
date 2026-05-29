@@ -174,10 +174,10 @@ def merge_raw_data(year):
             # STABILITY: Content-based hash instead of index-based
             tx_h = str(r.get("Tx_Hash", r.get("Tx Hash", "")))
             if not tx_h or tx_h == "nan" or "MANUAL" in tx_h:
-                # We use date, account, asset, amount to create a stable ID
+                # We use date, account, asset, amount and row index to create a unique stable ID
                 dt_s = str(r.get("Date", ""))
                 acc_s = str(r.get("Account", ""))
-                tx_h = f"MANUAL_FIAT_{dt_s}_{acc_s}_{ast_val}_{qty_val}"
+                tx_h = f"MANUAL_FIAT_{dt_s}_{acc_s}_{ast_val}_{qty_val}_{idx}"
 
             rows.append({
                 "Date": pd.to_datetime(r.get("Date"), utc=True),
@@ -188,7 +188,8 @@ def merge_raw_data(year):
                 "Counterparty": str(r.get("Counterparty", "Banque")),
                 "Type": "Fiat Move", "Source_Way": "Manuel", "Audit_Status": "Valide",
                 "Category": op_type if op_type else "Achat",
-                "Imposable": r.get("Imposable", False)
+                "Imposable": r.get("Imposable", False),
+                "Acquisition": r.get("Acquisition", False)
             })
 
     # 2b. Source Manuelle (Swaps & Internes)
@@ -201,7 +202,7 @@ def merge_raw_data(year):
                 dt_s = str(r.get("Date", ""))
                 acc_s = str(r.get("Account", ""))
                 amt_s = str(r.get("Amount", ""))
-                tx_h = f"MANUAL_SWAP_{dt_s}_{acc_s}_{amt_s}"
+                tx_h = f"MANUAL_SWAP_{dt_s}_{acc_s}_{amt_s}_{idx}"
 
             rows.append({
                 "Date": pd.to_datetime(r.get("Date"), utc=True),

@@ -21,7 +21,7 @@ with st.sidebar:
     target_year = st.session_state.get("_hub_target_year")
     if target_year is None:
         g_conf = sl.load_global_config()
-        target_year = g_conf.get("processing_year") or datetime.now().year
+        target_year = g_conf.get("appPropri_year") or g_conf.get("processing_year") or datetime.now().year
         st.session_state["_hub_target_year"] = target_year
 
     st.write(f"📅 Année active : **{target_year}**")
@@ -49,27 +49,39 @@ with st.sidebar:
 
 @st.cache_data
 def get_cessions_summary(year, df_j):
-    """Calculates VGP for all unique cession dates found in the journal."""
+    """Calculates VGP for all unique cession transactions found in the journal for the target year."""
     if df_j.empty: return pd.DataFrame()
 
-    # Identify Cessions: STRICT Logic (Must be imposable)
-    mask_cess = df_j.apply(sl.is_cession_imposable_robust, axis=1)
-    cess_dates = sorted(df_j[mask_cess]["Date"].dt.date.unique(), reverse=True)
+    # Identify Cessions: STRICT Logic (Must be imposable AND in target year)
+    mask_cess = df_j.apply(sl.is_cession_imposable_robust, axis=1) & (df_j["Date"].dt.year == year)
+    cess_entries = df_j[mask_cess].sort_values("Date", ascending=False)
 
     # Add EOY
-    eoy_d = datetime(year, 12, 31).date()
-    all_dates = sorted(list(set(list(cess_dates) + [eoy_d])), reverse=True)
+    # Ensure tz awareness for eoy_d if df_j is tz-aware
+    tz = df_j["Date"].dt.tzinfo if not df_j.empty else None
+    eoy_d = datetime(year, 12, 31, 23, 59, 59, tzinfo=tz)
 
-    summary_data = []
-    for d in all_dates:
-        dt_obj = datetime.combine(d, datetime.max.time())
-        # Robust Unpacking (handles 2 return values)
-        snap_res = sl.get_portfolio_snapshot(year, dt_obj, df_override=df_j)
+    snap_res_eoy = sl.get_portfolio_snapshot(year, eoy_d, df_override=df_j)
+    vgp_eoy = snap_res_eoy[1] if isinstance(snap_res_eoy, tuple) else 0.0
+
+    summary_data = [{
+        "Date": eoy_d.date(),
+        "Asset": "---",
+        "Quantité": 0.0,
+        "Événement": "🏁 Bilan Fin d'année",
+        "VGP (€)": vgp_eoy
+    }]
+
+    for _, row in cess_entries.iterrows():
+        # VGP at the moment of cession
+        snap_res = sl.get_portfolio_snapshot(year, row["Date"], df_override=df_j)
         vgp_val = snap_res[1] if isinstance(snap_res, tuple) else 0.0
 
         summary_data.append({
-            "Date": d,
-            "Événement": "🏁 Fin d'année" if d == eoy_d else "📉 Cession Imposable",
+            "Date": row["Date"].date(),
+            "Asset": row["Asset"],
+            "Quantité": abs(row["Amount"]),
+            "Événement": "📉 Cession Imposable",
             "VGP (€)": vgp_val
         })
     return pd.DataFrame(summary_data)
@@ -97,20 +109,31 @@ def get_unified_inventory(year, t_date):
         return f"Protocole: {loc}"
     res["Emplacement"] = res["Emplacement"].apply(clean_loc)
 
+    # Calculation of QTD (Algebraic sum of movements)
+    # The user defined QTD as "Quantité d’actifs en propriété = Entrées – sorties"
+    # Which corresponds to 'Solde Actuel' in our snapshot.
+    # We add PMP (Prix Moyen Pondéré) = Capital / QTD.
+    # But for a specific asset, we need the local acquisition base.
+
     # Final ordering for requested view
     cols = ["Asset", "Emplacement", "Solde N-1 (Report)", "Mvts Entrants", "Mvts Sortants", "Solde Actuel", "Prix (€)", "Valeur (€)"]
-    return res[cols + [c for c in res.columns if c not in cols]]
+    res = res[cols + [c for c in res.columns if c not in cols]]
+    res = res.rename(columns={"Solde Actuel": "QTD (Quantité)"})
+    return res
 
 # --- Main Dashboard ---
 
-t_dashboard, t_acq, t_audit = st.tabs(["📊 Dashboard VGP", "💰 Historique Acquisitions", "🕵️ Audit Cessions"])
+t_dashboard, t_caisse, t_acq, t_audit = st.tabs([
+    "📊 Dashboard VGP",
+    "📅 Journal de Caisse Fiscal",
+    "💰 Historique Acquisitions",
+    "🕵️ Audit Cessions"
+])
 
-j_full_path = sl.get_file_path(target_year, 'qualified_full')
-if not os.path.exists(j_full_path):
-    df_j = pd.DataFrame()
-else:
-    df_j = sl.pd_read_csv_safe(j_full_path)
-    df_j["Date"] = pd.to_datetime(df_j["Date"], utc=True)
+# GATEWAY: Consommer la totalité des mouvements qualifiés (FULL) pour l'audit et le calcul VGP
+# On charge l'historique complet pour garantir que les soldes sont exacts
+df_j = sl.load_clean_history(target_year)
+if not df_j.empty:
     df_j["Imposable"] = df_j["Imposable"].apply(sl.is_imposable_robust)
 
 with t_dashboard:
@@ -143,14 +166,23 @@ with t_dashboard:
         # Calculation of Capital Investi (A) - Now filtered for Valid Assets and date
         total_a, df_a_details = sl.get_total_acquisition_value(target_year, return_details=True, until_date=target_date)
 
-        # Portfolio VGP (excluding non-taxable assets like EUR)
+        # Portfolio VGP (Market Value) - Per Art. 150 VH bis, excludes EUR.
+        # But we must ensure it includes ALL property accounts (already handled by sl.get_portfolio_snapshot)
         mask_vgp = (inventory["Asset"].str.upper() != "EUR")
         total_vgp = inventory[mask_vgp]["Valeur (€)"].sum()
+
+        # Global PMP = VGP / QTD (Weighted average of the whole portfolio)
+        # However, summing QTD across different assets isn't always meaningful.
+        # But we can provide the VGP/Capital ratio.
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Valeur de Marché (VGP)", f"{total_vgp:,.2f} €", help="Valeur totale du portefeuille aux cours du jour (Art. 150 VH bis).")
         c2.metric("Capital Global Investi (A)", f"{total_a:,.2f} €", help="Cumul des Euros investis pour l'achat d'actifs numériques.")
-        c3.metric("Performance Latente", f"{total_vgp - total_a:,.2f} €")
+
+        # Performance Indicators
+        perf_abs = total_vgp - total_a
+        pmp_global = total_a / total_vgp if total_vgp > 0 else 0.0
+        c3.metric("Performance Latente", f"{perf_abs:,.2f} €", delta=f"{pmp_global:.2%}" if total_vgp > 0 else None, help="Delta entre Valeur de Marché et Capital Investi.")
 
         st.write("**Détail des soldes par compte :**")
 
@@ -175,13 +207,13 @@ with t_dashboard:
                 "Solde N-1 (Report)": st.column_config.NumberColumn(format="%.6f", disabled=True),
                 "Mvts Entrants": st.column_config.NumberColumn(format="%.6f", disabled=True),
                 "Mvts Sortants": st.column_config.NumberColumn(format="%.6f", disabled=True),
-                "Solde Actuel": st.column_config.NumberColumn("📦 Solde (Calculé)", format="%.6f", disabled=True),
-                "Solde Corrigé": st.column_config.NumberColumn("🛠️ Solde Réel", format="%.6f", help="Forcez le solde si le calcul automatique est incomplet."),
+                "QTD (Quantité)": st.column_config.NumberColumn("📦 QTD (Calculée)", format="%.6f", disabled=True),
+                "Solde Corrigé": st.column_config.NumberColumn("🛠️ QTD Réelle", format="%.6f", help="Forcez le solde si le calcul automatique est incomplet."),
                 "Prix (€)": st.column_config.NumberColumn(format="%.4f €"),
                 "Valeur (€)": st.column_config.NumberColumn(format="%.2f €", disabled=True),
                 "Commentaires": st.column_config.TextColumn("📝 Commentaire", width="medium"),
             },
-            disabled=["Asset", "Emplacement", "Solde N-1 (Report)", "Mvts Entrants", "Mvts Sortants", "Solde Actuel", "Valeur (€)"],
+            disabled=["Asset", "Emplacement", "Solde N-1 (Report)", "Mvts Entrants", "Mvts Sortants", "QTD (Quantité)", "Valeur (€)"],
             width='stretch', hide_index=True, key="unified_control_editor"
         )
 
@@ -198,6 +230,112 @@ with t_dashboard:
             sl.save_manual_notes(new_notes)
             st.success("Corrections sauvegardées.")
             st.rerun()
+
+with t_caisse:
+    st.subheader(f"📅 Journal de Caisse Fiscal ({target_year})")
+    st.info("Suivi quotidien des flux valorisés par catégorie (Acquisitions, Cessions, Intérêts, Bonus).")
+
+    if not df_j.empty:
+        # Preparation of Daily Data
+        df_c = df_j.copy()
+        df_c["Date_Day"] = df_c["Date"].dt.date
+
+        # 1. Acquisitions (Fiat/Way 3 marked as Acquisition)
+        mask_acq = df_c["Category"].str.contains("Achat|Capital", case=False, na=False) | df_c.get("Acquisition", False)
+
+        # 2. Cessions
+        mask_cess = df_c.apply(sl.is_cession_imposable_robust, axis=1)
+
+        # 3. Intérêts
+        mask_int = df_c["Category"].str.contains("Intérêt|Revenu", case=False, na=False)
+
+        # 4. Bonus
+        mask_bon = df_c["Category"].str.contains("Bonus", case=False, na=False)
+
+        # Helper for EUR valuation
+        def get_eur_val(r):
+            if "Prix de Cession (EUR)" in r and float(r["Prix de Cession (EUR)"]) > 0:
+                return float(r["Prix de Cession (EUR)"])
+            v_usd = float(r.get("Valeur $", 0.0))
+            if v_usd > 0: return v_usd * sl.get_fiat_rate("USD", r["Date"])
+            return abs(float(r["Amount"])) * sl.get_price_eur(r["Asset"], r["Date"])
+
+        # Create Category Flags for grouping
+        df_c["Val_EUR"] = df_c.apply(get_eur_val, axis=1)
+        df_c["Cat_Type"] = "Autre"
+        df_c.loc[mask_acq, "Cat_Type"] = "Acquisition"
+        df_c.loc[mask_cess, "Cat_Type"] = "Cession"
+        df_c.loc[mask_int, "Cat_Type"] = "Intérêt"
+        df_c.loc[mask_bon, "Cat_Type"] = "Bonus"
+
+        # Aggregate daily
+        daily_agg = df_c[df_c["Cat_Type"] != "Autre"].groupby(["Date_Day", "Cat_Type"])["Val_EUR"].sum().unstack(fill_value=0.0).reset_index()
+
+        # Ensure all columns exist
+        for c in ["Acquisition", "Cession", "Intérêt", "Bonus"]:
+            if c not in daily_agg.columns: daily_agg[c] = 0.0
+
+        # Sort by date for cumulative calculations
+        daily_agg = daily_agg.sort_values("Date_Day")
+
+        # Daily VGP and QTD (Simulated by Snapshot at End of Day)
+        # (This can be heavy, so we might want to optimize if performance is an issue)
+        with st.spinner("Calcul des indicateurs quotidiens..."):
+            daily_agg["VGP Globale"] = daily_agg["Date_Day"].apply(lambda d: sl.get_portfolio_snapshot(target_year, datetime.combine(d, datetime.max.time()), df_override=df_j)[1])
+
+        # Cumulative Columns
+        daily_agg["Cumul Acq."] = daily_agg["Acquisition"].cumsum()
+        daily_agg["Cumul Cess."] = daily_agg["Cession"].cumsum()
+        daily_agg["Cumul Int."] = daily_agg["Intérêt"].cumsum()
+        daily_agg["Cumul Bon."] = daily_agg["Bonus"].cumsum()
+
+        # Net Wealth Indicator (Acquisitions + Rewards - Consumed Capital Proxy)
+        # Note: Capital A calculation is better handled by sl.calculate_fiscal_gains
+
+        st.dataframe(
+            daily_agg.sort_values("Date_Day", ascending=False),
+            column_config={
+                "Date_Day": "Date",
+                "Acquisition": st.column_config.NumberColumn(format="%.2f €"),
+                "Cession": st.column_config.NumberColumn(format="%.2f €"),
+                "Intérêt": st.column_config.NumberColumn(format="%.2f €"),
+                "Bonus": st.column_config.NumberColumn(format="%.2f €"),
+                "VGP Globale": st.column_config.NumberColumn("VGP Marché", format="%.2f €"),
+                "Cumul Acq.": st.column_config.NumberColumn("Σ Acq.", format="%.2f €"),
+                "Cumul Cess.": st.column_config.NumberColumn("Σ Cess.", format="%.2f €"),
+            },
+            width='stretch', hide_index=True
+        )
+
+        csv_caisse = daily_agg.to_csv(index=False, encoding="utf-8-sig")
+        st.download_button("📥 Exporter Journal de Caisse (CSV)", data=csv_caisse, file_name=f"caisse_fiscale_{target_year}.csv", width='stretch')
+
+        st.divider()
+        st.subheader("📊 Bilan Annuel par Catégorie")
+
+        # Yearly Totals
+        ann_acq = daily_agg["Acquisition"].sum()
+        ann_int = daily_agg["Intérêt"].sum()
+        ann_bon = daily_agg["Bonus"].sum()
+        ann_cess = daily_agg["Cession"].sum()
+
+        # Calculate Report N-1 (Historical total before this year)
+        hist_acq_before = sl.get_total_acquisition_value(target_year - 1)
+
+        # Note: consumed capital needs the fiscal engine results if we want to be exact here
+        # But we can show the "Gross Contribution" to Capital A for the year
+
+        c_bil1, c_bil2, c_bil3, c_bil4 = st.columns(4)
+        c_bil1.metric("Acquisitions (Fiat)", f"{ann_acq:,.2f} €")
+        c_bil2.metric("Intérêts (Staking)", f"{ann_int:,.2f} €")
+        c_bil3.metric("Bonus (Airdrops)", f"{ann_bon:,.2f} €")
+        c_bil4.metric("Total Cessions", f"{ann_cess:,.2f} €")
+
+        st.info(f"💡 **Note sur le Report :** Le Capital Global Investi (A) au 01/01/{target_year} était de **{hist_acq_before:,.2f} €**. "
+                f"Les apports de cette année (Acq + Int + Bon = {ann_acq+ann_int+ann_bon:,.2f} €) s'y ajoutent pour former la base imposable dynamic.")
+
+    else:
+        st.warning("Aucune donnée qualifiée pour générer le journal de caisse.")
 
 with t_acq:
     st.subheader("💵 Historique Détaillé des Acquisitions (Fiat)")
@@ -251,18 +389,22 @@ with t_audit:
         if st.button("💾 Sauvegarder les Qualifications (Audit)", type="primary"):
             # Update df_j with edits from edited_audit
             # We match on Tx Hash, Asset and Account
-            for idx, row in edited_audit.iterrows():
-                # Find corresponding row in df_j
-                mask = (df_j["Tx_Hash"] == row["Tx_Hash"]) & (df_j["Asset"] == row["Asset"]) & (df_j["Account"] == row["Account"])
-                if mask.any():
-                    df_j.loc[mask, "Imposable"] = row["Imposable"]
-                    df_j.loc[mask, "Category"] = row["Category"]
+            j_full_path = sl.get_file_path(target_year, 'qualified_full')
+            # Load full to preserve all years data if load_clean_history merged them
+            df_save = sl.pd_read_csv_safe(j_full_path)
+            if not df_save.empty:
+                for idx, row in edited_audit.iterrows():
+                    # Find corresponding row in df_save
+                    mask = (df_save["Tx_Hash"] == row["Tx_Hash"]) & (df_save["Asset"] == row["Asset"]) & (df_save["Account"] == row["Account"])
+                    if mask.any():
+                        df_save.loc[mask, "Imposable"] = row["Imposable"]
+                        df_save.loc[mask, "Category"] = row["Category"]
 
-            df_j.to_csv(j_full_path, index=False, encoding="utf-8-sig")
-            clean_path = sl.get_file_path(target_year, 'qualified_clean')
-            sl.apply_spam_filter(df_j, drop=True).to_csv(clean_path, index=False, encoding="utf-8-sig")
-            st.success("Journaux mis à jour.")
-            st.rerun()
+                df_save.to_csv(j_full_path, index=False, encoding="utf-8-sig")
+                clean_path = sl.get_file_path(target_year, 'qualified_clean')
+                sl.apply_spam_filter(df_save, drop=True).to_csv(clean_path, index=False, encoding="utf-8-sig")
+                st.success("Journaux mis à jour.")
+                st.rerun()
 
 st.sidebar.divider()
 st.sidebar.caption("Voie de Contrôle VGP v3.3 - appPropri")

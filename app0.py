@@ -325,7 +325,7 @@ def fragment_fiat():
 
     df_fiat = df_fiat.reset_index(drop=True)
     edited_df = st.data_editor(
-        df_fiat.style.apply(style_fiat, axis=1),
+        df_fiat,
         column_config={
             "Mod.": st.column_config.CheckboxColumn("Mod.", default=False),
             "Date": st.column_config.DateColumn("🗓️ Date", required=True),
@@ -674,7 +674,7 @@ def fragment_swaps():
 
     df_swaps = df_swaps.reset_index(drop=True)
     edited_df = st.data_editor(
-        df_swaps.style.apply(style_swaps, axis=1),
+        df_swaps,
         column_config={
             "Mod.": st.column_config.CheckboxColumn("Mod.", default=False),
             "Date": st.column_config.DateColumn("Date", required=True),

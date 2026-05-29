@@ -253,6 +253,7 @@ menu_options = {
     "🚜 Step 1: Harvest (app)": "app",
     "🏦 Step 0: Registre Manuel (app0)": "app0",
     "⚖️ Step 2: Qualification (app2)": "app2",
+    "🎁 Step 2b: Intérêts & Bonus (appInteretBonus)": "appInteretBonus",
     "🧮 Step 3a: Calcul VGP (app2VGP)": "app2VGP",
     "👤 Step 3b: Dashboard Patrimoine (appPropri)": "appPropri",
     "🏛️ Step 3c: Fiscalité (app3)": "app3",
@@ -487,7 +488,7 @@ elif menu == "live_harvest":
             st.session_state.accounts_metadata = {}; st.rerun()
 
 # --- Integrated Module Loading ---
-elif menu in ["app", "app0", "app1", "app2", "app2VGP", "appPropri", "app3", "appDiagCoh", "appPriceFix"]:
+elif menu in ["app", "app0", "app1", "app2", "appInteretBonus", "app2VGP", "appPropri", "app3", "appDiagCoh", "appPriceFix"]:
     module_name = menu
     try:
         st.info(f"Chargement du module `{module_name}.py`...")

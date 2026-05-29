@@ -17,6 +17,7 @@ SPAM_FILE = "spam_blacklist.json"
 NOTES_FILE = "manual_notes.json"
 VALID_ASSETS_FILE = "valid_assets.json"
 GLOBAL_CONFIG_FILE = "global_config.json"
+BONUS_TOKENS_FILE = "bonus_tokens.json"
 
 # --- Configuration Management ---
 
@@ -104,34 +105,30 @@ def is_imposable_robust(val):
 
 def is_cession_imposable_robust(row):
     """
-    Unified detection for imposable cessions:
-    1. Not Spam
-    2. Not a duplicate to ignore
-    3. MUST BE an outflow (Amount < 0)
-    4. MUST NOT be EUR
-    5. Marked 'Imposable' OR Category contains 'Vente' or 'Cession'
+    Unified detection for imposable cessions (Art 150 VH bis):
+    1. Not Spam / Not Duplicate
+    2. MUST BE an outflow (Amount < 0)
+    3. MUST NOT be EUR
+    4. MUST BE Marked 'Imposable' (Explicit decision)
+    Note: Category contains 'Vente' is used as a suggestion but 'Imposable' flag is the final authority.
     """
-    # Filter 1 & 2: Audit status and duplicates
+    # Filter 1: Audit status and duplicates
     status = str(row.get("Audit_Status", row.get("Status", ""))).lower().strip()
     if status == "spam": return False
 
     cat = str(row.get("Category", "")).lower().strip()
     if "doublon" in cat: return False
 
-    # Filter 3: Direction (Only outflows are cessions)
+    # Filter 2: Direction (Only outflows are cessions)
     amt = float(row.get("Amount", 0))
     if amt >= 0: return False
 
-    # Filter 4: Asset
+    # Filter 3: Asset (EUR is not a digital asset for tax purposes)
     asset = str(row.get("Asset", "")).upper().strip()
     if asset == "EUR": return False
 
-    # Filter 5: Qualification
-    is_imp = is_imposable_robust(row.get("Imposable", False))
-    if is_imp: return True
-    if "vente" in cat or "cession" in cat: return True
-
-    return False
+    # Filter 4: Qualification (Explicit decision)
+    return is_imposable_robust(row.get("Imposable", False))
 
 def is_achat_fiat_robust(row):
     """Detection for fiat acquisitions (Achat)."""
@@ -351,6 +348,20 @@ def standardize_address_string(addr_str):
         elif p2.lower().startswith("0x"): raw, name = p2.lower(), p1
         else: raw, name = p1, p2
     return format_owner_display(raw, name)
+
+@st.cache_data(ttl=600)
+def load_bonus_tokens():
+    if os.path.exists(BONUS_TOKENS_FILE):
+        try:
+            with open(BONUS_TOKENS_FILE, "r", encoding="utf-8") as f:
+                return {str(x).upper().strip() for x in json.load(f)}
+        except: pass
+    return set()
+
+def save_bonus_tokens(tokens_set):
+    with open(BONUS_TOKENS_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(list(tokens_set)), f, indent=4)
+    st.cache_data.clear()
 
 @st.cache_data(ttl=600)
 def load_manual_notes():
@@ -575,10 +586,9 @@ def get_fiat_inflow_mask(df):
 
 def get_total_acquisition_value(year, return_details=False, until_date=None):
     """
-    STRICT Acquisition Engine:
-    Calculates cumulative sum of all fiat acquisitions (Amount EUR).
-    Filters ONLY for Valid Assets (stable and coins) being purchased.
-    If until_date is provided, only acquisitions up to that date are counted.
+    STRICT Acquisition Engine (Art 150 VH bis extended):
+    Calculates cumulative sum of all fiat acquisitions (Amount EUR)
+    AND rewards (Interests/Bonus) at their market value at reception.
     """
     config = load_global_config()
     start = int(config.get("start_year") or 2021)
@@ -590,58 +600,103 @@ def get_total_acquisition_value(year, return_details=False, until_date=None):
         until_date = pd.to_datetime(until_date, utc=True)
 
     for y in range(start, year + 1):
-        p = get_file_path(y, 'fiat')
-        if os.path.exists(p):
-            df = pd_read_csv_safe(p)
-            if not df.empty:
-                # Ensure Date is datetime for filtering
-                df["Date"] = pd.to_datetime(df["Date"], utc=True, errors='coerce')
-                df = df.dropna(subset=["Date"])
+        # 1. Fiat Acquisitions from Step 0
+        p_fiat = get_file_path(y, 'fiat')
+        if os.path.exists(p_fiat):
+            df_f = pd_read_csv_safe(p_fiat)
+            if not df_f.empty:
+                df_f["Date"] = pd.to_datetime(df_f["Date"], utc=True, errors='coerce')
+                df_f = df_f.dropna(subset=["Date"])
+                mask_acq = get_fiat_inflow_mask(df_f)
+                mask_valid = df_f["Asset"].str.upper().isin(valid_assets)
+                mask_date = (df_f["Date"] <= until_date) if until_date else pd.Series([True] * len(df_f))
 
-                # 1. Detect acquisition rows
-                mask_fiat = get_fiat_inflow_mask(df)
-
-                # 2. Filter for Valid Assets only
-                mask_valid = df["Asset"].str.upper().isin(valid_assets)
-
-                # 3. Filter by date if requested
-                if until_date:
-                    mask_date = (df["Date"] <= until_date)
-                else:
-                    mask_date = pd.Series([True] * len(df))
-
-                df_purchases = df[mask_fiat & mask_valid & mask_date].copy()
-
+                df_purchases = df_f[mask_acq & mask_valid & mask_date].copy()
                 if not df_purchases.empty:
                     amt_col = "Montant EUR" if "Montant EUR" in df_purchases.columns else "Amount"
                     df_purchases["_val_eur"] = pd.to_numeric(df_purchases[amt_col], errors="coerce").fillna(0.0).abs()
                     total += df_purchases["_val_eur"].sum()
-                    if return_details:
-                        details.append(df_purchases)
+                    if return_details: details.append(df_purchases)
+
+        # 2. Rewards (Interests/Bonus) from Journal Step 2
+        p_qual = get_file_path(y, 'qualified_clean')
+        if os.path.exists(p_qual):
+            df_q = pd_read_csv_safe(p_qual)
+            if not df_q.empty:
+                df_q["Date"] = pd.to_datetime(df_q["Date"], utc=True, errors='coerce')
+                df_q = df_q.dropna(subset=["Date"])
+
+                # Filter for categories that contribute to Capital A
+                mask_rew = df_q["Category"].str.contains("Intérêt|Bonus|Revenu", case=False, na=False)
+                mask_date = (df_q["Date"] <= until_date) if until_date else pd.Series([True] * len(df_q))
+
+                df_rewards = df_q[mask_rew & mask_date].copy()
+                if not df_rewards.empty:
+                    # Calculate Market Value at reception if not already present
+                    # We use Valeur $ / EUR conversion as a robust proxy
+                    def get_rew_eur(r):
+                        v_usd = float(r.get("Valeur $", 0.0))
+                        if v_usd > 0:
+                            return v_usd * get_fiat_rate("USD", r["Date"])
+                        # Fallback: Historical price
+                        return abs(float(r["Amount"])) * get_price_eur(r["Asset"], r["Date"])
+
+                    df_rewards["_val_eur"] = df_rewards.apply(get_rew_eur, axis=1)
+                    df_rewards["Montant EUR"] = df_rewards["_val_eur"] # Unify for details table
+                    total += df_rewards["_val_eur"].sum()
+                    if return_details: details.append(df_rewards)
 
     if return_details:
         return total, (pd.concat(details) if details else pd.DataFrame())
     return total
 
-def calculate_fiscal_gains(cessions_df, total_acq_price):
-    """Applies Art 150 VH bis gain formula: Gain = P_vente - (P_acq_total * (P_vente / VGP))."""
-    if cessions_df.empty: return pd.DataFrame(), 0.0
-    df = cessions_df.copy()
+def get_cumulative_consumed_capital(until_year):
+    """Calculates the sum of all consumed capital fractions (abattements) until the end of until_year."""
+    config = load_global_config()
+    start = int(config.get("start_year") or 2021)
+    total_consumed = 0.0
+    for y in range(start, until_year + 1):
+        p = get_file_path(y, 'qualified_clean')
+        if os.path.exists(p):
+            df = pd_read_csv_safe(p)
+            if not df.empty and "Fraction du Capital Consommé" in df.columns:
+                total_consumed += pd.to_numeric(df["Fraction du Capital Consommé"], errors='coerce').fillna(0.0).sum()
+    return total_consumed
 
-    # Required columns for display/logic
+def calculate_fiscal_gains(cessions_df, year):
+    """
+    Applies Art 150 VH bis gain formula: Gain = P_vente - (Acq_Price_Total * (P_vente / VGP)).
+    Acq_Price_Total = (Cumulative Acquisitions up to date) - (Cumulative Consumed Fractions from previous years and previous cessions of current year).
+    """
+    if cessions_df.empty: return pd.DataFrame(), 0.0
+
+    # Ensure chronological order for sequential gain calculation
+    df = cessions_df.sort_values("Date", ascending=True).copy()
+
     p_vent_col = "Prix de Cession (EUR)" if "Prix de Cession (EUR)" in df.columns else "VGP (EUR)"
     vgp_col = "VGP (EUR)"
 
     df["Plus-Value Brute"] = 0.0
     df["Fraction du Capital Consommé"] = 0.0
+    df["Capital_A_Instantane"] = 0.0
 
-    current_acq_base = float(total_acq_price)
+    # Initialize with previously consumed capital from older years
+    cumulative_consumed = get_cumulative_consumed_capital(year - 1)
 
     for idx, row in df.iterrows():
         p_vent = float(row.get(p_vent_col, 0.0))
         vgp = float(row.get(vgp_col, 0.0))
+        d_date = row["Date"]
+
+        # 1. Total historical acquisitions (Fiat + Rewards) up to this cession date
+        raw_acq_total = get_total_acquisition_value(year, until_date=d_date)
+
+        # 2. Dynamic Capital A = Current historical total - what was already "consumed" by previous cessions
+        current_acq_base = max(0.0, raw_acq_total - cumulative_consumed)
+        df.at[idx, "Capital_A_Instantane"] = current_acq_base
 
         if vgp > 0:
+            # Art 150 VH bis Formula
             fraction = p_vent / vgp
             abattement = current_acq_base * fraction
             gain = p_vent - abattement
@@ -649,10 +704,19 @@ def calculate_fiscal_gains(cessions_df, total_acq_price):
             df.at[idx, "Plus-Value Brute"] = gain
             df.at[idx, "Fraction du Capital Consommé"] = abattement
 
-            # Update base (Art 150 VH bis: acquisition price is reduced by the fraction used)
-            current_acq_base -= abattement
+            # Update consumed total for the next cession in the sequence
+            cumulative_consumed += abattement
 
-    return df, current_acq_base
+    # Return chronological or reversed? Usually bilan is chronological but UI often reversed.
+    # We keep it as processed (chrono) and let UI sort it.
+
+    # Calculate final remaining capital at the end of the period
+    final_raw_total = get_total_acquisition_value(year)
+    # Important: final_raw_total is the historical cumulative sum of all acquisitions.
+    # cumulative_consumed is also historical cumulative sum of all consumed fractions.
+    final_capital_restant = max(0.0, final_raw_total - cumulative_consumed)
+
+    return df, final_capital_restant
 
 def get_journal_prices(df_h, target_date=None):
     """Extracts the most recent prices in EUR from the journal, prioritizing Position rows at target_date."""
@@ -748,11 +812,11 @@ def get_portfolio_snapshot(year, target_date, df_override=None, force_full=False
                               (df_j["Source_Way"].isin(["Way_3", "Manuel", "Voie 3", "Import"]))
         df_j = df_j[~mask_eura_redundant]
 
-        # ANTI-REDUNDANCY: Exclude Snapshot/Position rows from algebraic sum
-        # These rows represent a state, not a movement. Including them in sum would double-count.
-        # They are still used by get_journal_prices for valuation.
-        mask_snapshot = df_j["Type"].fillna("").str.contains("Position|Snapshot|Initial", case=False, na=False)
-        df_j = df_j[~mask_snapshot]
+        # ANTI-REDUNDANCY: Exclude Snapshot/Position rows from algebraic sum IF they are from automated harvests (Way_1/2)
+        # However, Manual positions from app0 (Way_3/Manuel) are intended as starting points or corrections.
+        mask_auto_snapshot = (df_j["Type"].fillna("").str.contains("Position|Snapshot|Initial", case=False, na=False)) & \
+                             (~df_j["Source_Way"].isin(["Way_3", "Manuel", "Voie 3", "Import"]))
+        df_j = df_j[~mask_auto_snapshot]
 
         # Filter for Valid Assets
         df_j = df_j[df_j["Asset"].str.upper().isin(valid_assets)]
@@ -805,29 +869,10 @@ def get_portfolio_snapshot(year, target_date, df_override=None, force_full=False
         # Otherwise, if we have an inflow without a matching outflow (internal transfer),
         # it's likely a redundancy from multiple harvests (e.g., CEX buy appearing on-chain but already in manual fiat).
 
-        # --- WEALTH PROTECTION LOGIC ---
-        # Any movement that is NOT an explicit Acquisition or a Portfolio Position
-        # must be balanced in the global "Patrimoine" referential to avoid redundancy.
-
-        # Identify rows that are NOT wealth entries
-        mask_not_wealth = (~df_full_mvt["Category"].str.contains("Achat|Position|Snapshot", case=False, na=False)) & \
-                          (~df_full_mvt.get("Acquisition", pd.Series([False]*len(df_full_mvt))).apply(is_imposable_robust))
-
-        df_to_compensate = df_full_mvt[mask_not_wealth].copy()
-
-        if not df_to_compensate.empty:
-            df_wealth_comp = df_to_compensate.copy()
-            # Compensation leg: opposite amount to a virtual counter-location
-            df_wealth_comp["Amount"] = -df_wealth_comp["Amount"]
-            df_wealth_comp["Location"] = "🌍 Référentiel Patrimoine (Compensation)"
-            df_wealth_comp["In"] = df_wealth_comp["Amount"].apply(lambda x: x if x > 0 else 0.0)
-            df_wealth_comp["Out"] = df_wealth_comp["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
-            df_wealth_comp["Report"] = 0.0
-
-            all_legs.append(df_full_mvt[["Location", "Asset", "Amount", "In", "Out", "Report"]])
-            all_legs.append(df_wealth_comp[["Location", "Asset", "Amount", "In", "Out", "Report"]])
-        else:
-            all_legs.append(df_full_mvt[["Location", "Asset", "Amount", "In", "Out", "Report"]])
+        # User Instruction: QTD = Entrées - Sorties (Strict algebraic sum).
+        # Internal transfers naturally cancel out globally when summed algebraically across all accounts.
+        # No "Wealth Protection" / Compensation logic is needed anymore.
+        all_legs.append(df_full_mvt[["Location", "Asset", "Amount", "In", "Out", "Report"]])
 
     if not all_legs: return pd.DataFrame(), 0.0
 

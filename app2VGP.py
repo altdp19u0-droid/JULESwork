@@ -18,7 +18,7 @@ from shared_logic import (
 if "is_hub" not in st.session_state:
     st.set_page_config(page_title="Jules Crypto - VGP (app2VGP)", layout="wide")
 
-st.title("🧮 Calculateur de VGP Historique (Version Pro)")
+st.title("🧮 Valeur de Marché (VGP) - Calculateur (Version Pro)")
 
 EXPORT_BASE_DIR = "sanctuarisation"
 PRICE_CACHE_FILE = "historical_prices_cache.json"
@@ -197,12 +197,12 @@ else:
         mask_error = cessions_all["VGP (EUR)"] < -1e-8
         nb_error = len(cessions_all[mask_error])
 
-        st.subheader(f"📈 Suivi des VGP ({nb_total} cessions au total)")
+        st.subheader(f"📈 Suivi des Valeurs de Marché (VGP) ({nb_total} cessions au total)")
         col1, col2, col3 = st.columns(3)
         col1.metric("Cessions identifiées", nb_total)
 
         # Real-time counter logic: we use the session state directly for the counter
-        col2.metric("VGP à calculer", nb_manquant, delta=-nb_manquant, delta_color="inverse")
+        col2.metric("VGP à évaluer", nb_manquant, delta=-nb_manquant, delta_color="inverse")
 
         col3.metric("VGP en erreur (Négatives)", nb_error, delta=nb_error, delta_color="normal" if nb_error == 0 else "inverse")
 
