@@ -55,18 +55,16 @@ with st.sidebar:
 
 def load_reward_candidates(year):
     """Loads all potential reward rows (inflows not marked as Fiat Purchase)."""
-    p_qual = sl.get_file_path(year, 'qualified_full')
-    if not os.path.exists(p_qual): return pd.DataFrame()
-
-    df = sl.pd_read_csv_safe(p_qual)
+    # Use CLEAN history to avoid spams
+    df = sl.load_clean_history(year)
     if df.empty: return pd.DataFrame()
 
-    df["Date"] = pd.to_datetime(df["Date"], utc=True, errors='coerce')
-    df = df.dropna(subset=["Date"])
+    # Ensure standard columns exist
+    if "Category" not in df.columns: df["Category"] = ""
 
-    # Selection: Inflows (Amount > 0) AND not Fiat (Chain != Fiat)
-    # We also include chain 'Fiat' if it's not an 'Achat' (e.g. Cashback)
-    mask_inflow = (df["Amount"] > 0)
+    # Selection: Inflows (Amount > 0) AND Target Year only
+    mask_inflow = (df["Amount"] > 0) & (df["Date"].dt.year == year)
+    # Exclude known Fiat purchases (already in Capital A from Step 0)
     mask_not_achat = (~df["Category"].str.contains("Achat", case=False, na=False))
 
     df_rew = df[mask_inflow & mask_not_achat].copy()
@@ -194,6 +192,8 @@ with t_stats:
             with st.spinner("Calcul du cumul historique..."):
                 all_acq_details = sl.get_total_acquisition_value(target_year, return_details=True)[1]
                 if not all_acq_details.empty:
+                    # Robustness: ensure Category column exists to avoid KeyError
+                    if "Category" not in all_acq_details.columns: all_acq_details["Category"] = ""
                     # Categories might vary based on source file
                     hist_int = all_acq_details[all_acq_details["Category"].str.contains("Intérêt", case=False, na=False)]["Montant EUR"].sum()
                     hist_bon = all_acq_details[all_acq_details["Category"].str.contains("Bonus", case=False, na=False)]["Montant EUR"].sum()

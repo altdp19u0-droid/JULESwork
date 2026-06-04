@@ -58,7 +58,7 @@ def get_cessions_summary(year, df_j):
 
     # Add EOY
     # Ensure tz awareness for eoy_d if df_j is tz-aware
-    tz = df_j["Date"].dt.tzinfo if not df_j.empty else None
+    tz = df_j["Date"].dt.tz if not df_j.empty else None
     eoy_d = datetime(year, 12, 31, 23, 59, 59, tzinfo=tz)
 
     snap_res_eoy = sl.get_portfolio_snapshot(year, eoy_d, df_override=df_j)
