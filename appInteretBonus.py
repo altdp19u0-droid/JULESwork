@@ -63,11 +63,13 @@ def load_reward_candidates(year):
     if "Category" not in df.columns: df["Category"] = ""
 
     # Selection: Inflows (Amount > 0) AND Target Year only
-    mask_inflow = (df["Amount"] > 0) & (df["Date"].dt.year == year)
+    # Note: df comes from load_clean_history which already filters for Target Year
+    mask_inflow = (df["Amount"] > 0)
     # Exclude known Fiat purchases (already in Capital A from Step 0)
-    mask_not_achat = (~df["Category"].str.contains("Achat", case=False, na=False))
+    # And exclude Transferts Internes (wealth preservation)
+    mask_not_acq = (~df["Category"].str.contains("Achat|Transfert Interne|Position", case=False, na=False))
 
-    df_rew = df[mask_inflow & mask_not_achat].copy()
+    df_rew = df[mask_inflow & mask_not_acq].copy()
 
     # Auto-classification based on Bonus Tokens registry
     bonus_set = sl.load_bonus_tokens()
@@ -100,16 +102,27 @@ t_editor, t_stats = st.tabs(["📝 Qualification des Récompenses", "📊 Totaux
 
 df_rewards = load_reward_candidates(target_year)
 
+# Visibility filter: exclude dust rewards (likely spams) from the qualifying view
+DUST_THRESHOLD_EUR = 0.01
+
 with t_editor:
     st.subheader(f"🔍 Flux entrants à qualifier ({target_year})")
     st.info("Les revenus qualifiés comme 'Intérêt' ou 'Bonus' s'ajouteront automatiquement au Capital Global Investi (A) à leur valeur du jour.")
+
+    if not df_rewards.empty:
+        # Hide dust
+        df_view = df_rewards[df_rewards["Valeur (EUR)"] >= DUST_THRESHOLD_EUR].copy()
+        num_dust = len(df_rewards) - len(df_view)
+
+        if num_dust > 0:
+            st.caption(f"💡 {num_dust} transactions de valeur < {DUST_THRESHOLD_EUR} € sont masquées par défaut (poussière/spam).")
 
     if df_rewards.empty:
         st.warning("Aucun flux entrant détecté pour cette année.")
     else:
         # Data Editor for classification
         edited_df = st.data_editor(
-            df_rewards.sort_values("Date", ascending=False),
+            df_view.sort_values("Date", ascending=False),
             column_config={
                 "Category": st.column_config.SelectboxColumn(
                     "Nature Fiscale",
@@ -154,11 +167,19 @@ with t_stats:
     st.subheader("📈 Récapitulatif Annuel des Revenus")
 
     if not df_rewards.empty:
-        # Filter only for Interest and Bonus for stats
-        mask_final = df_rewards["Category"].isin(["Intérêt", "Bonus"])
-        df_stats = df_rewards[mask_final].copy()
+        # Filter only for Interest and Bonus for stats (case-insensitive for legacy data)
+        # We also filter out dust from stats to keep them clean
+        mask_final = df_rewards["Category"].str.contains("Intérêt|Interest|Bonus|Airdrop|Revenu|Staking", case=False, na=False)
+        df_stats = df_rewards[mask_final & (df_rewards["Valeur (EUR)"] >= DUST_THRESHOLD_EUR)].copy()
+
+        # Map categories to standard display
+        def map_cat_stats(c):
+            cl = str(c).lower()
+            if "bonus" in cl or "airdrop" in cl: return "Bonus"
+            return "Intérêt"
 
         if not df_stats.empty:
+            df_stats["Category"] = df_stats["Category"].apply(map_cat_stats)
             c1, c2 = st.columns(2)
             tot_int = df_stats[df_stats["Category"]=="Intérêt"]["Valeur (EUR)"].sum()
             tot_bon = df_stats[df_stats["Category"]=="Bonus"]["Valeur (EUR)"].sum()
@@ -199,10 +220,16 @@ with t_stats:
                     hist_bon = all_acq_details[all_acq_details["Category"].str.contains("Bonus", case=False, na=False)]["Montant EUR"].sum()
 
                     ch1, ch2 = st.columns(2)
-                    ch1.metric("Cumul Intérêts Historique", f"{hist_int:,.2f} €", help="Total des intérêts perçus depuis le début de l'activité.")
+                    ch1.metric("Cumul Intérêts Historique", f"{hist_int:,.2f} €", help="Total des intérêts perçus depuis le début de l'activité (basé sur toutes les années qualifiées).")
                     ch2.metric("Cumul Bonus Historique", f"{hist_bon:,.2f} €", help="Total des bonus/airdrops perçus depuis le début de l'activité.")
+
+            st.info("💡 Les cumuls historiques scannent tous vos journaux qualifiés depuis le début de l'activité.")
         else:
             st.info("Aucune récompense qualifiée (Intérêt/Bonus) pour le moment.")
+            with st.expander("Pourquoi les totaux sont à 0 ?"):
+                st.write(f"- Total flux entrants détectés : **{len(df_rewards)}**")
+                st.write(f"- Catégories présentes dans vos données : {df_rewards['Category'].unique().tolist()}")
+                st.write("- Pour apparaître ici, une transaction doit être qualifiée comme 'Intérêt' ou 'Bonus' (ou équivalent) dans l'onglet de gauche.")
     else:
         st.info("En attente de données qualifiées.")
 

@@ -15,11 +15,11 @@ Ce document est le référentiel unique de la structure, des fonctions critiques
 5. **Protection du Code Réussi :** Il est strictement interdit de modifier les modules moteurs sans accord formel.
     - **Modules Sanctuarisés :** `app.py` (Harvest engine), `appNeverless.py`.
 6. **Principes Comptables & Terminologie Validés (Session Reprise) :**
-    - **QTD :** Quantité Totale Détenue suivie **par actif** (Entrées - Sorties).
-    - **Valeur de Marché (VGP) :** Valeur totale du portefeuille aux cours du jour au moment de la cession (Art. 150 VH bis).
-    - **Capital Global Investi (A) :** Somme cumulée des Euros injectés dans l'écosystème crypto, diminuée de la fraction consommée lors de chaque vente.
-    - **Fraction du Capital Consommé :** Part de l'investissement initial (A) déduite du prix de vente pour calculer la plus-value brute.
-    - **Swaps DeFi :** Option B validée. Les échanges d'actifs (ex: ETH -> stETH) sont traités comme des **Swaps** (neutres fiscalement mais changeant la QTD par actif) et non comme des transferts internes.
+    - **QTD :** Quantité Totale Détenue suivie **par actif et par compte** (Somme algébrique stricte : Entrées - Sorties).
+    - **Valeur de Marché (VGP) :** Conformément au formulaire 2086, désigne la valeur totale du portefeuille aux cours du jour au moment d'une cession imposable.
+    - **Capital Global Investi (A) :** Base d'acquisition cumulée (Euros Fiat + Valeur EUR des Intérêts/Bonus à réception).
+    - **Calcul Séquentiel des Gains :** Application stricte de l'Art. 150 VH bis. À chaque cession, le Capital (A) est diminué de la **Fraction du Capital Consommé** (Abattement). Le calcul est dynamique et prend en compte les nouveaux apports (Acquisitions, Intérêts, Bonus) arrivés entre deux cessions. Le report N-1 inclut la part de capital non consommée des années précédentes.
+    - **Swaps DeFi :** Option B validée. Les échanges d'actifs sont traités comme des **Swaps** (changement de QTD par actif mais neutralité fiscale globale) et non comme des transferts internes.
 
 ---
 
@@ -97,15 +97,22 @@ Lors de l'intégration de nouvelles données RAW, le système doit impérativeme
     - **Filtrage Intelligent :** Pour chaque position protocole, seuls les assets explicitement définis dans le registre sont affichés. Si la liste est vide, tous les assets de la position sont affichés.
     - **Intégrité des Prix :** Les valuations (EUR) utilisent prioritairement les prix USD récoltés dans le journal Step 2 (certifiés) avant de solliciter les APIs externes. **Il est strictement interdit d'utiliser la colonne VGP pour dériver un prix unitaire.**
     - **Anti-Inflation VGP :** Le mirroring des positions protocoles n'est appliqué que si la position n'est pas déjà présente comme compte actif dans l'historique.
-    - **Référentiel Patrimoine (Auto-Compensation) :** Pour garantir que la VGP ne reflète que la richesse réelle, tout mouvement (In/Out) non qualifié explicitement d'**Acquisition** ou de **Position Initiale** est automatiquement balancé par une contrepartie dans l'emplacement virtuel `🌍 Référentiel Patrimoine (Compensation)`. Cela élimine les redondances de VGP dues aux transferts internes non identifiés tout en préservant l'exactitude des soldes locaux.
+    - **QTD Stricte (Suppression de l'Auto-Compensation) :** La logique de compensation virtuelle "Référentiel Patrimoine" a été révoquée. La QTD est désormais la somme algébrique brute. Les transferts internes s'annulent globalement par construction.
+    - **Journal de Caisse Fiscal :** Suivi quotidien valorisé des 4 catégories (Acquisitions, Cessions, Intérêts, Bonus) avec indicateur de VGP journalière.
     - **Périmètre VGP :** La VGP est calculée comme la somme **nette** des **actifs numériques** (en excluant les circuits externes et l'actif **EUR**) pour refléter strictement le périmètre de l'Art. 150 VH bis.
-    - **Unité de Calcul :** Le Capital Global Investi (A) est calculé prioritairement à partir des registres manuels Step 0 via `sl.get_total_acquisition_value`. **Règle impérative :** Seules les lignes dont la colonne **"Acquisition" (Acq.)** est cochée dans le registre Step 0 sont incluses dans ce calcul. Toute autre ligne (même de type Achat) est ignorée si elle n'est pas explicitement qualifiée comme acquisition.
+    - **Unité de Calcul du Capital (A) :** Le Capital Global Investi (A) cumule les apports Fiat (cochés "Acq." en Step 0) ET la valeur EUR des Intérêts/Bonus au jour de leur perception.
     - **Protection Anti-Redondance EURA :** La VGP et l'inventaire excluent systématiquement les entrées de nature 'Import/Manuel' (`Source_Way == 'Way_3'`) pour l'actif **EURA** afin de ne comptabiliser que les mouvements blockchain réels.
-    - **Standard d'Affichage Acquisition :** Le tableau détaillé des acquisitions (Onglet 2) affiche : Date, Compte/Label, Asset, Quantité, Montant EUR. Ces données proviennent du registre `manual_fiat`.
-    - Consomme les données via `sl.load_clean_history` pour les indicateurs, mais interroge les registres manuels pour les détails d'acquisition.
-    - **Identification des Cessions :** Pour être identifiée comme une cession imposable, une transaction doit obligatoirement être un flux de sortie (`Amount < 0`), ne pas être de l'actif `EUR`, et être soit cochée `Imposable`, soit appartenir à une catégorie de type `Vente` ou `Cession`. Cette logique est centralisée dans `sl.is_cession_imposable_robust`.
-3. **app3 (Fiscalité) :**
-    - Application stricte de l'Art. 150 VH bis.
+    - **Standard d'Affichage Acquisition :** Le tableau détaillé des acquisitions affiche : Date, Compte/Label, Asset, Quantité, Montant EUR, Catégorie.
+    - **Audit des Cessions :** Le sommaire des cessions affiche désormais **chaque transaction individuelle** (et non plus par date) pour garantir la traçabilité complète des 6 colonnes du formulaire 2086.
+    - **Identification des Cessions :** Centralisée dans `sl.is_cession_imposable_robust`. Critères : Flux de sortie (`Amount < 0`), non-EUR, et obligatoirement coché **`Imposable`**.
+3. **appInteretBonus (Gestion des Récompenses) :**
+    - **Module Step 2b :** Dédié à la qualification des revenus (Intérêt vs Bonus).
+    - **Registre des Tokens Bonus :** Registre persistant (`bonus_tokens.json`) pour l'auto-classification des Airdrops.
+    - **Valorisation Automatique :** Utilisation des prix certifiés ou historiques pour ajouter la valeur EUR au Capital (A).
+    - **Gateway CLEAN :** Ce module consomme exclusivement le flux sans spam (`load_clean_history`) pour éviter toute pollution fiscale et garantir l'intégrité des calculs.
+
+4. **app3 (Fiscalité) :**
+    - Application stricte de l'Art. 150 VH bis avec calcul séquentiel des abattements.
     - **Verrou de Sécurité :** Génération PDF interdite si `appDiagCoh` détecte des ruptures de stock (soldes négatifs) pour l'année cible.
 
 ---

@@ -615,6 +615,10 @@ def get_total_acquisition_value(year, return_details=False, until_date=None):
                 if not df_purchases.empty:
                     amt_col = "Montant EUR" if "Montant EUR" in df_purchases.columns else "Amount"
                     df_purchases["_val_eur"] = pd.to_numeric(df_purchases[amt_col], errors="coerce").fillna(0.0).abs()
+                    # Standardize for details
+                    df_purchases["Montant EUR"] = df_purchases["_val_eur"]
+                    if "Category" not in df_purchases.columns: df_purchases["Category"] = "Acquisition"
+
                     total += df_purchases["_val_eur"].sum()
                     if return_details: details.append(df_purchases)
 
@@ -626,23 +630,41 @@ def get_total_acquisition_value(year, return_details=False, until_date=None):
                 df_q["Date"] = pd.to_datetime(df_q["Date"], utc=True, errors='coerce')
                 df_q = df_q.dropna(subset=["Date"])
 
+                # Ensure Category column exists
+                if "Category" not in df_q.columns: df_q["Category"] = ""
+
                 # Filter for categories that contribute to Capital A
-                mask_rew = df_q["Category"].str.contains("Intérêt|Bonus|Revenu", case=False, na=False)
+                # We include common synonyms for Interest/Bonus
+                rew_keywords = "Intérêt|Interest|Bonus|Airdrop|Revenu|Staking|Reward|Lending"
+                mask_rew = df_q["Category"].str.contains(rew_keywords, case=False, na=False)
                 mask_date = (df_q["Date"] <= until_date) if until_date else pd.Series([True] * len(df_q))
 
                 df_rewards = df_q[mask_rew & mask_date].copy()
                 if not df_rewards.empty:
-                    # Calculate Market Value at reception if not already present
-                    # We use Valeur $ / EUR conversion as a robust proxy
+                    # Calculate Market Value at reception
                     def get_rew_eur(r):
                         v_usd = float(r.get("Valeur $", 0.0))
                         if v_usd > 0:
                             return v_usd * get_fiat_rate("USD", r["Date"])
-                        # Fallback: Historical price
+                        # Fallback: Price from journal or Historical API
+                        p_j = get_price_from_journal(r["Asset"], r["Date"], df_h=df_q)
+                        if p_j > 0: return abs(float(r["Amount"])) * p_j
                         return abs(float(r["Amount"])) * get_price_eur(r["Asset"], r["Date"])
 
                     df_rewards["_val_eur"] = df_rewards.apply(get_rew_eur, axis=1)
-                    df_rewards["Montant EUR"] = df_rewards["_val_eur"] # Unify for details table
+                    df_rewards["Montant EUR"] = df_rewards["_val_eur"] # Mandatory for cumulative summing
+
+                    # Normalization of Category for details table (Unify synonyms)
+                    def normalize_rew_cat(c):
+                        c_low = str(c).lower()
+                        if any(x in c_low for x in ["bonus", "airdrop"]): return "Bonus"
+                        return "Intérêt"
+
+                    # We store the raw category for auditing, but normalize for summing
+                    df_rewards["Category_Normalized"] = df_rewards["Category"].apply(normalize_rew_cat)
+                    # We also overwrite Category to ensure consistency in sum filters
+                    df_rewards["Category"] = df_rewards["Category_Normalized"]
+
                     total += df_rewards["_val_eur"].sum()
                     if return_details: details.append(df_rewards)
 

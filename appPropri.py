@@ -189,7 +189,8 @@ with t_dashboard:
         # Support for manual balance correction
         def get_forced_bal(r):
             k = f"BAL_{target_date.strftime('%Y%m%d')}_{r['Emplacement']}_{r['Asset']}"
-            return float(notes_db.get(k, r["Solde Actuel"]))
+            # Reference QTD (Quantité) as the base calculated balance
+            return float(notes_db.get(k, r["QTD (Quantité)"]))
 
         def get_row_note(r):
             k = f"NOTE_{target_date.strftime('%Y%m%d')}_{r['Emplacement']}_{r['Asset']}"
@@ -222,7 +223,8 @@ with t_dashboard:
             dt_s = target_date.strftime("%Y%m%d")
             for _, r in ed_inv.iterrows():
                 k_bal = f"BAL_{dt_s}_{r['Emplacement']}_{r['Asset']}"
-                if float(r["Solde Corrigé"]) != float(r["Solde Actuel"]): new_notes[k_bal] = str(r["Solde Corrigé"])
+                # Comparison between forced balance and calculated QTD
+                if float(r["Solde Corrigé"]) != float(r["QTD (Quantité)"]): new_notes[k_bal] = str(r["Solde Corrigé"])
                 elif k_bal in new_notes: del new_notes[k_bal]
                 k_note = f"NOTE_{dt_s}_{r['Emplacement']}_{r['Asset']}"
                 if r["Commentaires"]: new_notes[k_note] = r["Commentaires"]
