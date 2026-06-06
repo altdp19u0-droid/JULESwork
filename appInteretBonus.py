@@ -75,11 +75,19 @@ def load_reward_candidates(year):
     bonus_set = sl.load_bonus_tokens()
 
     def auto_classify(r):
+        # High Priority: explicit 'Capital' qualification (user contribution)
         current_cat = str(r.get("Category", "")).strip()
-        if current_cat in ["Intérêt", "Bonus", "Capital"]: return current_cat
+        if current_cat == "Capital": return "Capital"
 
+        # Consult Registry for automatic detection (overrides other labels)
         asset = str(r["Asset"]).upper().strip()
         if asset in bonus_set: return "Bonus"
+
+        # If already categorized as Interest or Bonus but asset not in registry,
+        # we respect the existing category if it was manual,
+        # or default to Interest for non-bonus assets.
+        if current_cat in ["Intérêt", "Bonus"]: return current_cat
+
         return "Intérêt"
 
     if not df_rew.empty:
@@ -103,19 +111,24 @@ t_editor, t_stats = st.tabs(["📝 Qualification des Récompenses", "📊 Totaux
 df_rewards = load_reward_candidates(target_year)
 
 # Visibility filter: exclude dust rewards (likely spams) from the qualifying view
-DUST_THRESHOLD_EUR = 0.01
+# User instruction: Make it visible but filtered if needed.
+DUST_THRESHOLD_EUR = 0.0001 # Extremely low to show almost everything
 
 with t_editor:
     st.subheader(f"🔍 Flux entrants à qualifier ({target_year})")
     st.info("Les revenus qualifiés comme 'Intérêt' ou 'Bonus' s'ajouteront automatiquement au Capital Global Investi (A) à leur valeur du jour.")
 
     if not df_rewards.empty:
-        # Hide dust
-        df_view = df_rewards[df_rewards["Valeur (EUR)"] >= DUST_THRESHOLD_EUR].copy()
-        num_dust = len(df_rewards) - len(df_view)
+        # User selection for dust visibility
+        show_dust = st.checkbox("Afficher la poussière (< 0.01 €)", value=False)
 
-        if num_dust > 0:
-            st.caption(f"💡 {num_dust} transactions de valeur < {DUST_THRESHOLD_EUR} € sont masquées par défaut (poussière/spam).")
+        if show_dust:
+            df_view = df_rewards.copy()
+        else:
+            df_view = df_rewards[df_rewards["Valeur (EUR)"] >= 0.01].copy()
+            num_dust = len(df_rewards) - len(df_view)
+            if num_dust > 0:
+                st.caption(f"💡 {num_dust} transactions de faible valeur sont masquées. Cochez la case ci-dessus pour les voir.")
 
     if df_rewards.empty:
         st.warning("Aucun flux entrant détecté pour cette année.")
@@ -165,6 +178,16 @@ with t_editor:
 
 with t_stats:
     st.subheader("📈 Récapitulatif Annuel des Revenus")
+
+    # Diagnostic Block
+    if not df_rewards.empty:
+        with st.expander("🔍 Diagnostic des données récoltées", expanded=False):
+            st.write(f"- Total flux entrants détectés (Step 2 CLEAN) : **{len(df_rewards)}**")
+            # Count per category
+            cat_counts = df_rewards["Category"].value_counts().to_dict()
+            st.write("- Répartition par catégorie actuelle :")
+            st.json(cat_counts)
+            st.info("💡 Seules les catégories 'Intérêt' et 'Bonus' sont comptabilisées dans les totaux ci-dessous.")
 
     if not df_rewards.empty:
         # Filter only for Interest and Bonus for stats (case-insensitive for legacy data)

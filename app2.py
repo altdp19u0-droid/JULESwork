@@ -310,6 +310,7 @@ def apply_auto_labels(df):
     valides = sl.load_valid_assets()
     owners = sl.load_owner_accounts()
     pos_reg = sl.load_position_registry()
+    bonus_tokens = sl.load_bonus_tokens()
 
     owner_addrs = set(owners.keys())
     pos_addrs = set(pos_reg.keys())
@@ -353,6 +354,12 @@ def apply_auto_labels(df):
             elif f_raw in pos_addrs and t_raw in owner_addrs:
                 if asset_upper in pos_reg[f_raw].get("assets", []):
                     r["Category"] = "Transfert Interne"
+
+        # 3. Bonus Detection (for non-spam inflows)
+        if not is_spam and r["Audit_Status"].lower() != "spam" and float(r["Amount"]) > 0:
+            if asset_upper in bonus_tokens:
+                if not r["Category"] or r["Category"] in ["Revenu", "Intérêt"]:
+                    r["Category"] = "Bonus"
 
         return r
 
@@ -565,6 +572,23 @@ def main():
                 elif not n_p_assets:
                     st.error("L'asset est obligatoire pour confirmer une position.")
 
+        with st.expander("💎 Registre des Tokens Bonus"):
+            bonus_tokens = sl.load_bonus_tokens()
+            for bt in sorted(list(bonus_tokens)):
+                bc = st.columns([4, 1])
+                bc[0].text(bt)
+                if bc[1].button("🗑️", key=f"del_bt_app2_{bt}"):
+                    bonus_tokens.remove(bt)
+                    sl.save_bonus_tokens(bonus_tokens)
+                    st.rerun()
+
+            new_bt = st.text_input("Ajouter Token Bonus", key="new_bt_app2").upper().strip()
+            if st.button("Ajouter au Registre Bonus", key="btn_add_bt_app2"):
+                if new_bt:
+                    bonus_tokens.add(new_bt)
+                    sl.save_bonus_tokens(bonus_tokens)
+                    st.rerun()
+
         with st.expander("🌐 Circuits Externes"):
             ext = sl.load_external_circuits()
             for addr, label in list(ext.get("labels", {}).items()):
@@ -688,7 +712,7 @@ def main():
             column_config={
                 "Mod.": st.column_config.CheckboxColumn("Mod.", default=False),
                 "Audit_Status": st.column_config.SelectboxColumn("Statut", options=["A vérifier", "Valide", "Spam", "Ignoré"]),
-                "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Revenu", "Dépense", "Transfert", "Transfert Interne", "Swap", "Achat", "Vente"]),
+                "Category": st.column_config.SelectboxColumn("Catégorie", options=["", "Intérêt", "Bonus", "Capital", "Valide", "Spam", "A vérifier", "Achat", "Vente", "Transfert Interne", "Swap", "Revenu", "Dépense"]),
                 "Imposable": st.column_config.CheckboxColumn("Imposable"),
             "Acquisition": st.column_config.CheckboxColumn("Acq."),
                 "Valeur $": st.column_config.NumberColumn(format="$ %.2f"),

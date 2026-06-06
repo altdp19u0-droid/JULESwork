@@ -599,6 +599,9 @@ def get_total_acquisition_value(year, return_details=False, until_date=None):
     if until_date:
         until_date = pd.to_datetime(until_date, utc=True)
 
+    # Load bonus tokens registry for unified categorization
+    bonus_tokens = load_bonus_tokens()
+
     for y in range(start, year + 1):
         # 1. Fiat Acquisitions from Step 0
         p_fiat = get_file_path(y, 'fiat')
@@ -634,9 +637,15 @@ def get_total_acquisition_value(year, return_details=False, until_date=None):
                 if "Category" not in df_q.columns: df_q["Category"] = ""
 
                 # Filter for categories that contribute to Capital A
-                # We include common synonyms for Interest/Bonus
+                # We include common synonyms for Interest/Bonus AND check the registry for automatic inclusion
                 rew_keywords = "Intérêt|Interest|Bonus|Airdrop|Revenu|Staking|Reward|Lending"
-                mask_rew = df_q["Category"].str.contains(rew_keywords, case=False, na=False)
+                mask_rew_cat = df_q["Category"].str.contains(rew_keywords, case=False, na=False)
+                mask_rew_reg = df_q["Asset"].str.upper().isin(bonus_tokens) & (df_q["Amount"] > 0)
+
+                # Exclude known non-reward categories even if asset is in registry (safety)
+                mask_exclude = df_q["Category"].str.contains("Achat|Transfert Interne|Position|Vente", case=False, na=False)
+
+                mask_rew = (mask_rew_cat | mask_rew_reg) & (~mask_exclude)
                 mask_date = (df_q["Date"] <= until_date) if until_date else pd.Series([True] * len(df_q))
 
                 df_rewards = df_q[mask_rew & mask_date].copy()
@@ -654,14 +663,21 @@ def get_total_acquisition_value(year, return_details=False, until_date=None):
                     df_rewards["_val_eur"] = df_rewards.apply(get_rew_eur, axis=1)
                     df_rewards["Montant EUR"] = df_rewards["_val_eur"] # Mandatory for cumulative summing
 
-                    # Normalization of Category for details table (Unify synonyms)
-                    def normalize_rew_cat(c):
-                        c_low = str(c).lower()
-                        if any(x in c_low for x in ["bonus", "airdrop"]): return "Bonus"
+                    # Normalization of Category for details table (Unify synonyms and consult registry)
+                    def normalize_rew_cat(row):
+                        # Explicit manual categories take precedence in current year clean journal
+                        cat = str(row.get("Category", "")).strip()
+                        if cat in ["Intérêt", "Bonus", "Capital"]: return cat
+
+                        asset = str(row.get("Asset", "")).upper().strip()
+                        if asset in bonus_tokens: return "Bonus"
+
+                        cl = cat.lower()
+                        if any(x in cl for x in ["bonus", "airdrop"]): return "Bonus"
                         return "Intérêt"
 
                     # We store the raw category for auditing, but normalize for summing
-                    df_rewards["Category_Normalized"] = df_rewards["Category"].apply(normalize_rew_cat)
+                    df_rewards["Category_Normalized"] = df_rewards.apply(normalize_rew_cat, axis=1)
                     # We also overwrite Category to ensure consistency in sum filters
                     df_rewards["Category"] = df_rewards["Category_Normalized"]
 
