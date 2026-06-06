@@ -1,0 +1,7 @@
+Date,Chain,Tx_Hash,Type,Method,Account,From,To,From_Label,To_Label,Counterparty,Asset,Amount,Valeur $,USD prix asset reçu,USD prix asset envoyé,USD prix de fée asset,Fee_Asset,Fee_Amount,Source_Way,Audit_Status,Fee_Audit_Alert,Source_Exchange_Rate,Prix de Cession (EUR),VGP (EUR),Linked_ID,Link_Status,Category,Imposable,Acquisition,Source_File
+2024-02-01 10:00:00,Bitcoin,TX1,Vente,,ledger,ledger,exchange,,,exchange,BTC,-0.1,4000,40000,40000,,BTC,0.001,Way_3,Valide,,1.0,3800,50000,,,Vente,True,False,manual_fiat_2024.csv
+2024-03-01 10:00:00,Bitcoin,TX2,Vente,,ledger,ledger,exchange,,,exchange,BTC,-0.1,4200,42000,42000,,BTC,0.001,Way_3,Valide,,1.0,4000,52000,,,Vente,True,False,manual_fiat_2024.csv
+2024-04-01 10:00:00,Bitcoin,TX3,Vente,,ledger,ledger,exchange,,,exchange,BTC,-0.1,4500,45000,45000,,BTC,0.001,Way_3,Valide,,1.0,4300,55000,,,Vente,True,False,manual_fiat_2024.csv
+2024-05-01 10:00:00,Bitcoin,TX4,Vente,,ledger,ledger,exchange,,,exchange,BTC,-0.1,4800,48000,48000,,BTC,0.001,Way_3,Valide,,1.0,4600,58000,,,Vente,True,False,manual_fiat_2024.csv
+2024-06-01 10:00:00,Bitcoin,TX5,Vente,,ledger,ledger,exchange,,,exchange,BTC,-0.1,5000,50000,50000,,BTC,0.001,Way_3,Valide,,1.0,4800,60000,,,Vente,True,False,manual_fiat_2024.csv
+2024-07-01 10:00:00,Bitcoin,TX6,Vente,,ledger,ledger,exchange,,,exchange,BTC,-0.1,5200,52000,52000,,BTC,0.001,Way_3,Valide,,1.0,5000,62000,,,Vente,True,False,manual_fiat_2024.csv

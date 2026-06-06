@@ -1,0 +1,128 @@
+# MÉMOIRE TECHNIQUE ET CONSIGNES ARCHITECTURALES (SUITE JULES CRYPTO)
+
+Ce document est le référentiel unique de la structure, des fonctions critiques et des règles de non-régression de la suite logicielle.
+
+**INTERDICTIONS ABSOLUES : IL EST STRICTEMENT INTERDIT D'OMETTRE DE CONSULTER, DE SUPPRIMER OU DE MODIFIER CE MÉMOIRE SANS L'ACCORD EXPLICITE ET PRÉALABLE DE L'UTILISATEUR.**
+
+---
+
+## I. GOUVERNANCE & ARCHITECTURE "CLEAN GATEWAY"
+
+1. **Architecture Gateway Absolute :** Le module `app2.py` est l'unique autorité de certification des données. Il doit produire un fichier `qualified_journal_CLEAN_{year}.csv` **strictement et certifié sans spam**.
+2. **Principe de Confiance Aveugle (Blind Trust) :** Les applications en aval (`app3`, `appPropri`, `appDiagCoh`, `appPriceFix`) sont interdites d'accès direct aux fichiers RAW. Elles doivent consommer exclusivement le journal CLEAN via le chargeur centralisé `sl.load_clean_history`.
+3. **Sécurité de Chargement :** La fonction `sl.load_clean_history` agit comme une barrière de sécurité ultime en forçant la conversion des dates en UTC et en appliquant un second filtre anti-spam systématique.
+4. **Sanctuarisation Annuelle :** Chaque année fiscale est isolée dans `/sanctuarisation/{year}/`. Les fichiers qualifiés dans ce dossier sont la source de vérité absolue.
+5. **Protection du Code Réussi :** Il est strictement interdit de modifier les modules moteurs sans accord formel.
+    - **Modules Sanctuarisés :** `app.py` (Harvest engine), `appNeverless.py`.
+6. **Principes Comptables & Terminologie Validés (Session Reprise) :**
+    - **QTD :** Quantité Totale Détenue suivie **par actif et par compte** (Somme algébrique stricte : Entrées - Sorties).
+    - **Valeur de Marché (VGP) :** Conformément au formulaire 2086, désigne la valeur totale du portefeuille aux cours du jour au moment d'une cession imposable.
+    - **Capital Global Investi (A) :** Base d'acquisition cumulée (Euros Fiat + Valeur EUR des Intérêts/Bonus à réception).
+    - **Calcul Séquentiel des Gains :** Application stricte de l'Art. 150 VH bis. À chaque cession, le Capital (A) est diminué de la **Fraction du Capital Consommé** (Abattement). Le calcul est dynamique et prend en compte les nouveaux apports (Acquisitions, Intérêts, Bonus) arrivés entre deux cessions. Le report N-1 inclut la part de capital non consommée des années précédentes.
+    - **Swaps DeFi :** Option B validée. Les échanges d'actifs sont traités comme des **Swaps** (changement de QTD par actif mais neutralité fiscale globale) et non comme des transferts internes.
+
+---
+
+## II. PHASE 1 : RÉCOLTE & STANDARD "RAW V4" (app.py)
+
+### 1. Standard de Données (23 Colonnes)
+Tout fichier produit par le moteur ou les importeurs doit respecter scrupuleusement ce schéma :
+- **Identification :** `Date` (UTC), `Chain`, `Tx_Hash`, `Type`, `Method`, `Account`, `From`, `To`, `From_Label`, `To_Label`, `Counterparty`, `Asset`, `Amount`.
+- **Valuations USD (Nouveau Standard) :** `Valeur $`, `USD prix asset reçu`, `USD prix asset envoyé`, `USD prix de fée asset`.
+- **Audit & Frais :** `Fee_Asset`, `Fee_Amount`, `Source_Way`, `Audit_Status`, `Fee_Audit_Alert`, `Source_Exchange_Rate`.
+
+### 2. Robustesse du Moteur (app.py)
+- **Multi-Voies :** Voie 1 (Blockscout - Labels & USD), Voie 2 (API Scans - Frais & Internes), Voie 3 (Imports CSV locaux).
+- **Zéro 'NONE' sur Tx_Hash :** Le moteur doit inspecter récursivement les clés `hash`, `tx_hash`, `txHash`, `transaction_hash`, et `transactionHash`.
+- **Dédoublonnage :** Groupement strict par le quadruplet **`(Tx_Hash, Asset, Account, Chain)`**.
+
+---
+
+## III. PHASE 2 : QUALIFICATION & CERTIFICATION (app2.py)
+
+### 1. "Fidelity Engine" de Synchronisation
+Lors de l'intégration de nouvelles données RAW, le système doit impérativement préserver les décisions de l'utilisateur déjà enregistrées :
+- **UID Composite :** La correspondance se fait sur `(Tx_Hash, Asset, Account, Amount, Date)`.
+- **Priorité Numérique :** Une valeur existante n'est écrasée que si elle est "vide". Pour les prix et USD, **0.00 est considéré comme vide**, permettant aux nouvelles récoltes Step 1 (Blockscout) d'enrichir les anciens journaux sans perte de données.
+- **Décisions Booléennes :** Pour la colonne `Imposable`, une valeur `False` est considérée comme une décision explicite de l'utilisateur et ne doit pas être écrasée par une valeur par défaut "vide".
+- **Colonnes Préservées :** `Audit_Status`, `Category`, `Imposable`, `Prix de Cession (EUR)`, `VGP (EUR)`, `Valeur $`, et les 3 colonnes de prix USD.
+
+### 2. Gestion de l'Exclusion des Spams
+- **Zéro Spam CLEAN :** Le bouton "Sauvegarder" doit déclencher un `sl.apply_spam_filter(df, drop=True)` avant l'écriture du fichier CLEAN.
+- **Hiérarchie de Filtrage :**
+    1. **Statut Manuel :** Si `Audit_Status` est explicitement "Spam" (insensible à la casse), la ligne est bannie.
+    2. **Blacklist Globale :** Si l'Asset ou la Contrepartie est dans `spam_blacklist.json`.
+    3. **Protection Whitelist :** Les actifs dans `valid_assets.json` sont protégés sauf s'ils sont manuellement marqués "Spam".
+
+### 3. Interface & UX
+- **Indicateur de Modification :** Le bouton de sauvegarde doit changer de couleur (Rouge) dès qu'une modification est détectée dans l'éditeur.
+- **CRUD Registres :** Les listes (Spams, Assets Valides, Propriétaires, Positions) en sidebar doivent permettre l'ajout et la suppression individuelle via des boutons dédiés.
+- **Positions Protocoles :** L'ajout d'une position protocole requiert obligatoirement la saisie d'un ou plusieurs assets associés (séparés par des virgules).
+- **Système de Filtres :** Pour permettre une réinitialisation propre des widgets Streamlit (toggles, multiselects), les clés des widgets doivent inclure une version (`filter_version`) incrémentée lors du reset.
+
+### 4. Automatisation & Injections
+- **Transfert Interne :** L'application `app2.py` applique automatiquement la catégorie "Transfert Interne" lors de la qualification initiale si les conditions suivantes sont réunies et que la ligne n'est pas qualifiée de **Spam** :
+1. **Entre Propriétaires :** Si l'expéditeur (`From`) et le destinataire (`To`) sont tous deux dans le registre des comptes propriétaires ET que l'asset est dans la Whitelist (`valid_assets.json`).
+2. **Positions Protocoles :** Si l'une des parties est un propriétaire et l'autre est une adresse de position protocole, ET que l'asset de la transaction correspond à l'un des assets enregistrés pour cette position dans le registre.
+
+- **Injections Fiat :** L'outil d'injection dans `app2.py` permet de transférer des flux vers le registre Step 0 (fiat bank). Les injections peuvent être faites :
+    1. **Individuellement** via l'outil dédié (popover) avec option d'ignorer la restriction de signe.
+    2. **En Masse** via la barre d'action sur une sélection de lignes (`Mod.`).
+    3. **En Bloc (EUR)** via le bouton "🚀 Injection EUR en bloc" qui scanne automatiquement les lignes EUR "A vérifier" ou "Valide". Une fenêtre de confirmation permet de décocher individuellement les lignes ou de modifier leur nature (Achat/Vente).
+- Les lignes injectées apparaissent en jaune vif dans l'App 0. Pour plus de clarté, elles utilisent les libellés "Banque FIAT" et "Compte CRYPTO". Les types d'injection correspondent strictement aux options du formulaire App 0 pour garantir une reconnaissance immédiate.
+- **Transactions Masquées :** En cas de filtres actifs ou de bouton 'Spam' désactivé, `app2.py` doit afficher un message d'alerte indiquant le nombre de lignes masquées avec un bouton 'Voir' ouvrant une `@st.dialog` listant ces transactions.
+- **Gestion des Lignes RAW :** L'App 2 permet l'élimination de transactions erronées dans les fichiers RAW de travail (racine de l'année) via la colonne de sélection `Mod.`. La traçabilité est assurée par la colonne `Source_File`.
+- **Règle Absolue Sanctuary :** Il est **STRICTEMENT INTERDIT** de modifier ou supprimer des lignes dans les fichiers du dossier `/sanctuary/`. Ce dossier sert d'archive de secours inviolable permettant le rétablissement des données via l'onglet "Audit & Recovery".
+
+---
+
+## IV. PHASE 0 : REGISTRE MANUEL (app0.py)
+
+1. **Stabilité des Index :** Pour l'édition des lignes dans les journaux manuels, il est **interdit** de réinitialiser l'index (`reset_index`) avant l'affichage dans `st.data_editor`. L'index d'origine du DataFrame en session state doit être préservé pour que le bouton "Charger" pointe vers la bonne ligne master, évitant ainsi les doublons ou écrasements accidentels.
+2. **Standard de Chargement :** Le chargement d'une ligne pour modification doit copier l'intégralité du dictionnaire de la ligne source pour garantir que toutes les métadonnées (dont le `Tx_Hash` stable) sont préservées lors de la mise à jour.
+3. **Remplacement Automatique (Swaps/Transferts) :** Lors de l'édition d'une ligne injectée via le formulaire de Swap ou de Transfert, l'action "Enregistrer" doit automatiquement supprimer la ligne source originale avant d'insérer la nouvelle paire (In/Out). Cela évite à l'utilisateur d'avoir à supprimer manuellement la ligne d'injection.
+
+## V. PHASE 3 : AUDIT, VGP & PATRIMOINE
+
+1. **appPriceFix (Collecteur de Prix) :**
+    - Doit scanner exclusivement le journal CLEAN.
+    - **Hiérarchie de Collecte :**
+        1. **Premier Niveau :** Recherche de prix certifiés dans le journal Step 2 (VGP/Amount, prix USD récoltés, Valeur $/Amount).
+        2. **Second Niveau :** Recherche automatique via APIs externes (CoinGecko, DeFiLlama) intégrée dans `sl.get_price_eur`.
+    - **Robustesse Date :** Toujours convertir en datetime avant d'utiliser l'accesseur `.dt`.
+2. **appPropri (Dashboard) :**
+    - **Structure en Onglets :** Organisé en trois sections majeures : 1. Dashboard VGP (Contrôle), 2. Historique Acquisitions (Détail Fiat), 3. Audit Cessions.
+    - Affiche la synthèse des positions protocoles (selon `position_labels.json`).
+    - **Gestion du Cache & Fraîcheur :** Les fonctions de chargement des historiques doivent inclure le `mtime` des fichiers sources dans leurs clés de cache (`@st.cache_data`). Un mécanisme de détection de fraîcheur en sidebar doit avertir l'utilisateur si les fichiers sur disque ont été modifiés (ex: injection depuis App 2 ou edit manuel en App 0) et proposer un rafraîchissement immédiat.
+    - **Filtrage Intelligent :** Pour chaque position protocole, seuls les assets explicitement définis dans le registre sont affichés. Si la liste est vide, tous les assets de la position sont affichés.
+    - **Intégrité des Prix :** Les valuations (EUR) utilisent prioritairement les prix USD récoltés dans le journal Step 2 (certifiés) avant de solliciter les APIs externes. **Il est strictement interdit d'utiliser la colonne VGP pour dériver un prix unitaire.**
+    - **Anti-Inflation VGP :** Le mirroring des positions protocoles n'est appliqué que si la position n'est pas déjà présente comme compte actif dans l'historique.
+    - **QTD Stricte (Suppression de l'Auto-Compensation) :** La logique de compensation virtuelle "Référentiel Patrimoine" a été révoquée. La QTD est désormais la somme algébrique brute. Les transferts internes s'annulent globalement par construction.
+    - **Journal de Caisse Fiscal :** Suivi quotidien valorisé des 4 catégories (Acquisitions, Cessions, Intérêts, Bonus) avec indicateur de VGP journalière.
+    - **Périmètre VGP :** La VGP est calculée comme la somme **nette** des **actifs numériques** (en excluant les circuits externes et l'actif **EUR**) pour refléter strictement le périmètre de l'Art. 150 VH bis.
+    - **Unité de Calcul du Capital (A) :** Le Capital Global Investi (A) cumule les apports Fiat (cochés "Acq." en Step 0) ET la valeur EUR des Intérêts/Bonus au jour de leur perception.
+    - **Protection Anti-Redondance EURA :** La VGP et l'inventaire excluent systématiquement les entrées de nature 'Import/Manuel' (`Source_Way == 'Way_3'`) pour l'actif **EURA** afin de ne comptabiliser que les mouvements blockchain réels.
+    - **Standard d'Affichage Acquisition :** Le tableau détaillé des acquisitions affiche : Date, Compte/Label, Asset, Quantité, Montant EUR, Catégorie.
+    - **Audit des Cessions :** Le sommaire des cessions affiche désormais **chaque transaction individuelle** (et non plus par date) pour garantir la traçabilité complète des 6 colonnes du formulaire 2086.
+    - **Identification des Cessions :** Centralisée dans `sl.is_cession_imposable_robust`. Critères : Flux de sortie (`Amount < 0`), non-EUR, et obligatoirement coché **`Imposable`**.
+3. **appInteretBonus (Gestion des Récompenses) :**
+    - **Module Step 2b :** Dédié à la qualification des revenus (Intérêt vs Bonus).
+    - **Registre des Tokens Bonus :** Registre persistant (`bonus_tokens.json`) pour l'auto-classification des Airdrops.
+    - **Valorisation Automatique :** Utilisation des prix certifiés ou historiques pour ajouter la valeur EUR au Capital (A).
+    - **Gateway CLEAN :** Ce module consomme exclusivement le flux sans spam (`load_clean_history`) pour éviter toute pollution fiscale et garantir l'intégrité des calculs.
+
+4. **app3 (Fiscalité) :**
+    - Application stricte de l'Art. 150 VH bis avec calcul séquentiel des abattements.
+    - **Verrou de Sécurité :** Génération PDF interdite si `appDiagCoh` détecte des ruptures de stock (soldes négatifs) pour l'année cible.
+
+---
+
+## VI. STANDARDS TECHNIQUES TRANSVERSES (shared_logic.py)
+
+1. **Gestion Centralisée de l'Année :** La "Première année d'activité" et l'"Année de traitement" sont gérées exclusivement dans la barre latérale du Hub (`main.py`). Il est **formellement interdit** de réintroduire des widgets de sélection d'année (`st.number_input`) dans les sous-modules. Ces derniers doivent consommer `st.session_state["_hub_target_year"]` et afficher un simple rappel textuel de l'année active.
+2. **Persistence Globale :** Utilisation de `global_config.json` pour stocker `start_year`, `processing_year`, et les réglages persistants par application (ex: `appPropri_year`).
+2. **Encodage CSV :** Export systématique en `utf-8-sig` pour assurer la compatibilité Excel/Windows et la préservation des symboles monétaires.
+3. **Nettoyage Automatisé :** Fonction de maintenance en sidebar pour purger les fichiers de travail `raw_*.csv` anciens, en conservant uniquement les deux dates de session les plus récentes.
+4. **Standard UI Streamlit :** Pour éviter les avertissements de dépréciation (post 2025), remplacer systématiquement `use_container_width=True` par `width='stretch'` dans tous les widgets supportant ce paramètre (data_editor, dataframe, button...).
+5. **Type Safety Datetime :** Toute ingestion de donnée doit forcer `pd.to_datetime(..., utc=True)` pour éviter les plantages lors des tris et calculs temporels.
+5. **Identité Unifiée :** Format standard `Identifiant (Label)` imposé par `sl.standardize_address_string`.
