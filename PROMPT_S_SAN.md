@@ -20,8 +20,9 @@ L'application doit permettre :
 4. **L'exploration et la consultation dynamique** :
    - Filtrage par période sélectionnable (Année, Trimestre, Mois, Plage de dates personnalisée).
    - Filtrage multi-comptes, par réseau, projet, devise et statut.
-5. **La totalisation multi-comptes** :
-   - Sommation et métriques consolidées des transactions (montants d'origine et montants convertis en EUR).
+5. **La totalisation multi-comptes à 2 niveaux** :
+   - **Niveau A** : Totalisation par période choisie pour chaque compte individuel.
+   - **Niveau B** : Totalisation par période choisie sur la globalisation de l'ensemble des comptes.
 
 ---
 
@@ -88,21 +89,28 @@ Chaque fichier de sanctuarisation CSV et dataframe interne doit respecter scrupu
 
 ---
 
-## 6. MODULE D'EXPLORATION ET DE TOTALISATION
+## 6. MODULE D'EXPLORATION ET DE TOTALISATION À DEUX NIVEAUX
 
 - **Sélection de Périodes** :
   - Par Année Fiscale complète (ex: 2023, 2024).
   - Par Trimestre (Q1, Q2, Q3, Q4).
   - Par Mois.
   - Par Plage de dates sur-mesure (Date Début -> Date Fin).
-- **Sélection de Comptes / Réseaux** :
-  - Choix multi-comptes ou vue consolidée globale.
-  - Filtres par Réseau (`ETHEREUM`, `BASE`, `ARBITRUM`, etc.) et par Projet.
-- **Tableau de Bord de Totalisation** :
-  - Somme des entrées / sorties par devise d'origine.
-  - Valuation globale totalisée en Euros (EUR).
-  - Répartition par type de transaction et par projet.
-  - Exportation des synthèses totalisées au format CSV ou PDF.
+
+- **Structure des Totalisations (2 Niveaux distincts)** :
+  1. **Niveau A - Totalisation Individuelle par Compte** :
+     - Pour un compte sélectionné et sur la période choisie :
+       - Somme des entrées / sorties par devise d'origine pour ce compte.
+       - Totalisations des montants convertis en EUR.
+       - Détail des mouvements et métriques propres à ce compte.
+  2. **Niveau B - Totalisation Globale / Consolidée** :
+     - Sur l'ensemble des comptes (globalisation multi-comptes) et sur la période choisie :
+       - Consolidation et sommation des flux de tous les comptes réunis.
+       - Total global des valeurs converties en Euros (EUR).
+       - Ventilation multi-comptes et répartition par réseau, projet, et type de transaction.
+
+- **Exportation** :
+  - Possibilité d'exporter les synthèses de totalisation (Niveau A par compte ou Niveau B consolidé) au format CSV ou PDF.
 
 ---
 
