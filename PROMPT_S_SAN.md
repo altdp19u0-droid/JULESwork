@@ -9,11 +9,11 @@ Votre mission est de concevoir et coder une application autonome complète de **
 ## 1. OBJECTIFS ET APPERÇU GÉNÉRAL DE L'APPLICATION
 
 L'application doit permettre :
-1. **La collecte multi-source** :
-   - Lecture directe sur la Blockchain pour les réseaux **ETHEREUM**, **BASE**, et **ARBITRUM**.
+1. **La collecte multi-source (Privilégiant les solutions 100% GRATUITES)** :
+   - Lecture directe sur la Blockchain pour les réseaux **ETHEREUM**, **BASE**, et **ARBITRUM** en utilisant **Blockscout V2 API** en priorité absolue, complété par les APIs gratuites Etherscan/BscScan et RPC publics.
    - Importation et mapping souple de fichiers **CSV** externes provenant de banques, plateformes ou wallets.
-2. **La collecte des taux de change (FX & Crypto/EUR)** :
-   - Récupération automatique des taux de conversion en Euros (EUR) à la date exacte des transactions via l'**ECB (European Central Bank)** / sources officielles.
+2. **La collecte des taux de change (FX & Crypto/EUR via APIS gratuites)** :
+   - Récupération automatique et gratuite des taux de conversion en Euros (EUR) à la date exacte des transactions via l'**ECB (European Central Bank)** / API Frankfurter, complétée par CoinGecko / LlamaCoins (version gratuite).
 3. **La sanctuarisation locale (Windows CSV UTF-8)** :
    - Sauvegarde structurée par année et par compte dans l'arborescence : `sanctuary/{YEAR}/{compte}.csv`.
    - Formatage compatible Windows / Excel en encodage **UTF-8** (`utf-8-sig`).
@@ -64,22 +64,27 @@ Chaque fichier de sanctuarisation CSV et dataframe interne doit respecter scrupu
 
 ---
 
-## 4. RÈGLES DE CONVERSION FX & TAUX DE CHANGE (ECB)
+## 4. RÈGLES DE CONVERSION FX & TAUX DE CHANGE (SOLUTIONS GRATUITES)
 
-1. **Source Banque Centrale Européenne (ECB)** :
-   - Interrogation prioritaire des taux officiels ECB pour toutes les paires Fiat (USD/EUR, GBP/EUR, CHF/EUR, etc.) à la date exact de la transaction.
-2. **Convertisseur Crypto / EUR** :
-   - Pour les actifs crypto natifs ou tokens sur ETHEREUM, BASE et ARBITRUM, dérivation du prix USD vers EUR via le taux ECB USD/EUR du jour.
+1. **Source Banque Centrale Européenne (ECB / API Frankfurter)** :
+   - Interrogation prioritaire gratuite et sans clé d'API pour toutes les paires Fiat (USD/EUR, GBP/EUR, CHF/EUR, etc.) à la date exacte de la transaction.
+2. **Convertisseur Crypto / EUR (APIs Gratuites CoinGecko & DefiLlama / LlamaCoins)** :
+   - Pour les actifs crypto natifs ou tokens sur ETHEREUM, BASE et ARBITRUM, récupération du prix USD via DefiLlama LlamaCoins API (100% gratuite sans clé) ou CoinGecko Public API, puis dérivation vers EUR via le taux officiel ECB USD/EUR du jour.
 3. **Traçabilité** :
-   - Renseigner systématiquement `Paire FX`, `Taux de change appliqué`, `Date du taux de change appliqué`, et `Source du taux de change` (ex: `ECB`).
+   - Renseigner systématiquement `Paire FX`, `Taux de change appliqué`, `Date du taux de change appliqué`, et `Source du taux de change` (ex: `ECB/DefiLlama`).
 
 ---
 
-## 5. MOTEURS DE COLLECTE
+## 5. MOTEURS DE COLLECTE (PRIORITÉ BLOCKSCOUT & GRATUITÉ)
 
 ### A. Collecte Blockchain (ETHEREUM, BASE, ARBITRUM)
-- Connexion aux APIs des explorateurs ou nœuds (EVM RPC / Blockscout / Etherscan-compatible APIs).
-- Extraction des transactions natives, transferts de tokens ERC-20 et interactions avec les contrats.
+- **Priorité 1 : Blockscout V2 Deep Scan API (100% Gratuit & Illimité sans clé API)**
+  - Extraction directe sans clé API via les endpoints Blockscout (`/addresses/{address}/transactions`, `/addresses/{address}/token-transfers`, `/addresses/{address}/internal-transactions`).
+  - Prise en charge des réseaux Ethereum (`eth.blockscout.com`), Base (`base.blockscout.com`), Arbitrum (`arbitrum.blockscout.com`).
+- **Priorité 2 : APIs Etherscan-compatibles gratuites (avec clé gratuite / Free Tier)**
+  - En complément pour les historiques très anciens si nécessaire.
+- **Priorité 3 : RPCs Publics EVM**
+  - Requêtes `eth_getLogs` directes via nœuds RPC gratuits.
 - Normalisation automatique vers le schéma de 17 colonnes.
 
 ### B. Importation par Fichier CSV
@@ -116,6 +121,6 @@ Chaque fichier de sanctuarisation CSV et dataframe interne doit respecter scrupu
 
 ## 7. CONSIGNES DE DÉVELOPPEMENT ET EXÉCUTION
 
-1. L'application doit comporter des contrôles d'erreurs robustes pour les appels d'API réseau/taux FX.
+1. L'application doit comporter des contrôles d'erreurs robustes pour les appels d'API réseau/taux FX avec replis automatiques sur solutions gratuites secondaires.
 2. Tout traitement de DataFrame doit gérer les valeurs manquantes sans faire planter l'application (`fillna`, typage explicite).
 3. Les chemins de fichiers doivent utiliser `pathlib.Path` pour assurer une compatibilité totale entre Windows, Mac et Linux.
