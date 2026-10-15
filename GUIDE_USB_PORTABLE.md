@@ -1,0 +1,86 @@
+# 🔑 GUIDE : CRÉER ET UTILISER SANCTUARY APP SUR UNE CLÉ USB PORTABLE
+
+Oui, **il est parfaitement possible et très avantageux de créer et d'exécuter l'application `SanctuaryApp` directement depuis une Clé USB** (ou disque SSD externe) sous Windows.
+
+---
+
+## 1. AVANTAGES DE LA VERSION CLÉ USB
+
+1. **Portabilité Totale** : Vous pouvez brancher la clé USB sur n'importe quel ordinateur Windows (PC bureau, ordinateur portable, PC de secours) et lancer l'application immédiatement.
+2. **Confidentialité & Sécurité Légale** : Vos fichiers de sanctuarisation (`sanctuary/{YEAR}/{compte}.csv`), l'historique complet de vos comptes et vos clés ne quittent jamais votre clé USB.
+3. **Zéro Empreinte Système** : Aucune donnée n'est envoyée dans le cloud ni enregistrée dans le registre de Windows de l'ordinateur hôte.
+
+---
+
+## 2. ARBORESCENCE PORTABLE SUR LA CLÉ USB
+
+Sur votre clé USB (ex: lecteur `E:\` ou `F:\`), créez le dossier `SanctuaryApp` à la racine :
+
+```text
+E:\SanctuaryApp\                     <-- Racines sur votre Clé USB
+│
+├── lancer_sanctuary_usb.bat        <-- SCRIPT BAT DE LANCEMENT EN UN CLIC
+├── PROMPT_S_SAN.md
+├── ARCHITECTURE_SOLUTIONS.md
+├── GUIDE_INSTALLATION_WINDOWS.md
+├── GUIDE_USB_PORTABLE.md           <-- Le présent guide
+├── requirements.txt
+│
+├── venv\                           <-- Environnement Python autonome (sur la clé)
+│
+├── sanctuary_app\                  <-- Application Streamlit
+│   ├── app.py
+│   └── modules/
+│       ├── schema.py
+│       ├── sanctuary_manager.py
+│       ├── fx_collector.py
+│       ├── blockscout_collector.py
+│       ├── csv_importer.py
+│       └── analytics_engine.py
+│
+└── sanctuary/                      <-- Dossier des sauvegardes sanctuarisées
+    ├── 2023/
+    └── 2024/
+```
+
+---
+
+## 3. ÉTAPES D'INSTALLATION DE LA CLÉ USB PORTABLE
+
+### Étape 1 : Copier les fichiers sur la clé USB
+- Branchez votre clé USB sur votre PC (ex: `E:\`).
+- Copiez le dossier `SanctuaryApp` complet sur la clé USB.
+
+### Étape 2 : Créer l'environnement Python portable sur la clé USB (Une seule fois)
+- Ouvrez l'invite de commande (`cmd.exe`) et déplacez-vous sur la clé USB :
+  ```cmd
+  E:
+  cd SanctuaryApp
+  ```
+- Créez l'environnement virtuel directement sur la clé :
+  ```cmd
+  python -m venv venv
+  ```
+- Activez et installez les dépendances sur la clé USB :
+  ```cmd
+  venv\Scripts\activate
+  pip install -r requirements.txt
+  ```
+
+---
+
+## 4. UTILISATION AU QUOTIDIEN (LANCEMENT EN UN CLIC)
+
+Chaque fois que vous branchez votre clé USB sur un PC Windows :
+
+1. Ouvrez le dossier `SanctuaryApp` situé sur votre clé USB.
+2. **Double-cliquez simplement sur le fichier `lancer_sanctuary_usb.bat`**.
+3. Le script détectera automatiquement la lettre de votre clé USB (grâce à la commande relative `%~dp0`), activera l'environnement Python de la clé et lancera Streamlit.
+4. Votre navigateur s'ouvrira automatiquement sur l'application `http://localhost:8501`.
+
+---
+
+## 5. CONSEILS ET BONNES PRATIQUES POUR LA CLÉ USB
+
+- **Type de Clé USB** : Utilisez de préférence une clé USB 3.0/3.1 ou un petit SSD externe USB-C/USB-A pour des vitesses de lecture/écriture rapides.
+- **Sauvegarde de la Clé (Backup)** : Conservez régulièrement une copie de secours du dossier `sanctuary/` de votre clé USB sur un autre support sécurisé (ou une deuxième clé USB miroir).

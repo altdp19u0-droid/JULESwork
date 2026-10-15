@@ -43,7 +43,7 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
     network = col2.selectbox("Réseau Blockchain", list(BLOCKSCOUT_NETWORKS.keys()))
     target_year = col3.number_input("Année Fiscale", value=datetime.now().year, step=1)
 
-    account_label = st.text_input("Libellé / Nom du Compte pour le Sanctuarisation", value=f"{address[:8]}_{network}" if address else "")
+    account_label = st.text_input("Libellé / Nom du Compte pour la Sanctuarisation", value=f"{address[:8]}_{network}" if address else "")
 
     if st.button("🚀 Lancer la récolte Blockscout"):
         if not address or not address.startswith("0x"):
@@ -56,7 +56,7 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
                 st.warning("Aucune transaction trouvée pour cette adresse sur ce réseau.")
             else:
                 st.success(f"{len(df_harvested)} transactions récupérées avec succès !")
-                st.dataframe(df_harvested, width="stretch")
+                st.dataframe(df_harvested, use_container_width=True)
 
                 # Sauvegarde directe dans sanctuary/{YEAR}/{compte}.csv
                 saved_path = save_to_sanctuary(df_harvested, target_year, account_label)
@@ -108,7 +108,7 @@ elif menu == "📥 Import CSV Externe":
                 else:
                     saved_path = save_to_sanctuary(df_mapped, imp_year, imp_account)
                     st.success(f"✅ {len(df_mapped)} lignes sanctuarisées avec succès dans `{saved_path}` !")
-                    st.dataframe(df_mapped, width="stretch")
+                    st.dataframe(df_mapped, use_container_width=True)
         except Exception as e:
             st.error(f"Erreur de lecture du fichier CSV : {e}")
 
@@ -131,11 +131,11 @@ elif menu == "🔍 Consultation & Sanctuarisation":
             sel_acc = c1.selectbox("Sélectionner le Compte", accounts)
             df_view = load_sanctuary_account(sel_year, sel_acc)
             st.subheader(f"📄 Fichier : `sanctuary/{sel_year}/{sel_acc}.csv` ({len(df_view)} lignes)")
-            st.dataframe(df_view, width="stretch")
+            st.dataframe(df_view, use_container_width=True)
         else:
             df_view = load_all_sanctuary_for_year(sel_year)
             st.subheader(f"🌐 Consolidation Globale {sel_year} ({len(df_view)} transactions réunies)")
-            st.dataframe(df_view, width="stretch")
+            st.dataframe(df_view, use_container_width=True)
 
 
 # --- MENU 4 : TOTALISATION À 2 NIVEAUX ---
@@ -195,10 +195,10 @@ elif menu == "📊 Totalisation (2 Niveaux)":
                 m2.metric("Totalisation Valorisée (EUR)", f"{tot_a['total_eur']:,.2f} €")
 
                 st.subheader("Ventilation par Devise d'Origine")
-                st.dataframe(tot_a["by_currency"], width="stretch")
+                st.dataframe(tot_a["by_currency"], use_container_width=True)
 
                 st.subheader("Ventilation par Type de Transaction")
-                st.dataframe(tot_a["by_type"], width="stretch")
+                st.dataframe(tot_a["by_type"], use_container_width=True)
 
         # --- NIVEAU B : GLOBALISATION MULTI-COMPTES ---
         with tab_level_b:
@@ -213,14 +213,14 @@ elif menu == "📊 Totalisation (2 Niveaux)":
             b_col1, b_col2 = st.columns(2)
             with b_col1:
                 st.subheader("Répartition par Compte Sanctuarisé")
-                st.dataframe(tot_b["by_account"], width="stretch")
+                st.dataframe(tot_b["by_account"], use_container_width=True)
 
                 st.subheader("Répartition par Réseau")
-                st.dataframe(tot_b["by_network"], width="stretch")
+                st.dataframe(tot_b["by_network"], use_container_width=True)
 
             with b_col2:
                 st.subheader("Répartition par Projet / Protocole")
-                st.dataframe(tot_b["by_project"], width="stretch")
+                st.dataframe(tot_b["by_project"], use_container_width=True)
 
                 st.subheader("Répartition par Type de Transaction")
-                st.dataframe(tot_b["by_type"], width="stretch")
+                st.dataframe(tot_b["by_type"], use_container_width=True)
