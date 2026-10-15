@@ -41,7 +41,10 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
     col1, col2, col3 = st.columns([2, 1, 1])
     address = col1.text_input("Adresse EVM (0x...)", placeholder="0x...")
     network = col2.selectbox("Réseau Blockchain", list(BLOCKSCOUT_NETWORKS.keys()))
-    target_year = col3.number_input("Année Fiscale Préférée", value=datetime.now().year, step=1)
+
+    # Choix d'Année Fiscale par Selectbox flexible
+    years_options = [2026, 2025, 2024, 2023, 2022, 2021, 2020]
+    target_year = col3.selectbox("Année Fiscale Cible", options=years_options, index=1, key="harvest_target_year")
 
     account_label = st.text_input("Libellé / Nom du Compte pour la Sanctuarisation", value=f"{address[:8]}_{network}" if address else "")
 
@@ -51,7 +54,8 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
             f"📌 Strictement restreindre et enregistrer pour l'Année Fiscale sélectionnée ({target_year})",
             "📅 Ventilation automatique globale dans chaque sous-dossier d'année réelle (sanctuary/{ANNÉE_RÉELLE}/{compte}.csv)"
         ],
-        index=0
+        index=0,
+        key=f"dispatch_mode_{target_year}"
     )
 
     filter_year_only = "Strictement" in dispatch_mode
@@ -60,7 +64,7 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
         if not address or not address.startswith("0x"):
             st.error("Veuillez saisir une adresse EVM valide.")
         else:
-            with st.spinner(f"Extraction des transactions sur {network} via Blockscout..."):
+            with st.spinner(f"Extraction des transactions sur {network} via Blockscout pour l'année {target_year}..."):
                 target_yr = int(target_year) if filter_year_only else None
                 df_harvested = fetch_blockscout_data(address, network, target_year=target_yr)
 
@@ -113,7 +117,7 @@ elif menu == "📥 Import CSV Externe":
             st.divider()
             ic1, ic2, ic3 = st.columns(3)
             default_net = ic1.selectbox("Réseau / Source", ["FIAT", "ETHEREUM", "BASE", "ARBITRUM", "BANQUE"], index=0)
-            imp_year = ic2.number_input("Année Fiscale Cible", value=datetime.now().year, step=1)
+            imp_year = ic2.selectbox("Année Fiscale Cible", options=[2026, 2025, 2024, 2023, 2022], index=1)
             imp_account = ic3.text_input("Nom du Compte Cible", value="Compte_Import_CSV")
 
             if st.button("💾 Valider et Sanctuariser l'Importation"):
