@@ -48,40 +48,34 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
     dispatch_mode = st.radio(
         "Mode de Sanctuarisation des Fichiers CSV :",
         [
-            "📅 Ventilation automatique par année réelle (sanctuary/{ANNÉE_RÉELLE}/{compte}.csv)",
-            f"📌 Forcer toutes les transactions dans l'année choisie ({target_year})"
+            f"📌 Strictement restreindre et enregistrer pour l'Année Fiscale sélectionnée ({target_year})",
+            "📅 Ventilation automatique globale dans chaque sous-dossier d'année réelle (sanctuary/{ANNÉE_RÉELLE}/{compte}.csv)"
         ],
         index=0
     )
 
-    filter_year_only = st.checkbox("Ne conserver que les transactions de l'Année Fiscale sélectionnée avant sauvegarde", value=False)
+    filter_year_only = "Strictement" in dispatch_mode
 
     if st.button("🚀 Lancer la récolte Blockscout"):
         if not address or not address.startswith("0x"):
             st.error("Veuillez saisir une adresse EVM valide.")
         else:
             with st.spinner(f"Extraction des transactions sur {network} via Blockscout..."):
-                df_harvested = fetch_blockscout_data(address, network)
+                target_yr = int(target_year) if filter_year_only else None
+                df_harvested = fetch_blockscout_data(address, network, target_year=target_yr)
 
             if df_harvested.empty:
-                st.warning("Aucune transaction trouvée pour cette adresse sur ce réseau.")
+                st.warning(f"Aucune transaction trouvée pour l'année {target_year} sur ce réseau." if filter_year_only else "Aucune transaction trouvée pour cette adresse sur ce réseau.")
             else:
-                if filter_year_only:
-                    df_harvested["_year"] = pd.to_datetime(df_harvested["Date de la transaction"], errors="coerce").dt.year
-                    df_harvested = df_harvested[df_harvested["_year"] == int(target_year)].drop(columns=["_year"])
+                st.success(f"{len(df_harvested)} transactions récupérées avec succès pour l'année {target_year} !" if filter_year_only else f"{len(df_harvested)} transactions récupérées avec succès !")
+                st.dataframe(df_harvested, use_container_width=True)
 
-                if df_harvested.empty:
-                    st.warning(f"Aucune transaction trouvée pour l'année spécifique {target_year}.")
-                else:
-                    st.success(f"{len(df_harvested)} transactions récupérées avec succès !")
-                    st.dataframe(df_harvested, use_container_width=True)
+                auto_disp = not filter_year_only
+                saved_paths = save_to_sanctuary(df_harvested, int(target_year), account_label, auto_dispatch_year=auto_disp)
 
-                    auto_disp = "Ventilation automatique" in dispatch_mode
-                    saved_paths = save_to_sanctuary(df_harvested, int(target_year), account_label, auto_dispatch_year=auto_disp)
-
-                    st.success("✅ Données sanctuarisées dans le(s) fichier(s) :")
-                    for p in saved_paths:
-                        st.write(f"- `{p}`")
+                st.success("✅ Données sanctuarisées dans le(s) fichier(s) :")
+                for p in saved_paths:
+                    st.write(f"- `{p}`")
 
 
 # --- MENU 2 : IMPORT CSV EXTERNE ---

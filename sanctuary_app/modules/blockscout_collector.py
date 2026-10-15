@@ -37,10 +37,11 @@ def get_headers(domain_url: str) -> dict:
         "Referer": f"{domain_url}/"
     }
 
-def fetch_blockscout_data(address: str, network: str, max_pages: int = 5, api_key: str = None) -> pd.DataFrame:
+def fetch_blockscout_data(address: str, network: str, target_year: int = None, max_pages: int = 15, api_key: str = None) -> pd.DataFrame:
     """
     Récupère l'intégralité des transactions (natives, tokens ERC-20/721/1155, internes et frais de gaz) d'une adresse
     via l'API V2 Blockscout (avec repli V1) sans aucune clé API requise.
+    Si target_year est fourni, ne conserve QUE les transactions de cette année spécifique.
     """
     net_key = network.upper().strip()
     if net_key not in BLOCKSCOUT_NETWORKS or not address or not address.startswith("0x"):
@@ -77,6 +78,18 @@ def fetch_blockscout_data(address: str, network: str, max_pages: int = 5, api_ke
                         if not tx_hash:
                             continue
 
+                        # Extraction Date & Filtrage par Année
+                        dt_str = t.get("timestamp") or t.get("timeStamp")
+                        if dt_str and not str(dt_str).isdigit():
+                            dt = datetime.fromisoformat(str(dt_str).replace("Z", "+00:00"))
+                        elif dt_str:
+                            dt = datetime.fromtimestamp(int(dt_str))
+                        else:
+                            dt = datetime.now()
+
+                        if target_year and dt.year != int(target_year):
+                            continue
+
                         tok = t.get("token") or {}
                         tot = t.get("total") or {}
 
@@ -85,14 +98,6 @@ def fetch_blockscout_data(address: str, network: str, max_pages: int = 5, api_ke
 
                         raw_val = float(tot.get("value") or t.get("value") or 0)
                         amount = raw_val / (10 ** dec) if dec > 0 else raw_val
-
-                        dt_str = t.get("timestamp") or t.get("timeStamp")
-                        if dt_str and not str(dt_str).isdigit():
-                            dt = datetime.fromisoformat(str(dt_str).replace("Z", "+00:00"))
-                        elif dt_str:
-                            dt = datetime.fromtimestamp(int(dt_str))
-                        else:
-                            dt = datetime.now()
 
                         f_addr = (t.get("from") if isinstance(t.get("from"), str) else (t.get("from") or {}).get("hash", "")).lower()
                         t_addr = (t.get("to") if isinstance(t.get("to"), str) else (t.get("to") or {}).get("hash", "")).lower()
@@ -163,9 +168,6 @@ def fetch_blockscout_data(address: str, network: str, max_pages: int = 5, api_ke
                         if not tx_hash:
                             continue
 
-                        f_addr = (t.get("from") if isinstance(t.get("from"), str) else (t.get("from") or {}).get("hash", "")).lower()
-                        t_addr = (t.get("to") if isinstance(t.get("to"), str) else (t.get("to") or {}).get("hash", "")).lower()
-
                         dt_str = t.get("timestamp") or t.get("timeStamp")
                         if dt_str and not str(dt_str).isdigit():
                             dt = datetime.fromisoformat(str(dt_str).replace("Z", "+00:00"))
@@ -173,6 +175,12 @@ def fetch_blockscout_data(address: str, network: str, max_pages: int = 5, api_ke
                             dt = datetime.fromtimestamp(int(dt_str))
                         else:
                             dt = datetime.now()
+
+                        if target_year and dt.year != int(target_year):
+                            continue
+
+                        f_addr = (t.get("from") if isinstance(t.get("from"), str) else (t.get("from") or {}).get("hash", "")).lower()
+                        t_addr = (t.get("to") if isinstance(t.get("to"), str) else (t.get("to") or {}).get("hash", "")).lower()
 
                         raw_val = float(t.get("value") or 0) / 10**18
                         fee_obj = t.get("fee") or {}
