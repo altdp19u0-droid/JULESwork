@@ -5,7 +5,7 @@ import requests
 from datetime import datetime, date
 import time
 
-# Cache mémoire pour éviter les requêtes HTTP répétitives
+# Cache mémoire avec TTL pour éviter les requêtes HTTP répétitives
 FX_CACHE = {}
 
 def get_ecb_eur_rate(target_currency: str, date_obj) -> float:
@@ -29,9 +29,12 @@ def get_ecb_eur_rate(target_currency: str, date_obj) -> float:
     if cache_key in FX_CACHE:
         return FX_CACHE[cache_key]
 
+    # Defaults de sécurité immédiats si échec HTTP
+    defaults = {"USD": 0.92, "GBP": 1.17, "CHF": 1.05, "CAD": 0.68, "JPY": 0.006}
+
     try:
         url = f"https://api.frankfurter.app/{d_str}?from={curr}&to=EUR"
-        res = requests.get(url, timeout=5)
+        res = requests.get(url, timeout=2.5)
         if res.status_code == 200:
             val = float(res.json()["rates"]["EUR"])
             FX_CACHE[cache_key] = val
@@ -39,9 +42,9 @@ def get_ecb_eur_rate(target_currency: str, date_obj) -> float:
     except Exception:
         pass
 
-    # Taux de repli de secours si serveur de la BCE inaccessible
-    defaults = {"USD": 0.92, "GBP": 1.17, "CHF": 1.05, "CAD": 0.68, "JPY": 0.006}
-    return defaults.get(curr, 0.92)
+    fallback = defaults.get(curr, 0.92)
+    FX_CACHE[cache_key] = fallback
+    return fallback
 
 def get_crypto_usd_price_defillama(asset: str, date_obj) -> float:
     """
@@ -85,7 +88,7 @@ def get_crypto_usd_price_defillama(asset: str, date_obj) -> float:
 
     try:
         url = f"https://coins.llama.fi/prices/historical/{ts}/{cg_id}"
-        res = requests.get(url, timeout=5)
+        res = requests.get(url, timeout=2.5)
         if res.status_code == 200:
             data = res.json().get("coins", {})
             if cg_id in data:
@@ -95,6 +98,7 @@ def get_crypto_usd_price_defillama(asset: str, date_obj) -> float:
     except Exception:
         pass
 
+    FX_CACHE[cache_key] = 0.0
     return 0.0
 
 def convert_to_eur(amount: float, asset_or_currency: str, date_obj) -> tuple:

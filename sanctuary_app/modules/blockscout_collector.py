@@ -37,11 +37,11 @@ def get_headers(domain_url: str) -> dict:
         "Referer": f"{domain_url}/"
     }
 
-def fetch_blockscout_data(address: str, network: str, target_year: int = None, max_pages: int = 15, api_key: str = None) -> pd.DataFrame:
+def fetch_blockscout_data(address: str, network: str, target_year: int = None, max_pages: int = 200, api_key: str = None) -> pd.DataFrame:
     """
     Récupère l'intégralité des transactions (natives, tokens ERC-20/721/1155, internes et frais de gaz) d'une adresse
-    via l'API V2 Blockscout (avec repli V1) sans aucune clé API requise.
-    Si target_year est fourni, ne conserve QUE les transactions de cette année spécifique.
+    via l'API V2 Blockscout sans aucune clé API requise.
+    Pagine profondément à travers le temps jusqu'à atteindre l'année fiscale cible si spécifiée.
     """
     net_key = network.upper().strip()
     if net_key not in BLOCKSCOUT_NETWORKS or not address or not address.startswith("0x"):
@@ -65,7 +65,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
 
     while token_url and pages_fetched < max_pages:
         try:
-            res = session.get(token_url, timeout=8)
+            res = session.get(token_url, timeout=10)
             if res.status_code == 200:
                 data = res.json()
                 items = data.get("items", [])
@@ -78,7 +78,6 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                         if not tx_hash:
                             continue
 
-                        # Extraction Date & Filtrage par Année
                         dt_str = t.get("timestamp") or t.get("timeStamp")
                         if dt_str and not str(dt_str).isdigit():
                             dt = datetime.fromisoformat(str(dt_str).replace("Z", "+00:00"))
@@ -87,6 +86,12 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                         else:
                             dt = datetime.now()
 
+                        # Si target_year est défini et qu'on descend au-delà de l'année cible, on s'arrête prématurément
+                        if target_year and dt.year < int(target_year):
+                            token_url = None
+                            break
+
+                        # Si la transaction appartient à une autre année (ex: 2026 alors que l'année cible est 2025), on passe
                         if target_year and dt.year != int(target_year):
                             continue
 
@@ -136,6 +141,9 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                     except Exception:
                         continue
 
+                if token_url is None:
+                    break
+
                 pages_fetched += 1
                 next_params = data.get("next_page_params")
                 if next_params and isinstance(next_params, dict):
@@ -143,7 +151,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                     token_url = f"{v2_base}/addresses/{addr_low}/token-transfers?{q_str}"
                 else:
                     token_url = None
-                time.sleep(0.05)
+                time.sleep(0.02)
             else:
                 break
         except Exception:
@@ -155,7 +163,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
 
     while tx_url and pages_fetched < max_pages:
         try:
-            res = session.get(tx_url, timeout=8)
+            res = session.get(tx_url, timeout=10)
             if res.status_code == 200:
                 data = res.json()
                 items = data.get("items", [])
@@ -176,6 +184,10 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                         else:
                             dt = datetime.now()
 
+                        if target_year and dt.year < int(target_year):
+                            tx_url = None
+                            break
+
                         if target_year and dt.year != int(target_year):
                             continue
 
@@ -187,7 +199,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                         gas_fee = float(fee_obj.get("value") or 0) / 10**18
                         method = t.get("method") or "Contract Call"
 
-                        # Extraction des token transfers imbriqués
+                        # Embedded token transfers
                         embedded_tokens = t.get("token_transfers") or []
                         if embedded_tokens and isinstance(embedded_tokens, list):
                             for tt in embedded_tokens:
@@ -296,6 +308,9 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                     except Exception:
                         continue
 
+                if tx_url is None:
+                    break
+
                 pages_fetched += 1
                 next_params = data.get("next_page_params")
                 if next_params and isinstance(next_params, dict):
@@ -303,7 +318,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                     tx_url = f"{v2_base}/addresses/{addr_low}/transactions?{q_str}"
                 else:
                     tx_url = None
-                time.sleep(0.05)
+                time.sleep(0.02)
             else:
                 break
         except Exception:
