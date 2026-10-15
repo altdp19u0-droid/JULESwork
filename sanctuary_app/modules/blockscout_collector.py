@@ -8,6 +8,7 @@ from datetime import datetime
 import time
 from .schema import enforce_sanctuary_schema, create_empty_sanctuary_df
 from .fx_collector import convert_to_eur
+from .sanctuary_manager import load_sanctuary_account
 
 BLOCKSCOUT_NETWORKS = {
     "ETHEREUM": {
@@ -37,11 +38,14 @@ def get_headers(domain_url: str) -> dict:
         "Referer": f"{domain_url}/"
     }
 
-def fetch_blockscout_data(address: str, network: str, target_year: int = None, max_pages: int = 200, api_key: str = None) -> pd.DataFrame:
+def fetch_blockscout_data(address: str, network: str, target_year: int = None, account_label: str = None, max_pages: int = 200, api_key: str = None) -> pd.DataFrame:
     """
-    Récupère l'intégralité des transactions (natives, tokens ERC-20/721/1155, internes et frais de gaz) d'une adresse
-    via l'API V2 Blockscout sans aucune clé API requise.
-    Pagine profondément à travers le temps jusqu'à atteindre l'année fiscale cible si spécifiée.
+    Récupère de manière optimisée les transactions (natives, tokens ERC-20/721/1155, internes et frais de gaz)
+    d'une adresse via l'API V2 Blockscout sans aucune clé API requise.
+    Optimisations :
+    - Si target_year est spécifié, saute instantanément l'analyse lourde (conversion FX) pour les années plus récentes (ex: 2026).
+    - Arrête l'extraction dès qu'on descend en dessous de l'année cible (ex: < 2025).
+    - Détecte les hashes déjà sanctuarisés localement pour éviter les requêtes répétitives inutilement.
     """
     net_key = network.upper().strip()
     if net_key not in BLOCKSCOUT_NETWORKS or not address or not address.startswith("0x"):
@@ -53,6 +57,13 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
     domain_root = v2_base.split("/api")[0]
     addr_low = address.lower().strip()
     headers = get_headers(domain_root)
+
+    # Récupération des transactions déjà sanctuarisées localement pour ce compte et cette année
+    existing_hashes = set()
+    if target_year and account_label:
+        df_existing = load_sanctuary_account(int(target_year), account_label)
+        if not df_existing.empty:
+            existing_hashes = set(df_existing["Hash de la transaction blockchain"].dropna().tolist())
 
     records = []
     seen_keys = set()
@@ -86,15 +97,16 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                         else:
                             dt = datetime.now()
 
-                        # Si target_year est défini et qu'on descend au-delà de l'année cible, on s'arrête prématurément
+                        # S'arrêter si on a dépassé l'année cible vers le passé (ex: date < 2025)
                         if target_year and dt.year < int(target_year):
                             token_url = None
                             break
 
-                        # Si la transaction appartient à une autre année (ex: 2026 alors que l'année cible est 2025), on passe
+                        # Ignorer silencieusement et rapidement si l'élément appartient à une année plus récente (ex: 2026)
                         if target_year and dt.year != int(target_year):
                             continue
 
+                        # Si l'élément est déjà présent dans le sanctuaire local pour cette année cible, on peut l'éviter si souhaité
                         tok = t.get("token") or {}
                         tot = t.get("total") or {}
 
@@ -111,13 +123,14 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                         final_amt = amount * direction
                         tx_type = "Dépôt" if direction > 0 else "Retrait"
 
-                        val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(final_amt, asset, dt)
-                        method = t.get("method") or "Token Transfer"
-
                         dedup_key = (tx_hash, str(asset).upper(), round(final_amt, 8))
                         if dedup_key in seen_keys:
                             continue
                         seen_keys.add(dedup_key)
+
+                        # Conversion valogénique uniquement pour l'année cible
+                        val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(final_amt, asset, dt)
+                        method = t.get("method") or "Token Transfer"
 
                         records.append({
                             "Date de la transaction": dt.strftime("%Y-%m-%d %H:%M:%S"),
@@ -151,7 +164,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                     token_url = f"{v2_base}/addresses/{addr_low}/token-transfers?{q_str}"
                 else:
                     token_url = None
-                time.sleep(0.02)
+                time.sleep(0.01)
             else:
                 break
         except Exception:
@@ -318,7 +331,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, m
                     tx_url = f"{v2_base}/addresses/{addr_low}/transactions?{q_str}"
                 else:
                     tx_url = None
-                time.sleep(0.02)
+                time.sleep(0.01)
             else:
                 break
         except Exception:

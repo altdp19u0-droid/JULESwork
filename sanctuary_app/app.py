@@ -35,40 +35,38 @@ menu = st.sidebar.radio(
 
 # --- MENU 1 : INGESTION BLOCKCHAIN (BLOCKSCOUT V2) ---
 if menu == "🚜 Ingestion Blockchain (Blockscout)":
-    st.header("🚜 Collecte Blockchain (100% Gratuit via Blockscout V2)")
-    st.info("Extraction directe des transactions natives, tokens ERC-20/721/1155 et internes sans aucune clé API requise.")
+    st.header("🚜 Collecte Blockchain Ciblé par Année (100% Gratuit via Blockscout V2)")
+    st.info("Extraction ciblée année par année pour optimiser la récolte sans re-traiter les années déjà sanctuarisées.")
 
     col1, col2, col3 = st.columns([2, 1, 1])
     address = col1.text_input("Adresse EVM (0x...)", placeholder="0x...")
     network = col2.selectbox("Réseau Blockchain", list(BLOCKSCOUT_NETWORKS.keys()))
 
-    # Choix d'Année Fiscale Cible
     years_options = [2026, 2025, 2024, 2023, 2022, 2021, 2020]
-    target_year = col3.selectbox("Année Fiscale Cible", options=years_options, index=1, key="harvest_target_year")
+    target_year = col3.selectbox("Année Fiscale à Récolter", options=years_options, index=1, key="harvest_target_year")
 
     account_label = st.text_input("Libellé / Nom du Compte pour la Sanctuarisation", value=f"{address[:8]}_{network}" if address else "")
 
     dispatch_mode = st.radio(
-        "Mode de Sanctuarisation & Filtrage des Fichiers CSV :",
+        "Mode de Sanctuarisation :",
         [
-            f"📌 Restreindre STRICTEMENT et enregistrer UNIQUEMENT pour l'Année Fiscale Cible ({target_year})",
-            "📅 Ventilation automatique globale dans chaque sous-dossier d'année réelle (sanctuary/{ANNÉE_RÉELLE}/{compte}.csv)"
+            f"🎯 Récolte CIBLÉE STRICTE : Récupérer uniquement l'Année Fiscale {target_year} -> sanctuary/{target_year}/{account_label}.csv",
+            "📅 Ventilation globale multi-années (sanctuary/{ANNÉE_RÉELLE}/{compte}.csv)"
         ],
         index=0,
         key=f"dispatch_mode_{target_year}"
     )
 
-    filter_strict_target_year = "STRICTEMENT" in dispatch_mode
+    filter_strict_target_year = "CIBLÉE STRICTE" in dispatch_mode
 
-    if st.button("🚀 Lancer la récolte Blockscout"):
+    if st.button("🚀 Lancer la récolte ciblée Blockscout"):
         if not address or not address.startswith("0x"):
             st.error("Veuillez saisir une adresse EVM valide.")
         else:
-            with st.spinner(f"Extraction des transactions sur {network} via Blockscout pour l'année {target_year}..."):
+            with st.spinner(f"Extraction rapide ciblée sur l'année {target_year} ({network})..."):
                 target_yr = int(target_year) if filter_strict_target_year else None
-                df_harvested = fetch_blockscout_data(address, network, target_year=target_yr)
+                df_harvested = fetch_blockscout_data(address, network, target_year=target_yr, account_label=account_label)
 
-            # Double vérification stricte au niveau DataFrame
             if filter_strict_target_year and not df_harvested.empty:
                 df_harvested["_temp_yr"] = pd.to_datetime(df_harvested["Date de la transaction"], errors="coerce").dt.year
                 df_harvested = df_harvested[df_harvested["_temp_yr"] == int(target_year)].drop(columns=["_temp_yr"])
@@ -76,7 +74,7 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
             if df_harvested.empty:
                 st.warning(f"Aucune transaction trouvée pour l'année {target_year} sur ce réseau." if filter_strict_target_year else "Aucune transaction trouvée pour cette adresse sur ce réseau.")
             else:
-                st.success(f"{len(df_harvested)} transactions récupérées avec succès pour l'année {target_year} !" if filter_strict_target_year else f"{len(df_harvested)} transactions récupérées avec succès !")
+                st.success(f"✅ {len(df_harvested)} transactions récupérées avec succès pour l'année {target_year} !" if filter_strict_target_year else f"{len(df_harvested)} transactions récupérées avec succès !")
                 st.dataframe(df_harvested, use_container_width=True)
 
                 auto_disp = not filter_strict_target_year
