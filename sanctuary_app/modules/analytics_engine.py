@@ -49,6 +49,9 @@ def totalize_level_a(account_df: pd.DataFrame) -> dict:
         }
 
     df = account_df.copy()
+    df["Devise d'origine"] = df["Devise d'origine"].fillna("Inconnue")
+    df["Type de transaction"] = df["Type de transaction"].fillna("Autre")
+
     total_count = len(df)
     total_eur = float(df["Montant du relevé"].sum())
 
@@ -89,6 +92,11 @@ def totalize_level_b(all_accounts_df: pd.DataFrame) -> dict:
     total_eur = float(df["Montant du relevé"].sum())
 
     acc_col = "Compte_Sanctuaire" if "Compte_Sanctuaire" in df.columns else "Réseau"
+
+    df[acc_col] = df[acc_col].fillna("Inconnu")
+    df["Réseau"] = df["Réseau"].fillna("Inconnu")
+    df["Nom du projet"] = df["Nom du projet"].fillna("Non spécifié")
+    df["Type de transaction"] = df["Type de transaction"].fillna("Autre")
 
     by_account = df.groupby(acc_col).agg(
         Total_EUR=("Montant du relevé", "sum"),

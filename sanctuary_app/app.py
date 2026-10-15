@@ -36,7 +36,7 @@ menu = st.sidebar.radio(
 # --- MENU 1 : INGESTION BLOCKCHAIN (BLOCKSCOUT V2) ---
 if menu == "🚜 Ingestion Blockchain (Blockscout)":
     st.header("🚜 Collecte Blockchain (100% Gratuit via Blockscout V2)")
-    st.info("Extraction directe des transactions natives, tokens ERC-20 et internes sans aucune clé API requise.")
+    st.info("Extraction directe des transactions natives, tokens ERC-20/721/1155 et internes sans aucune clé API requise.")
 
     col1, col2, col3 = st.columns([2, 1, 1])
     address = col1.text_input("Adresse EVM (0x...)", placeholder="0x...")
@@ -84,7 +84,7 @@ elif menu == "📥 Import CSV Externe":
 
             for idx, req_col in enumerate(REQUIRED_COLUMNS):
                 col_target = m1 if idx % 2 == 0 else m2
-                default_match = req_col if req_col in csv_cols else (csv_cols[0] if csv_cols else None)
+                default_match = req_col if req_col in csv_cols else None
                 col_mapping[req_col] = col_target.selectbox(
                     f"Champ Sanctuary : **{req_col}**",
                     options=["-- Ignorer --"] + csv_cols,
