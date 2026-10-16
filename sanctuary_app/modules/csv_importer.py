@@ -1,5 +1,5 @@
 """
-Module d'importation et mapping dynamique de CSV arbitraires vers le schéma Sanctuary des 17 colonnes.
+Module d'importation et mapping dynamique de CSV arbitraires vers le schéma Sanctuary des 19 colonnes.
 """
 import pandas as pd
 from datetime import datetime
@@ -9,10 +9,10 @@ from .fx_collector import convert_to_eur
 def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = "FIAT") -> pd.DataFrame:
     """
     Prend un fichier CSV téléchargé et un dictionnaire de correspondance de colonnes
-    pour générer un DataFrame conforme au schéma des 17 colonnes.
+    pour générer un DataFrame conforme au schéma des 19 colonnes.
+    Inscrit les numéros/noms de compte en entier.
     """
     try:
-        # Essai de lecture avec séparateurs courants et encodages
         try:
             raw_df = pd.read_csv(file_obj, encoding="utf-8-sig", sep=None, engine="python")
         except Exception:
@@ -31,7 +31,7 @@ def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = 
             for target_col in REQUIRED_COLUMNS:
                 source_col = column_mapping.get(target_col)
                 if source_col and source_col in raw_df.columns and pd.notna(row[source_col]):
-                    record[target_col] = row[source_col]
+                    record[target_col] = str(row[source_col]).strip()
                 else:
                     record[target_col] = None
 

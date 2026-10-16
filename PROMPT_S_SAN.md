@@ -26,9 +26,9 @@ L'application doit permettre :
 
 ---
 
-## 2. SCHÉMA STRICT DES DONNÉES (17 COLONNES OBLIGATOIRES)
+## 2. SCHÉMA STRICT DES DONNÉES (19 COLONNES OBLIGATOIRES)
 
-Chaque fichier de sanctuarisation CSV et dataframe interne doit respecter scrupuleusement la structure des 17 colonnes suivantes :
+Chaque fichier de sanctuarisation CSV et dataframe interne doit respecter scrupuleusement la structure des 19 colonnes suivantes :
 
 | N° | Nom de la colonne | Description / Format |
 |---|---|---|
@@ -48,7 +48,9 @@ Chaque fichier de sanctuarisation CSV et dataframe interne doit respecter scrupu
 | 14 | `Statut de la transaction` | `Validé`, `En attente`, `Échoué`, `Sanctuarisé` |
 | 15 | `Réseau` | `ETHEREUM`, `BASE`, `ARBITRUM`, ou `FIAT` |
 | 16 | `Hash de la transaction blockchain` | Hash TX 0x... ou ID unique d'import |
-| 17 | `Notes banque fiat d'origine ou de destination` | Notes, libellés bancaires, IBAN, contrepartie ou mémorandum |
+| 17 | `Notes` | Mémorandum, méthode appelée ou notes libres |
+| 18 | `Nom et numéro [Banque fiat ou compte] d'origine` | Adresse/Compte/IBAN émetteur complet inscrit en entier |
+| 19 | `Nom et numéro [Banque fiat ou compte] de destination` | Adresse/Compte/IBAN destinataire complet inscrit en entier |
 
 ---
 
@@ -80,16 +82,12 @@ Chaque fichier de sanctuarisation CSV et dataframe interne doit respecter scrupu
 ### A. Collecte Blockchain (ETHEREUM, BASE, ARBITRUM)
 - **Priorité 1 : Blockscout V2 Deep Scan API (100% Gratuit & Illimité sans clé API)**
   - Extraction directe sans clé API via les endpoints Blockscout (`/addresses/{address}/transactions`, `/addresses/{address}/token-transfers`, `/addresses/{address}/internal-transactions`).
-  - Prise en charge des réseaux Ethereum (`eth.blockscout.com`), Base (`base.blockscout.com`), Arbitrum (`arbitrum.blockscout.com`).
-- **Priorité 2 : APIs Etherscan-compatibles gratuites (avec clé gratuite / Free Tier)**
-  - En complément pour les historiques très anciens si nécessaire.
-- **Priorité 3 : RPCs Publics EVM**
-  - Requêtes `eth_getLogs` directes via nœuds RPC gratuits.
-- Normalisation automatique vers le schéma de 17 colonnes.
+  - Renseignement complet et sans aucune tronquature des colonnes émetteur et destinataire.
+- Normalisation automatique vers le schéma de 19 colonnes.
 
 ### B. Importation par Fichier CSV
 - Interface d'importation permettant de charger un fichier CSV arbitraire.
-- Assistant de mapping permettant de faire correspondre les colonnes du CSV source aux 17 colonnes requises.
+- Assistant de mapping permettant de faire correspondre les colonnes du CSV source aux 19 colonnes requises.
 - Validation des types de données avant écriture dans `sanctuary/{YEAR}/{compte}.csv`.
 
 ---
@@ -104,23 +102,14 @@ Chaque fichier de sanctuarisation CSV et dataframe interne doit respecter scrupu
 
 - **Structure des Totalisations (2 Niveaux distincts)** :
   1. **Niveau A - Totalisation Individuelle par Compte** :
-     - Pour un compte sélectionné et sur la période choisie :
-       - Somme des entrées / sorties par devise d'origine pour ce compte.
-       - Totalisations des montants convertis en EUR.
-       - Détail des mouvements et métriques propres à ce compte.
+     - Pour un compte sélectionné et sur la période choisie.
   2. **Niveau B - Totalisation Globale / Consolidée** :
-     - Sur l'ensemble des comptes (globalisation multi-comptes) et sur la période choisie :
-       - Consolidation et sommation des flux de tous les comptes réunis.
-       - Total global des valeurs converties en Euros (EUR).
-       - Ventilation multi-comptes et répartition par réseau, projet, et type de transaction.
-
-- **Exportation** :
-  - Possibilité d'exporter les synthèses de totalisation (Niveau A par compte ou Niveau B consolidé) au format CSV ou PDF.
+     - Sur l'ensemble des comptes (globalisation multi-comptes) et sur la période choisie.
 
 ---
 
 ## 7. CONSIGNES DE DÉVELOPPEMENT ET EXÉCUTION
 
-1. L'application doit comporter des contrôles d'erreurs robustes pour les appels d'API réseau/taux FX avec replis automatiques sur solutions gratuites secondaires.
+1. L'application doit comporter des contrôles d'erreurs robustes pour les appels d'API réseau/taux FX.
 2. Tout traitement de DataFrame doit gérer les valeurs manquantes sans faire planter l'application (`fillna`, typage explicite).
 3. Les chemins de fichiers doivent utiliser `pathlib.Path` pour assurer une compatibilité totale entre Windows, Mac et Linux.
