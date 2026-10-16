@@ -27,7 +27,7 @@ def save_to_sanctuary(df: pd.DataFrame, year: int, account_label: str, auto_disp
     Sauvegarde et dédoublonne les transactions dans le(s) fichier(s) CSV du compte.
     Si auto_dispatch_year=True, ventile automatiquement chaque transaction selon l'année réelle de sa date.
     Sinon, force la sauvegarde dans l'année spécifiée en paramètre `year`.
-    Format d'écriture : Windows CSV UTF-8-SIG.
+    Format d'écriture : Windows CSV UTF-8-SIG (Migre automatiquement les anciens CSV vers 19 colonnes).
     """
     df_clean = enforce_sanctuary_schema(df)
     if df_clean.empty:
@@ -38,7 +38,6 @@ def save_to_sanctuary(df: pd.DataFrame, year: int, account_label: str, auto_disp
     if auto_dispatch_year:
         # Ventilation dynamique selon l'année réelle de chaque transaction
         df_clean["Year_Group"] = pd.to_datetime(df_clean["Date de la transaction"], errors="coerce").dt.year
-        # Les dates non valides retombent sur l'année spécifiée
         df_clean["Year_Group"] = df_clean["Year_Group"].fillna(year).astype(int)
 
         for actual_year, group_df in df_clean.groupby("Year_Group"):
@@ -52,11 +51,12 @@ def save_to_sanctuary(df: pd.DataFrame, year: int, account_label: str, auto_disp
     return saved_paths
 
 def _save_single_year(df_clean: pd.DataFrame, year: int, account_label: str) -> Path:
-    """Sauvegarde un sous-ensemble de transactions dans une année spécifique."""
+    """Sauvegarde un sous-ensemble de transactions dans une année spécifique avec migration de schéma automatique."""
     path = get_sanctuary_path(year, account_label)
 
     if path.exists():
         try:
+            # Migration automatique à la lecture de l'ancien fichier
             existing_df = pd.read_csv(path, encoding="utf-8-sig")
             existing_df = enforce_sanctuary_schema(existing_df)
             combined = pd.concat([existing_df, df_clean], ignore_index=True)
@@ -77,11 +77,15 @@ def _save_single_year(df_clean: pd.DataFrame, year: int, account_label: str) -> 
     # Tri chronologique décroissant
     deduped = deduped.sort_values("Date de la transaction", ascending=False)
 
+    # Ré-application stricte du schéma des 19 colonnes
+    deduped = enforce_sanctuary_schema(deduped)
+
+    # Sauvegarde au format Windows UTF-8-SIG
     deduped.to_csv(path, index=False, encoding="utf-8-sig")
     return path
 
 def load_sanctuary_account(year: int, account_label: str) -> pd.DataFrame:
-    """Charge le fichier CSV sanctuarisé d'un compte pour une année donnée."""
+    """Charge le fichier CSV sanctuarisé d'un compte pour une année donnée et migre vers 19 colonnes."""
     path = get_sanctuary_path(year, account_label)
     if not path.exists():
         return enforce_sanctuary_schema(None)
