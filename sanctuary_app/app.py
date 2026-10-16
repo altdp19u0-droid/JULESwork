@@ -178,7 +178,9 @@ elif menu == "📥 Import CSV Externe":
                     if df_mapped.empty:
                         st.warning(f"Aucune transaction trouvée dans le CSV pour l'année {imp_year}.")
                     else:
-                        saved_paths = save_to_sanctuary(df_mapped, int(imp_year), imp_account, auto_dispatch_year=not filter_imp_year)
+                        # Si filter_imp_year=True, on force l'enregistrement exact dans sanctuary/{imp_year}/{imp_account}.csv
+                        auto_disp_csv = not filter_imp_year
+                        saved_paths = save_to_sanctuary(df_mapped, int(imp_year), imp_account, auto_dispatch_year=auto_disp_csv)
                         st.success(f"✅ {len(df_mapped)} lignes sanctuarisées avec succès !")
                         for p in saved_paths:
                             st.write(f"- `{p}`")
@@ -247,7 +249,7 @@ elif menu == "📊 Totalisation (2 Niveaux)":
                 "Année Fiscale de référence",
                 year_filter_options,
                 index=0,
-                help="En mode 'Personnalisée', la plage de dates s'applique librement à toutes les années sanctuarisées."
+                help="En mode 'Personnalisée', la plage de dates s'lique librement à toutes les années sanctuarisées."
             )
         else:
             year_filter_options = ["🌐 Toutes les années (Multi-années)"] + available_years
