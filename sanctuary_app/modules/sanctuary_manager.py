@@ -115,6 +115,14 @@ def list_accounts_for_year(year: int) -> list:
     accounts = [p.stem for p in folder.glob("*.csv")]
     return sorted(accounts)
 
+def list_all_accounts_all_years() -> list:
+    """Liste l'ensemble des nom de comptes uniques disponibles dans toutes les années."""
+    years = list_sanctuary_years()
+    accounts = set()
+    for y in years:
+        accounts.update(list_accounts_for_year(y))
+    return sorted(list(accounts))
+
 def load_all_sanctuary_for_year(year: int) -> pd.DataFrame:
     """Charge et consolide l'ensemble des fichiers comptes pour une année donnée."""
     accounts = list_accounts_for_year(year)
@@ -129,3 +137,38 @@ def load_all_sanctuary_for_year(year: int) -> pd.DataFrame:
 
     combined = pd.concat(dfs, ignore_index=True)
     return combined
+
+def load_all_sanctuary_all_years() -> pd.DataFrame:
+    """Charge et consolide l'ensemble des fichiers sanctuarisés de toutes les années."""
+    years = list_sanctuary_years()
+    if not years:
+        return enforce_sanctuary_schema(None)
+
+    dfs = []
+    for y in years:
+        df_y = load_all_sanctuary_for_year(y)
+        if not df_y.empty:
+            dfs.append(df_y)
+
+    if not dfs:
+        return enforce_sanctuary_schema(None)
+
+    return pd.concat(dfs, ignore_index=True)
+
+def load_account_all_years(account_label: str) -> pd.DataFrame:
+    """Charge l'historique complet d'un compte à travers toutes les années."""
+    years = list_sanctuary_years()
+    if not years:
+        return enforce_sanctuary_schema(None)
+
+    dfs = []
+    for y in years:
+        df_acc = load_sanctuary_account(y, account_label)
+        if not df_acc.empty:
+            df_acc["Compte_Sanctuaire"] = account_label
+            dfs.append(df_acc)
+
+    if not dfs:
+        return enforce_sanctuary_schema(None)
+
+    return pd.concat(dfs, ignore_index=True)

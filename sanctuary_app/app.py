@@ -31,8 +31,11 @@ try:
         save_to_sanctuary,
         load_sanctuary_account,
         load_all_sanctuary_for_year,
+        load_all_sanctuary_all_years,
+        load_account_all_years,
         list_sanctuary_years,
-        list_accounts_for_year
+        list_accounts_for_year,
+        list_all_accounts_all_years
     )
     from sanctuary_app.modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
     from sanctuary_app.modules.csv_importer import map_csv_to_sanctuary
@@ -43,8 +46,11 @@ except ImportError:
         save_to_sanctuary,
         load_sanctuary_account,
         load_all_sanctuary_for_year,
+        load_all_sanctuary_all_years,
+        load_account_all_years,
         list_sanctuary_years,
-        list_accounts_for_year
+        list_accounts_for_year,
+        list_all_accounts_all_years
     )
     from modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
     from modules.csv_importer import map_csv_to_sanctuary
@@ -124,7 +130,12 @@ elif menu == "📥 Import CSV Externe":
 
     if uploaded_file is not None:
         try:
-            sample_df = pd.read_csv(uploaded_file, nrows=5)
+            try:
+                sample_df = pd.read_csv(uploaded_file, nrows=5, sep=None, engine="python")
+            except Exception:
+                uploaded_file.seek(0)
+                sample_df = pd.read_csv(uploaded_file, nrows=5, encoding="latin1", sep=";")
+
             uploaded_file.seek(0)
             csv_cols = list(sample_df.columns)
 
@@ -184,20 +195,33 @@ elif menu == "🔍 Consultation & Sanctuarisation":
     if not available_years:
         st.info("Aucun fichier sanctuarisé trouvé dans le dossier `sanctuary/`.")
     else:
-        sel_year = st.selectbox("Sélectionner l'Année", available_years)
-        accounts = list_accounts_for_year(sel_year)
+        year_options_view = ["🌐 Toutes les années (Multi-années)"] + available_years
+        sel_year = st.selectbox("Sélectionner l'Année", year_options_view)
+
+        if sel_year == "🌐 Toutes les années (Multi-années)":
+            accounts = list_all_accounts_all_years()
+        else:
+            accounts = list_accounts_for_year(int(sel_year))
 
         c1, c2 = st.columns([1, 3])
-        view_mode = c1.radio("Mode d'affichage", ["Compte Spécifique", "Consolidation Globale Année"])
+        view_mode = c1.radio("Mode d'affichage", ["Compte Spécifique", "Consolidation Globale"])
 
         if view_mode == "Compte Spécifique" and accounts:
             sel_acc = c1.selectbox("Sélectionner le Compte", accounts)
-            df_view = load_sanctuary_account(sel_year, sel_acc)
-            st.subheader(f"📄 Fichier : `sanctuary/{sel_year}/{sel_acc}.csv` ({len(df_view)} lignes)")
+            if sel_year == "🌐 Toutes les années (Multi-années)":
+                df_view = load_account_all_years(sel_acc)
+                st.subheader(f"📄 Historique multi-années : `{sel_acc}` ({len(df_view)} lignes)")
+            else:
+                df_view = load_sanctuary_account(int(sel_year), sel_acc)
+                st.subheader(f"📄 Fichier : `sanctuary/{sel_year}/{sel_acc}.csv` ({len(df_view)} lignes)")
             st.dataframe(df_view, use_container_width=True)
         else:
-            df_view = load_all_sanctuary_for_year(sel_year)
-            st.subheader(f"🌐 Consolidation Globale {sel_year} ({len(df_view)} transactions réunies)")
+            if sel_year == "🌐 Toutes les années (Multi-années)":
+                df_view = load_all_sanctuary_all_years()
+                st.subheader(f"🌐 Consolidation Globale Multi-Années ({len(df_view)} transactions réunies)")
+            else:
+                df_view = load_all_sanctuary_for_year(int(sel_year))
+                st.subheader(f"🌐 Consolidation Globale {sel_year} ({len(df_view)} transactions réunies)")
             st.dataframe(df_view, use_container_width=True)
 
 
@@ -214,23 +238,36 @@ elif menu == "📊 Totalisation (2 Niveaux)":
         p_col1, p_col2, p_col3, p_col4 = st.columns(4)
 
         p_type = p_col1.selectbox("Type de Période", ["Année", "Trimestre", "Mois", "Personnalisée"])
-        p_year = p_col2.selectbox("Année Fiscale", available_years)
+
+        # Option Multi-années ajoutée pour le filtrage personnalisé ou global
+        year_filter_options = ["🌐 Toutes les années (Période globale / Multi-années)"] + available_years
+        p_year_selected = p_col2.selectbox("Année Fiscale de référence", year_filter_options)
 
         p_quarter = None
         p_month = None
         p_start = None
         p_end = None
 
+        is_all_years = p_year_selected == "🌐 Toutes les années (Période globale / Multi-années)"
+
         if p_type == "Trimestre":
             p_quarter = p_col3.selectbox("Trimestre", ["Q1", "Q2", "Q3", "Q4"])
         elif p_type == "Mois":
             p_month = p_col3.selectbox("Mois", list(range(1, 13)), format_func=lambda x: f"Mois {x}")
         elif p_type == "Personnalisée":
-            p_start = p_col3.date_input("Date Début", date(p_year, 1, 1))
-            p_end = p_col4.date_input("Date Fin", date(p_year, 12, 31))
+            default_start_year = available_years[-1] if is_all_years else int(p_year_selected)
+            default_end_year = available_years[0] if is_all_years else int(p_year_selected)
+            p_start = p_col3.date_input("Date Début", date(default_start_year, 1, 1))
+            p_end = p_col4.date_input("Date Fin", date(default_end_year, 12, 31))
 
-        df_year_all = load_all_sanctuary_for_year(p_year)
-        df_filtered_global = filter_by_period(df_year_all, p_type, year=p_year, quarter=p_quarter, month=p_month, start_date=p_start, end_date=p_end)
+        if is_all_years:
+            df_year_all = load_all_sanctuary_all_years()
+            ref_yr = None
+        else:
+            ref_yr = int(p_year_selected)
+            df_year_all = load_all_sanctuary_for_year(ref_yr)
+
+        df_filtered_global = filter_by_period(df_year_all, p_type, year=ref_yr, quarter=p_quarter, month=p_month, start_date=p_start, end_date=p_end)
 
         st.divider()
 
@@ -242,14 +279,23 @@ elif menu == "📊 Totalisation (2 Niveaux)":
         # --- NIVEAU A : COMPTE INDIVIDUEL ---
         with tab_level_a:
             st.subheader("📌 Niveau A — Totalisation par Compte Individuel")
-            accounts = list_accounts_for_year(p_year)
+
+            if is_all_years:
+                accounts = list_all_accounts_all_years()
+            else:
+                accounts = list_accounts_for_year(ref_yr)
 
             if not accounts:
-                st.info("Aucun compte trouvé.")
+                st.info("Aucun compte trouvé pour cette sélection.")
             else:
                 sel_account_a = st.selectbox("Choisir le Compte à Analyser", accounts, key="sel_a")
-                df_acc_raw = load_sanctuary_account(p_year, sel_account_a)
-                df_acc_filtered = filter_by_period(df_acc_raw, p_type, year=p_year, quarter=p_quarter, month=p_month, start_date=p_start, end_date=p_end)
+
+                if is_all_years:
+                    df_acc_raw = load_account_all_years(sel_account_a)
+                else:
+                    df_acc_raw = load_sanctuary_account(ref_yr, sel_account_a)
+
+                df_acc_filtered = filter_by_period(df_acc_raw, p_type, year=ref_yr, quarter=p_quarter, month=p_month, start_date=p_start, end_date=p_end)
 
                 tot_a = totalize_level_a(df_acc_filtered)
 
