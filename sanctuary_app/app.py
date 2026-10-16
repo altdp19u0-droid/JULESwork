@@ -241,17 +241,16 @@ elif menu == "📊 Totalisation (2 Niveaux)":
 
         is_custom_period = p_type == "Personnalisée"
 
-        # Si la période est "Personnalisée", l'option par défaut couvre automatiquement TOUTES les années
-        year_filter_options = ["🌐 Toutes les années (Multi-années)"] + available_years
-
         if is_custom_period:
+            year_filter_options = ["📅 Personnalisée (Multi-années)"] + available_years
             p_year_selected = p_col2.selectbox(
                 "Année Fiscale de référence",
                 year_filter_options,
                 index=0,
-                help="En mode Personnalisé, 'Toutes les années' permet de filtrer sur n'importe quelle plage de dates libres (ex: 01/01/2025 au 31/12/2026)."
+                help="En mode 'Personnalisée', la plage de dates s'applique librement à toutes les années sanctuarisées."
             )
         else:
+            year_filter_options = ["🌐 Toutes les années (Multi-années)"] + available_years
             p_year_selected = p_col2.selectbox("Année Fiscale de référence", year_filter_options, index=1 if len(year_filter_options) > 1 else 0)
 
         p_quarter = None
@@ -259,7 +258,7 @@ elif menu == "📊 Totalisation (2 Niveaux)":
         p_start = None
         p_end = None
 
-        is_all_years = p_year_selected == "🌐 Toutes les années (Multi-années)" or is_custom_period
+        is_all_years = is_custom_period or ("Toutes les années" in str(p_year_selected)) or ("Personnalisée" in str(p_year_selected))
 
         if p_type == "Trimestre":
             p_quarter = p_col3.selectbox("Trimestre", ["Q1", "Q2", "Q3", "Q4"])
