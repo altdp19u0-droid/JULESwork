@@ -96,7 +96,9 @@ def load_sanctuary_account(year: int, account_label: str) -> pd.DataFrame:
         return enforce_sanctuary_schema(None)
     try:
         df = pd.read_csv(path, encoding="utf-8-sig")
-        return enforce_sanctuary_schema(df)
+        df_clean = enforce_sanctuary_schema(df)
+        df_clean["Compte_Sanctuaire"] = account_label
+        return df_clean
     except Exception:
         return enforce_sanctuary_schema(None)
 
@@ -124,7 +126,7 @@ def list_all_accounts_all_years() -> list:
     return sorted(list(accounts))
 
 def load_all_sanctuary_for_year(year: int) -> pd.DataFrame:
-    """Charge et consolide l'ensemble des fichiers comptes pour une année donnée."""
+    """Charge et consolide l'ensemble des fichiers comptes pour une année donnée en préservant le nom du compte."""
     accounts = list_accounts_for_year(year)
     if not accounts:
         return enforce_sanctuary_schema(None)
@@ -132,8 +134,12 @@ def load_all_sanctuary_for_year(year: int) -> pd.DataFrame:
     dfs = []
     for acc in accounts:
         df_acc = load_sanctuary_account(year, acc)
-        df_acc["Compte_Sanctuaire"] = acc
-        dfs.append(df_acc)
+        if not df_acc.empty:
+            df_acc["Compte_Sanctuaire"] = acc
+            dfs.append(df_acc)
+
+    if not dfs:
+        return enforce_sanctuary_schema(None)
 
     combined = pd.concat(dfs, ignore_index=True)
     return combined

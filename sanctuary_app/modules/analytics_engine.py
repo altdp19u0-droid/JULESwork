@@ -88,17 +88,21 @@ def totalize_level_b(all_accounts_df: pd.DataFrame) -> dict:
         }
 
     df = all_accounts_df.copy()
+
+    # Résolution prioritaire du nom du compte pour la répartition par compte
+    if "Compte_Sanctuaire" not in df.columns or df["Compte_Sanctuaire"].dropna().empty:
+        df["Compte_Sanctuaire"] = df["Nom du projet"].fillna(df["ID du projet"]).fillna(df["Réseau"]).fillna("Compte_Inconnu")
+    else:
+        df["Compte_Sanctuaire"] = df["Compte_Sanctuaire"].fillna(df["Nom du projet"]).fillna(df["Réseau"]).fillna("Compte_Inconnu")
+
     total_count = len(df)
     total_eur = float(df["Montant du relevé"].sum())
 
-    acc_col = "Compte_Sanctuaire" if "Compte_Sanctuaire" in df.columns else "Réseau"
-
-    df[acc_col] = df[acc_col].fillna("Inconnu")
     df["Réseau"] = df["Réseau"].fillna("Inconnu")
     df["Nom du projet"] = df["Nom du projet"].fillna("Non spécifié")
     df["Type de transaction"] = df["Type de transaction"].fillna("Autre")
 
-    by_account = df.groupby(acc_col).agg(
+    by_account = df.groupby("Compte_Sanctuaire").agg(
         Total_EUR=("Montant du relevé", "sum"),
         Nombre_TX=("Date de la transaction", "count")
     ).reset_index().sort_values("Total_EUR", ascending=False)
