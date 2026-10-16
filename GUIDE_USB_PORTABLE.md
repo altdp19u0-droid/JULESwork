@@ -17,9 +17,10 @@ Oui, **il est parfaitement possible et très avantageux de créer et d'exécuter
 Sur votre clé USB (ex: lecteur `E:\` ou `F:\`), créez le dossier `SanctuaryApp` à la racine :
 
 ```text
-E:\SanctuaryApp\                     <-- Racines sur votre Clé USB
+E:\SanctuaryApp\                     <-- Racine sur votre Clé USB
 │
 ├── lancer_sanctuary_usb.bat        <-- SCRIPT BAT DE LANCEMENT EN UN CLIC
+├── lancer_viderCaches.bat          <-- SCRIPT BAT DE NETTOYAGE DES CACHES
 ├── PROMPT_S_SAN.md
 ├── ARCHITECTURE_SOLUTIONS.md
 ├── GUIDE_INSTALLATION_WINDOWS.md
@@ -74,13 +75,12 @@ E:\SanctuaryApp\                     <-- Racines sur votre Clé USB
 Chaque fois que vous branchez votre clé USB sur un PC Windows :
 
 1. Ouvrez le dossier `SanctuaryApp` situé sur votre clé USB.
-2. **Double-cliquez simplement sur le fichier `lancer_sanctuary_usb.bat`**.
-3. Le script détectera automatiquement la lettre de votre clé USB (grâce à la commande relative `%~dp0`), activera l'environnement Python de la clé et lancera Streamlit.
-4. Votre navigateur s'ouvrira automatiquement sur l'application `http://localhost:8501`.
+2. **Double-cliquez simplement sur `lancer_sanctuary_usb.bat`** pour démarrer l'application.
+3. **Script de secours (`lancer_viderCaches.bat`)** : Si vous rencontrez un blocage de cache Python ou après une modification de code, double-cliquez sur `lancer_viderCaches.bat` pour remettre à neuf le cache Python et Streamlit de la clé USB.
 
 ---
 
 ## 5. CONSEILS ET BONNES PRATIQUES POUR LA CLÉ USB
 
 - **Type de Clé USB** : Utilisez de préférence une clé USB 3.0/3.1 ou un petit SSD externe USB-C/USB-A pour des vitesses de lecture/écriture rapides.
-- **Sauvegarde de la Clé (Backup)** : Conservez régulièrement une copie de secours du dossier `sanctuary/` de votre clé USB sur un autre support sécurisé (ou une deuxième clé USB miroir).
+- **Sauvegarde de la Clé (Backup)** : Conservez régulièrement une copie de secours du dossier `sanctuary/` de votre clé USB sur un autre support sécurisé.

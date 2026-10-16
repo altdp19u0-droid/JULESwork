@@ -1,4 +1,4 @@
-# 📘 GUIDE D'INSTALLATION ET D'EXÉCUTION SOBRE WINDOWS — SANCTUARY APP
+# 📘 GUIDE D'INSTALLATION ET D'EXÉCUTION SUR WINDOWS — SANCTUARY APP
 
 Ce guide explique pas à pas comment télécharger, organiser et installer l'application **Sanctuary App** sur votre ordinateur sous **Windows** pour un fonctionnement optimal.
 
@@ -23,16 +23,19 @@ Placez-y les fichiers et dossiers exactement selon la structure suivante :
 ```text
 C:\SanctuaryApp\
 │
+├── lancer_sanctuary_usb.bat        <-- SCRIPT DE LANCEMENT EN UN CLIC
+├── lancer_viderCaches.bat          <-- SCRIPT DE NETTOYAGE DES CACHES
 ├── PROMPT_S_SAN.md                 <-- Cahier des charges / Spécifications du prompt
 ├── ARCHITECTURE_SOLUTIONS.md       <-- Architecture technique
 ├── GUIDE_INSTALLATION_WINDOWS.md   <-- Le présent guide
+├── GUIDE_USB_PORTABLE.md           <-- Guide Clé USB
 ├── requirements.txt                <-- Liste des bibliothèques requises
 │
 ├── sanctuary_app/                  <-- DOSSIER CODE APPLICATION
 │   ├── app.py                      <-- FICHIER PRINCIPAL STREAMLIT (Point d'entrée)
 │   └── modules/
 │       ├── __init__.py
-│       ├── schema.py               <-- Validation du schéma des 17 colonnes
+│       ├── schema.py               <-- Validation du schéma des 19 colonnes
 │       ├── sanctuary_manager.py    <-- Sauvegarde & Dédoublonnage CSV Windows
 │       ├── fx_collector.py         <-- Taux BCE (ECB) et prix crypto DefiLlama
 │       ├── blockscout_collector.py <-- Collecte Blockscout V2
@@ -89,16 +92,15 @@ pip install -r requirements.txt
 
 ---
 
-## 5. LANCEMENT DE L'APPLICATION STREAMLIT
+## 5. LANCEMENT ET UTILISATION DES SCRIPTS BAT
 
-Pour lancer l'application, exécutez la commande suivante depuis `C:\SanctuaryApp` :
-
-```cmd
-streamlit run sanctuary_app\app.py
-```
-
-🎉 **C'est prêt !** Votre navigateur web par défaut s'ouvrira automatiquement à l'adresse locale :
-👉 `http://localhost:8501`
+1. **Lancement standard de l'application** :
+   Double-cliquez sur `lancer_sanctuary_usb.bat` ou exécutez :
+   ```cmd
+   streamlit run sanctuary_app\app.py
+   ```
+2. **Nettoyage des Caches (`lancer_viderCaches.bat`)** :
+   En cas d'erreur d'importation, de mise à jour de code ou de ralentissement, double-cliquez sur `lancer_viderCaches.bat` pour vider instantanément tous les fichiers de cache Python (`.pyc`, `__pycache__`) et le cache temporaire de Streamlit.
 
 ---
 
