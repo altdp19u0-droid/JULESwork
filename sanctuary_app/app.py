@@ -9,12 +9,13 @@ from pathlib import Path
 # Invalidation du cache des bytecode stale Python (.pyc) sous Windows/Linux
 sys.dont_write_bytecode = True
 
-# Résolution absolue du répertoire de l'application
+# Résolution absolue du répertoire racine du projet et du répertoire de l'application
 APP_DIR = Path(__file__).resolve().parent
-MODULES_DIR = APP_DIR / "modules"
+ROOT_DIR = APP_DIR.parent
 
-# Insertion prioritaire dans sys.path pour forcer l'import direct depuis sanctuary_app/modules
-for path_str in [str(APP_DIR), str(MODULES_DIR), str(APP_DIR.parent)]:
+# Ajout prioritaire de APP_DIR et ROOT_DIR à sys.path pour un import propre de 'modules'
+for path_obj in [APP_DIR, ROOT_DIR]:
+    path_str = str(path_obj)
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
@@ -22,7 +23,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 
-# Module Imports
+# Imports de modules robustes
 try:
     from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
     from modules.sanctuary_manager import (
@@ -36,17 +37,17 @@ try:
     from modules.csv_importer import map_csv_to_sanctuary
     from modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
 except ImportError:
-    from schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
-    from sanctuary_manager import (
+    from sanctuary_app.modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
+    from sanctuary_app.modules.sanctuary_manager import (
         save_to_sanctuary,
         load_sanctuary_account,
         load_all_sanctuary_for_year,
         list_sanctuary_years,
         list_accounts_for_year
     )
-    from blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
-    from csv_importer import map_csv_to_sanctuary
-    from analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
+    from sanctuary_app.modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
+    from sanctuary_app.modules.csv_importer import map_csv_to_sanctuary
+    from sanctuary_app.modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
 
 # Streamlit Page Config
 st.set_page_config(page_title="Sanctuary App", layout="wide", page_icon="🛡️")
