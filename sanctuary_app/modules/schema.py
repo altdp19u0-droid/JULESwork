@@ -54,8 +54,8 @@ def enforce_sanctuary_schema(df: pd.DataFrame) -> pd.DataFrame:
     # Conservation exacte des 19 colonnes dans l'ordre
     res_df = res_df[REQUIRED_COLUMNS]
 
-    # Formattage et nettoyage des types
-    res_df["Date de la transaction"] = pd.to_datetime(res_df["Date de la transaction"], errors="coerce")
+    # Formattage et nettoyage des types (Dayfirst pour dates françaises DD/MM/YYYY)
+    res_df["Date de la transaction"] = pd.to_datetime(res_df["Date de la transaction"], dayfirst=True, format="mixed", errors="coerce")
     res_df["Montant d'origine"] = pd.to_numeric(res_df["Montant d'origine"], errors="coerce").fillna(0.0)
     res_df["Montant du relevé"] = pd.to_numeric(res_df["Montant du relevé"], errors="coerce").fillna(0.0)
     res_df["Taux de change appliqué"] = pd.to_numeric(res_df["Taux de change appliqué"], errors="coerce").fillna(1.0)
