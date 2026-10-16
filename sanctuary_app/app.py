@@ -2,23 +2,47 @@
 Application principale Streamlit : SANCTUARY APP
 Sauvegarde, sanctuarisation, exploration et totalisation à 2 niveaux.
 """
+import sys
+from pathlib import Path
+
+# Ajout dynamique du dossier parent et du dossier racine de sanctuary_app au sys.path pour éviter tout ImportError sous Windows
+APP_DIR = Path(__file__).resolve().parent
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+ROOT_DIR = APP_DIR.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date
-from pathlib import Path
 
-# Module Imports
-from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
-from modules.sanctuary_manager import (
-    save_to_sanctuary,
-    load_sanctuary_account,
-    load_all_sanctuary_for_year,
-    list_sanctuary_years,
-    list_accounts_for_year
-)
-from modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
-from modules.csv_importer import map_csv_to_sanctuary
-from modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
+# Module Imports (détecte automatiquement le chemin quelle que soit la commande de lancement)
+try:
+    from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
+    from modules.sanctuary_manager import (
+        save_to_sanctuary,
+        load_sanctuary_account,
+        load_all_sanctuary_for_year,
+        list_sanctuary_years,
+        list_accounts_for_year
+    )
+    from modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
+    from modules.csv_importer import map_csv_to_sanctuary
+    from modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
+except ImportError:
+    from sanctuary_app.modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
+    from sanctuary_app.modules.sanctuary_manager import (
+        save_to_sanctuary,
+        load_sanctuary_account,
+        load_all_sanctuary_for_year,
+        list_sanctuary_years,
+        list_accounts_for_year
+    )
+    from sanctuary_app.modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
+    from sanctuary_app.modules.csv_importer import map_csv_to_sanctuary
+    from sanctuary_app.modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
 
 # Streamlit Page Config
 st.set_page_config(page_title="Sanctuary App", layout="wide", page_icon="🛡️")
@@ -88,7 +112,7 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
 # --- MENU 2 : IMPORT CSV EXTERNE ---
 elif menu == "📥 Import CSV Externe":
     st.header("📥 Importation et Mapping de Fichier CSV Externe")
-    st.info("Importez un fichier CSV (Banque, Exchange, Wallet) et associez ses colonnes au schéma standard des 17 colonnes.")
+    st.info("Importez un fichier CSV (Banque, Exchange, Wallet) et associez ses colonnes au schéma standard des 19 colonnes.")
 
     uploaded_file = st.file_uploader("Choisissez un fichier CSV", type=["csv"])
 
