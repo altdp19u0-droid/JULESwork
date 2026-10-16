@@ -243,34 +243,40 @@ elif menu == "📊 Totalisation (2 Niveaux)":
 
         is_custom_period = p_type == "Personnalisée"
 
-        if is_custom_period:
-            year_filter_options = ["📅 Personnalisée (Multi-années)"] + available_years
-            p_year_selected = p_col2.selectbox(
-                "Année Fiscale de référence",
-                year_filter_options,
-                index=0,
-                help="En mode 'Personnalisée', la plage de dates s'lique librement à toutes les années sanctuarisées."
-            )
-        else:
-            year_filter_options = ["🌐 Toutes les années (Multi-années)"] + available_years
-            p_year_selected = p_col2.selectbox("Année Fiscale de référence", year_filter_options, index=1 if len(year_filter_options) > 1 else 0)
-
         p_quarter = None
         p_month = None
         p_start = None
         p_end = None
 
-        is_all_years = is_custom_period or ("Toutes les années" in str(p_year_selected)) or ("Personnalisée" in str(p_year_selected))
+        if is_custom_period:
+            p_col2.text_input(
+                "Année Fiscale",
+                value="🚫 Neutralisée (Multi-années)",
+                disabled=True,
+                help="En mode Période Personnalisée, l'année fiscale est neutralisée pour analyser l'intégralité des transactions sur la plage choisie."
+            )
+            p_year_selected = "🌐 Toutes les années (Multi-années)"
+            is_all_years = True
+            ref_yr = None
 
-        if p_type == "Trimestre":
-            p_quarter = p_col3.selectbox("Trimestre", ["Q1", "Q2", "Q3", "Q4"])
-        elif p_type == "Mois":
-            p_month = p_col3.selectbox("Mois", list(range(1, 13)), format_func=lambda x: f"Mois {x}")
-        elif p_type == "Personnalisée":
             min_yr = available_years[-1] if available_years else 2020
             max_yr = available_years[0] if available_years else 2026
             p_start = p_col3.date_input("Date Début", date(min_yr, 1, 1))
             p_end = p_col4.date_input("Date Fin", date(max_yr, 12, 31))
+
+            st.success(
+                f"✅ **Validation Période Personnalisée Multi-Années** : Traitement actif du **{p_start.strftime('%d/%m/%Y')}** au **{p_end.strftime('%d/%m/%Y')}** sur l'intégralité du sanctuaire."
+            )
+        else:
+            year_filter_options = ["🌐 Toutes les années (Multi-années)"] + available_years
+            p_year_selected = p_col2.selectbox("Année Fiscale de référence", year_filter_options, index=1 if len(year_filter_options) > 1 else 0)
+
+            is_all_years = "Toutes les années" in str(p_year_selected)
+
+            if p_type == "Trimestre":
+                p_quarter = p_col3.selectbox("Trimestre", ["Q1", "Q2", "Q3", "Q4"])
+            elif p_type == "Mois":
+                p_month = p_col3.selectbox("Mois", list(range(1, 13)), format_func=lambda x: f"Mois {x}")
 
         if is_all_years:
             df_year_all = load_all_sanctuary_all_years()
