@@ -6,35 +6,49 @@ import sys
 import os
 from pathlib import Path
 
-# Invalidation du cache des bytecode (.pyc) sous Windows/Linux
+# Desactivation des bytecodes .pyc
 sys.dont_write_bytecode = True
 
-# Alignement du chemin d'importation Python (sys.path)
+# Résolution des chemins de packages
 APP_DIR = Path(__file__).resolve().parent
 ROOT_DIR = APP_DIR.parent
 
-# S'assurer que APP_DIR et ROOT_DIR sont au début de sys.path sans inclure 'modules' directement
-for p in [str(APP_DIR), str(ROOT_DIR)]:
-    if p in sys.path:
-        sys.path.remove(p)
-    sys.path.insert(0, p)
+# Ajout dynamique de ROOT_DIR et APP_DIR à sys.path sans collision
+for path_obj in [ROOT_DIR, APP_DIR]:
+    p_str = str(path_obj)
+    if p_str in sys.path:
+        sys.path.remove(p_str)
+    sys.path.insert(0, p_str)
 
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 
-# Imports de modules unifiés
-from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
-from modules.sanctuary_manager import (
-    save_to_sanctuary,
-    load_sanctuary_account,
-    load_all_sanctuary_for_year,
-    list_sanctuary_years,
-    list_accounts_for_year
-)
-from modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
-from modules.csv_importer import map_csv_to_sanctuary
-from modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
+# Imports relatifs / absolus unifiés sans ambiguïté
+try:
+    from sanctuary_app.modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
+    from sanctuary_app.modules.sanctuary_manager import (
+        save_to_sanctuary,
+        load_sanctuary_account,
+        load_all_sanctuary_for_year,
+        list_sanctuary_years,
+        list_accounts_for_year
+    )
+    from sanctuary_app.modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
+    from sanctuary_app.modules.csv_importer import map_csv_to_sanctuary
+    from sanctuary_app.modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
+except ImportError:
+    from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
+    from modules.sanctuary_manager import (
+        save_to_sanctuary,
+        load_sanctuary_account,
+        load_all_sanctuary_for_year,
+        list_sanctuary_years,
+        list_accounts_for_year
+    )
+    from modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
+    from modules.csv_importer import map_csv_to_sanctuary
+    from modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
 
 # Streamlit Page Config
 st.set_page_config(page_title="Sanctuary App", layout="wide", page_icon="🛡️")
