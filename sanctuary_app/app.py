@@ -239,26 +239,37 @@ elif menu == "📊 Totalisation (2 Niveaux)":
 
         p_type = p_col1.selectbox("Type de Période", ["Année", "Trimestre", "Mois", "Personnalisée"])
 
-        # Option Multi-années ajoutée pour le filtrage personnalisé ou global
-        year_filter_options = ["🌐 Toutes les années (Période globale / Multi-années)"] + available_years
-        p_year_selected = p_col2.selectbox("Année Fiscale de référence", year_filter_options)
+        is_custom_period = p_type == "Personnalisée"
+
+        # Si la période est "Personnalisée", l'option par défaut couvre automatiquement TOUTES les années
+        year_filter_options = ["🌐 Toutes les années (Multi-années)"] + available_years
+
+        if is_custom_period:
+            p_year_selected = p_col2.selectbox(
+                "Année Fiscale de référence",
+                year_filter_options,
+                index=0,
+                help="En mode Personnalisé, 'Toutes les années' permet de filtrer sur n'importe quelle plage de dates libres (ex: 01/01/2025 au 31/12/2026)."
+            )
+        else:
+            p_year_selected = p_col2.selectbox("Année Fiscale de référence", year_filter_options, index=1 if len(year_filter_options) > 1 else 0)
 
         p_quarter = None
         p_month = None
         p_start = None
         p_end = None
 
-        is_all_years = p_year_selected == "🌐 Toutes les années (Période globale / Multi-années)"
+        is_all_years = p_year_selected == "🌐 Toutes les années (Multi-années)" or is_custom_period
 
         if p_type == "Trimestre":
             p_quarter = p_col3.selectbox("Trimestre", ["Q1", "Q2", "Q3", "Q4"])
         elif p_type == "Mois":
             p_month = p_col3.selectbox("Mois", list(range(1, 13)), format_func=lambda x: f"Mois {x}")
         elif p_type == "Personnalisée":
-            default_start_year = available_years[-1] if is_all_years else int(p_year_selected)
-            default_end_year = available_years[0] if is_all_years else int(p_year_selected)
-            p_start = p_col3.date_input("Date Début", date(default_start_year, 1, 1))
-            p_end = p_col4.date_input("Date Fin", date(default_end_year, 12, 31))
+            min_yr = available_years[-1] if available_years else 2020
+            max_yr = available_years[0] if available_years else 2026
+            p_start = p_col3.date_input("Date Début", date(min_yr, 1, 1))
+            p_end = p_col4.date_input("Date Fin", date(max_yr, 12, 31))
 
         if is_all_years:
             df_year_all = load_all_sanctuary_all_years()
