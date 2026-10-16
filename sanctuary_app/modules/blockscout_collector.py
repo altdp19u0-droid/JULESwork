@@ -4,10 +4,11 @@ Réseaux pris en charge : Ethereum, Base, Arbitrum.
 """
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 from .schema import enforce_sanctuary_schema, create_empty_sanctuary_df
 from .fx_collector import convert_to_eur
+from .sanctuary_manager import load_sanctuary_account
 
 BLOCKSCOUT_NETWORKS = {
     "ETHEREUM": {
@@ -37,11 +38,27 @@ def get_headers(domain_url: str) -> dict:
         "Referer": f"{domain_url}/"
     }
 
+def _parse_utc_datetime(dt_str) -> datetime:
+    """Convertit une chaîne ou timestamp Blockscout en datetime UTC strict."""
+    if not dt_str:
+        return datetime.now(timezone.utc)
+    try:
+        s = str(dt_str)
+        if s.isdigit():
+            return datetime.fromtimestamp(int(s), tz=timezone.utc)
+        s = s.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return datetime.now(timezone.utc)
+
 def fetch_blockscout_data(address: str, network: str, target_year: int = None, account_label: str = None, max_pages: int = 200, api_key: str = None) -> pd.DataFrame:
     """
-    Récupère de manière optimisée les transactions (natives, tokens ERC-20/721/1155, internes et frais de gaz)
-    d'une adresse via l'API V2 Blockscout sans aucune clé API requise.
-    Inscrit les adresses complètes en entier dans les colonnes émetteur et destinataire.
+    Récupère de manière ciblée les transactions (natives, tokens ERC-20/721/1155, internes et frais de gaz)
+    d'une adresse via l'API V2 Blockscout.
+    Si target_year est spécifié, ne retient STRICTEMENT que les transactions de cette année.
     """
     net_key = network.upper().strip()
     if net_key not in BLOCKSCOUT_NETWORKS or not address or not address.startswith("0x"):
@@ -53,12 +70,14 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, a
     addr_low = address.lower().strip()
     headers = get_headers(domain_root)
 
+    target_year_int = int(target_year) if target_year else None
+
     records = []
     seen_keys = set()
     session = requests.Session()
     session.headers.update(headers)
 
-    # --- STRATÉGIE 1 : TOKEN TRANSFERS (ERC-20 / ERC-721 / ERC-1155) ---
+    # --- STRATÉGIE 1 : TOKEN TRANSFERS ---
     token_url = f"{v2_base}/addresses/{addr_low}/token-transfers"
     pages_fetched = 0
 
@@ -77,19 +96,15 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, a
                         if not tx_hash:
                             continue
 
-                        dt_str = t.get("timestamp") or t.get("timeStamp")
-                        if dt_str and not str(dt_str).isdigit():
-                            dt = datetime.fromisoformat(str(dt_str).replace("Z", "+00:00"))
-                        elif dt_str:
-                            dt = datetime.fromtimestamp(int(dt_str))
-                        else:
-                            dt = datetime.now()
+                        dt = _parse_utc_datetime(t.get("timestamp") or t.get("timeStamp"))
 
-                        if target_year and dt.year < int(target_year):
+                        # S'arrêter si on descend en dessous de l'année cible
+                        if target_year_int and dt.year < target_year_int:
                             token_url = None
                             break
 
-                        if target_year and dt.year != int(target_year):
+                        # Ignorer les transactions plus récentes (ex: 2026 quand target_year=2025)
+                        if target_year_int and dt.year != target_year_int:
                             continue
 
                         tok = t.get("token") or {}
@@ -101,7 +116,6 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, a
                         raw_val = float(tot.get("value") or t.get("value") or 0)
                         amount = raw_val / (10 ** dec) if dec > 0 else raw_val
 
-                        # Adresses inscrites EN ENTIER
                         f_addr = (t.get("from") if isinstance(t.get("from"), str) else (t.get("from") or {}).get("hash", "")).strip()
                         t_addr = (t.get("to") if isinstance(t.get("to"), str) else (t.get("to") or {}).get("hash", "")).strip()
 
@@ -109,13 +123,13 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, a
                         final_amt = amount * direction
                         tx_type = "Dépôt" if direction > 0 else "Retrait"
 
-                        val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(final_amt, asset, dt)
-                        method = t.get("method") or "Token Transfer"
-
                         dedup_key = (tx_hash, str(asset).upper(), round(final_amt, 8))
                         if dedup_key in seen_keys:
                             continue
                         seen_keys.add(dedup_key)
+
+                        val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(final_amt, asset, dt)
+                        method = t.get("method") or "Token Transfer"
 
                         records.append({
                             "Date de la transaction": dt.strftime("%Y-%m-%d %H:%M:%S"),
@@ -176,22 +190,15 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, a
                         if not tx_hash:
                             continue
 
-                        dt_str = t.get("timestamp") or t.get("timeStamp")
-                        if dt_str and not str(dt_str).isdigit():
-                            dt = datetime.fromisoformat(str(dt_str).replace("Z", "+00:00"))
-                        elif dt_str:
-                            dt = datetime.fromtimestamp(int(dt_str))
-                        else:
-                            dt = datetime.now()
+                        dt = _parse_utc_datetime(t.get("timestamp") or t.get("timeStamp"))
 
-                        if target_year and dt.year < int(target_year):
+                        if target_year_int and dt.year < target_year_int:
                             tx_url = None
                             break
 
-                        if target_year and dt.year != int(target_year):
+                        if target_year_int and dt.year != target_year_int:
                             continue
 
-                        # Adresses inscrites EN ENTIER
                         f_addr = (t.get("from") if isinstance(t.get("from"), str) else (t.get("from") or {}).get("hash", "")).strip()
                         t_addr = (t.get("to") if isinstance(t.get("to"), str) else (t.get("to") or {}).get("hash", "")).strip()
 
@@ -332,4 +339,11 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, a
             break
 
     df = pd.DataFrame(records)
-    return enforce_sanctuary_schema(df)
+    df_enforced = enforce_sanctuary_schema(df)
+
+    # Filtrage strict final garanti si target_year est spécifié
+    if target_year_int and not df_enforced.empty:
+        df_enforced["_yr_check"] = pd.to_datetime(df_enforced["Date de la transaction"], errors="coerce").dt.year
+        df_enforced = df_enforced[df_enforced["_yr_check"] == target_year_int].drop(columns=["_yr_check"])
+
+    return df_enforced

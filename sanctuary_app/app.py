@@ -24,7 +24,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 
-# Imports relatifs / absolus unifiés sans ambiguïté
+# Imports de modules unifiés
 try:
     from sanctuary_app.modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
     from sanctuary_app.modules.sanctuary_manager import (
@@ -87,15 +87,15 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
         key=f"dispatch_mode_{target_year}"
     )
 
-    filter_strict_target_year = "CIBLÉE STRICTE" in dispatch_mode
+    filter_strict_target_year = "CIBLÉE STRICTE" in dispatch_mode or "STRICTE" in dispatch_mode or "Récolte CIBLÉE" in dispatch_mode
 
     if st.button("🚀 Lancer la récolte ciblée Blockscout"):
         if not address or not address.startswith("0x"):
             st.error("Veuillez saisir une adresse EVM valide.")
         else:
+            target_yr_param = int(target_year) if filter_strict_target_year else None
             with st.spinner(f"Extraction rapide ciblée sur l'année {target_year} ({network})..."):
-                target_yr = int(target_year) if filter_strict_target_year else None
-                df_harvested = fetch_blockscout_data(address, network, target_year=target_yr, account_label=account_label)
+                df_harvested = fetch_blockscout_data(address, network, target_year=target_yr_param, account_label=account_label)
 
             if filter_strict_target_year and not df_harvested.empty:
                 df_harvested["_temp_yr"] = pd.to_datetime(df_harvested["Date de la transaction"], errors="coerce").dt.year

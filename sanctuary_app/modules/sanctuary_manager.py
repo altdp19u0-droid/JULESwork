@@ -51,12 +51,11 @@ def save_to_sanctuary(df: pd.DataFrame, year: int, account_label: str, auto_disp
     return saved_paths
 
 def _save_single_year(df_clean: pd.DataFrame, year: int, account_label: str) -> Path:
-    """Sauvegarde un sous-ensemble de transactions dans une année spécifique avec migration de schéma automatique."""
+    """Sauvegarde un sous-ensemble de transactions dans une année spécifique avec migration de schéma automatique et nettoyage strict des années."""
     path = get_sanctuary_path(year, account_label)
 
     if path.exists():
         try:
-            # Migration automatique à la lecture de l'ancien fichier
             existing_df = pd.read_csv(path, encoding="utf-8-sig")
             existing_df = enforce_sanctuary_schema(existing_df)
             combined = pd.concat([existing_df, df_clean], ignore_index=True)
@@ -67,12 +66,18 @@ def _save_single_year(df_clean: pd.DataFrame, year: int, account_label: str) -> 
 
     combined["Statut de la transaction"] = "Sanctuarisé"
 
+    # Nettoyage strict : ne conserver dans sanctuary/{year}/ QUE les transactions de cette année spécifique
+    combined["_year_val"] = pd.to_datetime(combined["Date de la transaction"], errors="coerce").dt.year
+    combined = combined[combined["_year_val"] == int(year)].drop(columns=["_year_val"])
+
+    # Clefs de dédoublonnage incluant le montant pour éviter la perte de transactions simultanées
     combined["Hash_Key"] = combined["Hash de la transaction blockchain"].fillna("")
     combined["Dev_Key"] = combined["Devise d'origine"].fillna("")
     combined["Date_Key"] = pd.to_datetime(combined["Date de la transaction"]).dt.strftime('%Y-%m-%d %H:%M:%S')
+    combined["Amt_Key"] = combined["Montant d'origine"].fillna(0.0).round(8)
 
-    deduped = combined.drop_duplicates(subset=["Hash_Key", "Dev_Key", "Date_Key"], keep="last")
-    deduped = deduped.drop(columns=["Hash_Key", "Dev_Key", "Date_Key"])
+    deduped = combined.drop_duplicates(subset=["Hash_Key", "Dev_Key", "Date_Key", "Amt_Key"], keep="last")
+    deduped = deduped.drop(columns=["Hash_Key", "Dev_Key", "Date_Key", "Amt_Key"])
 
     # Tri chronologique décroissant
     deduped = deduped.sort_values("Date de la transaction", ascending=False)
