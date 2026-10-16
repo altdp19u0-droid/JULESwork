@@ -46,7 +46,7 @@ sanctuary_app/
 │
 ├── modules/
 │   ├── __init__.py
-│   ├── schema.py              # Enforcing du schéma des 17 colonnes et typages
+│   ├── schema.py              # Enforcing du schéma des 19 colonnes et typages (avec gestion non tronquée)
 │   ├── sanctuary_manager.py   # Gestion de la sanctuarisation (sanctuary/{YEAR}/{compte}.csv)
 │   ├── fx_collector.py        # Moteur d'extraction des taux ECB (BCE) & DefiLlama
 │   ├── blockscout_collector.py# Moteur d'extraction Blockscout V2 (Priorité) & fallback EVM

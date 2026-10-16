@@ -94,11 +94,11 @@ Chaque fichier de sanctuarisation CSV et dataframe interne doit respecter scrupu
 
 ## 6. MODULE D'EXPLORATION ET DE TOTALISATION À DEUX NIVEAUX
 
-- **Sélection de Périodes** :
+- **Sélection de Périodes & Neutralisation d'Année Fiscale en Mode Personnalisé** :
   - Par Année Fiscale complète (ex: 2023, 2024).
   - Par Trimestre (Q1, Q2, Q3, Q4).
   - Par Mois.
-  - Par Plage de dates sur-mesure (Date Début -> Date Fin).
+  - Par Plage de dates sur-mesure (Date Début -> Date Fin) : **Le champ Année Fiscale est automatiquement neutralisé** (`🚫 Neutralisée (Multi-années)`), forçant le chargement exhaustif de l'intégralité des transactions du sanctuaire pour permettre l'analyse multi-années sans blocage.
 
 - **Structure des Totalisations (2 Niveaux distincts)** :
   1. **Niveau A - Totalisation Individuelle par Compte** :
