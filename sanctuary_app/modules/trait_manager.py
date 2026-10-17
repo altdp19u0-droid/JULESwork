@@ -5,6 +5,7 @@ Gère la duplication sécurisée de sanctuary/ vers trait_legit/ sans altérer l
 import os
 import json
 import re
+import unicodedata
 from pathlib import Path
 import pandas as pd
 from datetime import datetime, date
@@ -53,6 +54,19 @@ def save_legit_config(trait_dir: Path, config: dict):
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
+def is_homoglyph_scam(text: str) -> bool:
+    """Détecte les caractères Unicode non-ASCII (homoglyphes cyrilliques/lisu/arméniens)."""
+    if not text or not isinstance(text, str):
+        return False
+    return any(ord(c) > 127 for c in text)
+
+def normalize_token_symbol(text: str) -> str:
+    """Normalise et nettoie un symbole de jeton (NFKC)."""
+    if not text or not isinstance(text, str):
+        return ""
+    norm = unicodedata.normalize("NFKC", str(text))
+    return norm.replace("\xa0", " ").strip().upper()
+
 def is_spam_symbol(symbol: str) -> bool:
     if not symbol or not isinstance(symbol, str):
         return False
@@ -84,8 +98,13 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             else:
                 res_df[col] = "Validation Auto"
 
-    whitelist = [w.upper() for w in config.get("whitelist", DEFAULT_WHITELIST)]
-    blacklist = [b.upper() for b in config.get("blacklist", [])]
+    raw_wl = config.get("whitelist", DEFAULT_WHITELIST)
+    raw_bl = config.get("blacklist", [])
+
+    whitelist = [normalize_token_symbol(w) for w in raw_wl if w]
+    # On isole la blacklist ASCII propre (sans homoglyphes) pour éviter qu'une entrée comme ꓴꓢƊС ne pollue l'USDC ASCII
+    blacklist_ascii = [normalize_token_symbol(b) for b in raw_bl if b and not is_homoglyph_scam(b)]
+    blacklist_raw = [str(b).strip().upper() for b in raw_bl if b]
     manual_overrides = config.get("manual_overrides", {})
 
     statuts = []
@@ -94,8 +113,10 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 
     for idx, row in res_df.iterrows():
         tx_hash = str(row.get("Hash de la transaction blockchain", "")).replace("\xa0", " ").strip()
-        asset = str(row.get("Devise d'origine", "")).replace("\xa0", " ").strip().upper()
-        project = str(row.get("Nom du projet", "")).replace("\xa0", " ").strip()
+        asset_raw = str(row.get("Devise d'origine", "")).replace("\xa0", " ").strip().upper()
+        asset_norm = normalize_token_symbol(asset_raw)
+        project_raw = str(row.get("Nom du projet", "")).replace("\xa0", " ").strip()
+        project_norm = normalize_token_symbol(project_raw)
 
         # 1. Verification surcharge manuelle par Hash
         if tx_hash and tx_hash in manual_overrides:
@@ -106,32 +127,38 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             continue
 
         # 2. Verification surcharge manuelle par Asset
-        if asset and asset in manual_overrides:
-            is_valid = manual_overrides[asset]
+        if asset_norm in manual_overrides or asset_raw in manual_overrides:
+            is_valid = manual_overrides.get(asset_norm, manual_overrides.get(asset_raw))
             statuts.append("Valide" if is_valid else "Spam / Suspect")
-            motifs.append(f"Surcharge Asset {asset}")
+            motifs.append(f"Surcharge Asset {asset_norm}")
             masques.append(bool(is_valid))
             continue
 
-        # 3. PRIORITÉ ABSOLUE : Verification Whitelist
+        # 3. DÉTECTION SPAM HOMOGLYPHE (Ex: ꓴꓢƊС / UЅDС faux token)
+        if is_homoglyph_scam(asset_raw):
+            statuts.append("Spam / Suspect")
+            motifs.append("Faux Token (Homoglyphe Scam)")
+            masques.append(False)
+            continue
+
+        # 4. PRIORITÉ ABSOLUE : Verification Whitelist (Token Authentique)
         if whitelist and len(whitelist) > 0:
-            if asset in whitelist:
+            if asset_norm in whitelist:
                 statuts.append("Valide")
                 motifs.append("Token Whitelisted")
                 masques.append(True)
                 continue
             else:
-                # Si une Whitelist est définie et que le token n'est pas dedans -> Non Whitelisted
                 statuts.append("Spam / Suspect")
                 motifs.append("Non Whitelisted")
                 masques.append(False)
                 continue
 
-        # 4. Verification Blacklist (si aucune Whitelist restrictive n'est active)
-        is_blacklisted = asset in blacklist or project.upper() in blacklist
-        if not is_blacklisted and project:
-            proj_words = [w.strip() for w in re.split(r"[\s,_\-\/]+", project.upper()) if w.strip()]
-            is_blacklisted = any(b in proj_words for b in blacklist if b)
+        # 5. Verification Blacklist (si aucune Whitelist restrictive n'est active)
+        is_blacklisted = asset_norm in blacklist_ascii or asset_raw in blacklist_raw or project_norm in blacklist_ascii
+        if not is_blacklisted and project_norm:
+            proj_words = [w.strip() for w in re.split(r"[\s,_\-\/]+", project_norm) if w.strip()]
+            is_blacklisted = any(b in proj_words for b in blacklist_ascii if b)
 
         if is_blacklisted:
             statuts.append("Spam / Suspect")
@@ -139,8 +166,8 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             masques.append(False)
             continue
 
-        # 5. Détection heuristique Spam (URLs, Mots-clés)
-        if is_spam_symbol(asset) or is_spam_symbol(project):
+        # 6. Détection heuristique Spam (URLs, Mots-clés)
+        if is_spam_symbol(asset_raw) or is_spam_symbol(project_raw):
             statuts.append("Spam / Suspect")
             motifs.append("Pattern Spam / URL Décelé")
             masques.append(False)
