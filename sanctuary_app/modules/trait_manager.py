@@ -113,7 +113,21 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             masques.append(bool(is_valid))
             continue
 
-        # 3. Verification Blacklist (Matching exact de mot/token pour éviter que "O" ou "AI" masque tout)
+        # 3. PRIORITÉ ABSOLUE : Verification Whitelist
+        if whitelist and len(whitelist) > 0:
+            if asset in whitelist:
+                statuts.append("Valide")
+                motifs.append("Token Whitelisted")
+                masques.append(True)
+                continue
+            else:
+                # Si une Whitelist est définie et que le token n'est pas dedans -> Non Whitelisted
+                statuts.append("Spam / Suspect")
+                motifs.append("Non Whitelisted")
+                masques.append(False)
+                continue
+
+        # 4. Verification Blacklist (si aucune Whitelist restrictive n'est active)
         is_blacklisted = asset in blacklist or project.upper() in blacklist
         if not is_blacklisted and project:
             proj_words = [w.strip() for w in re.split(r"[\s,_\-\/]+", project.upper()) if w.strip()]
@@ -123,18 +137,6 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             statuts.append("Spam / Suspect")
             motifs.append("Actif/Projet Blacklisté")
             masques.append(False)
-            continue
-
-        # 4. Verification Whitelist
-        if whitelist and len(whitelist) > 0:
-            if asset in whitelist:
-                statuts.append("Valide")
-                motifs.append("Token Whitelisted")
-                masques.append(True)
-            else:
-                statuts.append("Spam / Suspect")
-                motifs.append("Non Whitelisted")
-                masques.append(False)
             continue
 
         # 5. Détection heuristique Spam (URLs, Mots-clés)
