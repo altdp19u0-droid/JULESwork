@@ -40,25 +40,30 @@ Blockscout V2 fournit une suite d'endpoints REST extrêmement puissants et libre
 ```text
 sanctuary_app/
 │
-├── main.py                     # Point d'entrée principal (Streamlit Hub)
-├── PROMPT_S_SAN.md             # Spécification du prompt système (Blockscout Priority)
-├── ARCHITECTURE_SOLUTIONS.md   # Document d'architecture et recommandations
+├── app.py                      # Application principale (Sanctuary Backup & Exploration)
+├── apptrait.py                 # Application complémentaire (AppTrait - Qualification & Valuation)
+├── PROMPT_S_SAN.md             # Spécification du prompt système Sanctuary
+├── PROMPT_APPTRAIT.md          # Spécification du prompt système AppTrait
+├── ARCHITECTURE_SOLUTIONS.md   # Document d'architecture globale
 │
 ├── modules/
 │   ├── __init__.py
-│   ├── schema.py              # Enforcing du schéma des 19 colonnes et typages (avec gestion non tronquée)
+│   ├── schema.py              # Enforcing du schéma des 19 colonnes et typages (non tronqué)
 │   ├── sanctuary_manager.py   # Gestion de la sanctuarisation (sanctuary/{YEAR}/{compte}.csv)
 │   ├── fx_collector.py        # Moteur d'extraction des taux ECB (BCE) & DefiLlama
-│   ├── blockscout_collector.py# Moteur d'extraction Blockscout V2 (Priorité) & fallback EVM
+│   ├── blockscout_collector.py# Moteur d'extraction Blockscout V2 (Ethereum, Base, Arbitrum)
 │   ├── csv_importer.py        # Assistant d'importation et mapping dynamique de CSV
-│   └── analytics_engine.py    # Moteur de totalisation à 2 niveaux (Niveau A & Niveau B)
+│   ├── analytics_engine.py    # Moteur de totalisation à 2 niveaux (Niveau A & Niveau B)
+│   └── trait_manager.py       # Moteur de qualification, détection d'homoglyphes & soldes Teval
 │
-└── sanctuary/                 # Dossier sanctuarisé de stockage local
-    ├── 2023/
-    │   └── 0x123..._Ethereum.csv
+├── sanctuary/                 # Dossier sanctuarisé BRUT (lecture seule)
+│   └── 2024/
+│       └── MonCompte_Ethereum.csv
+│
+└── trait_legit/               # Dossier de TRAITEMENT QUALIFIÉ (Duplication isolée)
+    ├── legitimacy_config.json # Whitelist, Blacklist et surcharges manuelles
     └── 2024/
-        ├── 0x123..._Ethereum.csv
-        └── Compte_Banque_EUR.csv
+        └── MonCompte_Ethereum.csv
 ```
 
 ---

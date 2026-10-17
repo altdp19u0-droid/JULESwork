@@ -23,30 +23,31 @@ Placez-y les fichiers et dossiers exactement selon la structure suivante :
 ```text
 C:\SanctuaryApp\
 │
-├── lancer_sanctuary_usb.bat        <-- SCRIPT DE LANCEMENT EN UN CLIC
-├── lancer_viderCaches.bat          <-- SCRIPT DE NETTOYAGE DES CACHES
-├── PROMPT_S_SAN.md                 <-- Cahier des charges / Spécifications du prompt
-├── ARCHITECTURE_SOLUTIONS.md       <-- Architecture technique
+├── lancer_sanctuary_usb.bat        <-- SCRIPT LANCEMENT SANCTUARY (Backup/Exploration)
+├── lancer_apptrait.bat             <-- SCRIPT LANCEMENT APPTRAIT (Qualification & Anti-Spam)
+├── lancer_viderCaches.bat          <-- SCRIPT NETTOYAGE DES CACHES
+├── apptrait.py                     <-- Wrapper racine AppTrait
+├── PROMPT_S_SAN.md                 <-- Cahier des charges Sanctuary
+├── PROMPT_APPTRAIT.md              <-- Cahier des charges AppTrait
+├── ARCHITECTURE_SOLUTIONS.md       <-- Architecture technique globale
 ├── GUIDE_INSTALLATION_WINDOWS.md   <-- Le présent guide
 ├── GUIDE_USB_PORTABLE.md           <-- Guide Clé USB
-├── requirements.txt                <-- Liste des bibliothèques requises
+├── requirements.txt                <-- Bibliothèques Python requises
 │
 ├── sanctuary_app/                  <-- DOSSIER CODE APPLICATION
-│   ├── app.py                      <-- FICHIER PRINCIPAL STREAMLIT (Point d'entrée)
+│   ├── app.py                      <-- Point d'entrée principal Sanctuary
+│   ├── apptrait.py                 <-- Application AppTrait Streamlit
 │   └── modules/
-│       ├── __init__.py
-│       ├── schema.py               <-- Validation du schéma des 19 colonnes
-│       ├── sanctuary_manager.py    <-- Sauvegarde & Dédoublonnage CSV Windows
-│       ├── fx_collector.py         <-- Taux BCE (ECB) et prix crypto DefiLlama
+│       ├── schema.py               <-- Schema 19 colonnes & dates UTC
+│       ├── sanctuary_manager.py    <-- Sauvegarde & Dédoublonnage CSV
+│       ├── fx_collector.py         <-- Taux BCE et prix crypto DefiLlama
 │       ├── blockscout_collector.py <-- Collecte Blockscout V2
-│       ├── csv_importer.py         <-- Assistant d'importation CSV
-│       └── analytics_engine.py     <-- Totalisation à 2 niveaux (A et B)
+│       ├── csv_importer.py         <-- Mapping CSV dynamique
+│       ├── analytics_engine.py     <-- Totalisation à 2 niveaux (A et B)
+│       └── trait_manager.py       <-- Anti-Spam, Homoglyphes & Soldes Teval
 │
-└── sanctuary/                      <-- DOSSIER DE SANCTUARISATION (Généré automatiquement)
-    ├── 2023/                       <-- (Créé auto lors des sauvegardes de 2023)
-    └── 2024/                       <-- (Créé auto lors des sauvegardes de 2024)
-        ├── MonCompte_Ethereum.csv  <-- Vos fichiers de compte au format UTF-8-SIG
-        └── Banque_Principale.csv
+├── sanctuary/                      <-- Dossier Sanctuarisé BRUT (Lecture seule)
+└── trait_legit/                    <-- Dossier de Travail QUALIFIÉ (Duplication isolée)
 ```
 
 ---

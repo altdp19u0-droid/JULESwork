@@ -19,9 +19,12 @@ Sur votre clé USB (ex: lecteur `E:\` ou `F:\`), créez le dossier `SanctuaryApp
 ```text
 E:\SanctuaryApp\                     <-- Racine sur votre Clé USB
 │
-├── lancer_sanctuary_usb.bat        <-- SCRIPT BAT DE LANCEMENT EN UN CLIC
-├── lancer_viderCaches.bat          <-- SCRIPT BAT DE NETTOYAGE DES CACHES
+├── lancer_sanctuary_usb.bat        <-- SCRIPT LANCEMENT SANCTUARY
+├── lancer_apptrait.bat             <-- SCRIPT LANCEMENT APPTRAIT (Qualification & Anti-Spam)
+├── lancer_viderCaches.bat          <-- SCRIPT NETTOYAGE DES CACHES
+├── apptrait.py                     <-- Wrapper racine AppTrait
 ├── PROMPT_S_SAN.md
+├── PROMPT_APPTRAIT.md
 ├── ARCHITECTURE_SOLUTIONS.md
 ├── GUIDE_INSTALLATION_WINDOWS.md
 ├── GUIDE_USB_PORTABLE.md           <-- Le présent guide
@@ -29,19 +32,20 @@ E:\SanctuaryApp\                     <-- Racine sur votre Clé USB
 │
 ├── venv\                           <-- Environnement Python autonome (sur la clé)
 │
-├── sanctuary_app\                  <-- Application Streamlit
-│   ├── app.py
+├── sanctuary_app\                  <-- Code des Applications
+│   ├── app.py                      <-- Sanctuary Backup & Exploration
+│   ├── apptrait.py                 <-- Qualification Anti-Spam & Soldes
 │   └── modules/
 │       ├── schema.py
 │       ├── sanctuary_manager.py
 │       ├── fx_collector.py
 │       ├── blockscout_collector.py
 │       ├── csv_importer.py
-│       └── analytics_engine.py
+│       ├── analytics_engine.py
+│       └── trait_manager.py
 │
-└── sanctuary/                      <-- Dossier des sauvegardes sanctuarisées
-    ├── 2023/
-    └── 2024/
+├── sanctuary/                      <-- Dossier Sanctuarisé BRUT (Lecture seule)
+└── trait_legit/                    <-- Dossier de Travail QUALIFIÉ (Duplication isolée)
 ```
 
 ---
