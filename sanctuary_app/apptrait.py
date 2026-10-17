@@ -126,20 +126,22 @@ elif menu == "🛡️ 2. Centre de Qualification & Anti-Spam":
         with col_w:
             st.write("### 🟢 Liste Blanche (Whitelist Tokens)")
             wl_text = st.text_area("Tokens Valides (séparés par une virgule)", value=", ".join(config.get("whitelist", DEFAULT_WHITELIST)))
-            if st.button("💾 Enregistrer la Whitelist"):
+            if st.button("💾 Enregistrer & Appliquer la Whitelist"):
                 new_wl = [t.strip().upper() for t in wl_text.split(",") if t.strip()]
                 config["whitelist"] = new_wl
                 save_legit_config(TRAIT_DIR, config)
-                st.success("✅ Whitelist enregistrée ! Veillez à re-synchroniser pour appliquer les modifications.")
+                saved = sync_sanctuary_to_trait_legit(SANCTUARY_DIR, TRAIT_DIR, force_requalify=True)
+                st.success(f"✅ Whitelist enregistrée et appliquée à {len(saved)} fichier(s) qualifié(s) !")
 
         with col_b:
             st.write("### 🔴 Liste Noire (Blacklist / Banni)")
             bl_text = st.text_area("Tokens / Projets Bannis (séparés par une virgule)", value=", ".join(config.get("blacklist", [])))
-            if st.button("💾 Enregistrer la Blacklist"):
+            if st.button("💾 Enregistrer & Appliquer la Blacklist"):
                 new_bl = [t.strip().upper() for t in bl_text.split(",") if t.strip()]
                 config["blacklist"] = new_bl
                 save_legit_config(TRAIT_DIR, config)
-                st.success("✅ Blacklist enregistrée !")
+                saved = sync_sanctuary_to_trait_legit(SANCTUARY_DIR, TRAIT_DIR, force_requalify=True)
+                st.success(f"✅ Blacklist enregistrée et appliquée à {len(saved)} fichier(s) qualifié(s) !")
 
     # TAB 2 : AUDIT INTERACTIF
     with tab_audit:

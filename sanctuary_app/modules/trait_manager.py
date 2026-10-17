@@ -113,18 +113,28 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             masques.append(bool(is_valid))
             continue
 
-        # 3. Verification Blacklist
-        if asset in blacklist or any(b in project.upper() for b in blacklist if b):
+        # 3. Verification Blacklist (Matching exact de mot/token pour éviter que "O" ou "AI" masque tout)
+        is_blacklisted = asset in blacklist or project.upper() in blacklist
+        if not is_blacklisted and project:
+            proj_words = [w.strip() for w in re.split(r"[\s,_\-\/]+", project.upper()) if w.strip()]
+            is_blacklisted = any(b in proj_words for b in blacklist if b)
+
+        if is_blacklisted:
             statuts.append("Spam / Suspect")
             motifs.append("Actif/Projet Blacklisté")
             masques.append(False)
             continue
 
         # 4. Verification Whitelist
-        if asset in whitelist:
-            statuts.append("Valide")
-            motifs.append("Token Whitelisted")
-            masques.append(True)
+        if whitelist and len(whitelist) > 0:
+            if asset in whitelist:
+                statuts.append("Valide")
+                motifs.append("Token Whitelisted")
+                masques.append(True)
+            else:
+                statuts.append("Spam / Suspect")
+                motifs.append("Non Whitelisted")
+                masques.append(False)
             continue
 
         # 5. Détection heuristique Spam (URLs, Mots-clés)
@@ -134,18 +144,10 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             masques.append(False)
             continue
 
-        # 6. Statut conservé ou Défaut Valide
-        existing_statut = row.get("Statut_Legitimite")
-        existing_masque = row.get("Masque_Traitement")
-
-        if pd.notna(existing_statut) and existing_statut in ["Valide", "Spam / Suspect"]:
-            statuts.append(existing_statut)
-            motifs.append(str(row.get("Motif_Legitimite", "Qualifié")))
-            masques.append(bool(existing_masque) if pd.notna(existing_masque) else (existing_statut == "Valide"))
-        else:
-            statuts.append("Valide")
-            motifs.append("Validation Standard")
-            masques.append(True)
+        # 6. Défaut
+        statuts.append("Valide")
+        motifs.append("Validation Standard")
+        masques.append(True)
 
     res_df["Statut_Legitimite"] = statuts
     res_df["Motif_Legitimite"] = motifs
@@ -153,7 +155,7 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 
     return res_df
 
-def sync_sanctuary_to_trait_legit(sanctuary_dir: Path, trait_dir: Path) -> list:
+def sync_sanctuary_to_trait_legit(sanctuary_dir: Path, trait_dir: Path, force_requalify: bool = False) -> list:
     """
     Duplique l'arborescence sanctuary/ vers trait_legit/ en appliquant les qualifications.
     Ne modifie JAMAIS sanctuary/.
@@ -183,11 +185,10 @@ def sync_sanctuary_to_trait_legit(sanctuary_dir: Path, trait_dir: Path) -> list:
 
                 df_src = enforce_sanctuary_schema(df_src)
 
-                # Si dest_path existe déjà, charger pour préserver les statuts édités
-                if dest_path.exists():
+                # Si dest_path existe déjà et pas force_requalify, charger pour préserver les statuts édités
+                if dest_path.exists() and not force_requalify:
                     try:
                         df_existing = pd.read_csv(dest_path, encoding="utf-8-sig")
-                        # Fusionner les statuts existants par Tx_Hash ou index
                         if "Hash de la transaction blockchain" in df_existing.columns and "Statut_Legitimite" in df_existing.columns:
                             existing_map = df_existing.set_index("Hash de la transaction blockchain")[["Statut_Legitimite", "Motif_Legitimite", "Masque_Traitement"]].to_dict(orient="index")
 
