@@ -47,8 +47,14 @@ L'application `apptrait.py` travaille en amont sur les données issues de la san
 
 Dans l'arborescence qualifiée `trait_legit/`, l'application calcule le **solde net de chaque token** par portefeuille :
 
-1. **Calcul Algebraic du Solde Net par Token** :
+1. **Calcul Algébrique du Solde Net par Token & Règles de Partie Double (8LENDS / Non-Custodial)** :
    $$\text{Solde Net} = \sum \text{Entrées Valides} - \sum \text{Sorties Valides}$$
+   - **Portefeuilles Non-Custodial (Blockchain)** : La transaction `Investissement` (avec Hash) constitue une **Sortie de trésorerie disponible** vers la plateforme de prêt.
+   - **Compte Plateforme de Prêt (8LENDS)** :
+     - `Dépôt` / `Investissement` : Entrée de capital engagé ($+\Delta$).
+     - `Retrait` : Sortie vers le wallet non-custodial ($-\Delta$).
+     - `Remboursement` / `Restitution du capital` / `Intérêts` : Événements informationnels neutres de trésorerie disponible ($0.0$), évitant d'enfler artificiellement le solde du compte.
+
 2. **Périodisation Flexible** :
    - Sélection par **Année Fiscale** (ex: Solde au 31/12/2024).
    - Sélection par **Période Personnalisée** (ex: Solde cumulé à une date $T$ spécifique).
