@@ -31,7 +31,7 @@ L'application `apptrait.py` travaille en amont sur les données issues de la san
    - **Détection d'Homoglyphes Scam (Priorité Sécurité)** : Détection stricte des caractères non-ASCII (cyrilliques, lisu, arméniens, ex: `UЅDС` ou `ꓴꓢƊС`) usurpant l'identité de tokens légitimes. Tout jeton contenant des homoglyphes est immédiatement classé `Spam / Suspect` avec le motif `Faux Token (Homoglyphe Scam)`.
    - **Liste Blanche (Whitelist)** : Marquage prioritaire des tokens légitimes ASCII authentiques (`ETH`, `USDC`, `USDT`, `WBTC`, `ARB`, `UNI`, `EUR`, etc.).
    - **Détection Anti-Spam Tokens** : Détection automatique des URLs dans les symboles/noms, jetons à solde astronomique sans valeur, airdrops non sollicités.
-   - **Gestion Manuelle & Clean Reset** : Toggle interactif pour basculer un token ou un Hash en `Valide` ou `Spam / Suspect`, et bouton de **Clean Reset ("Réinitialiser & Nettoyer les Anciens Statuts")** pour effacer les anciens statuts obsolètes et re-qualifier l'intégralité du sanctuaire à neuf.
+   - **Gestion Manuelle & Clean Reset** : Toggle interactif pour basculer un token ou un Hash en `Valide` ou `Spam / Suspect`, affichage interactif des surcharges actives, et boutons d'effacement **"🗑️ Effacer TOUTES les Surcharges Manuelles"** et de **Clean Reset ("Réinitialiser Tout")** pour réinitialiser les configurations et re-qualifier l'intégralité du sanctuaire à neuf.
 
 2. **Qualification des Comptes, Adresses et Transactions** :
    - **Filtrage des Adresses / Comptes Emetteurs & Destinataires** : Possibilité de déclarer un compte ou une adresse EVM comme `Spam / Phishing` pour neutraliser d'un clic toutes les transactions associées.
