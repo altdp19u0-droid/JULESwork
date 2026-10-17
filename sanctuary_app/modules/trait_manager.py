@@ -93,9 +93,9 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     masques = []
 
     for idx, row in res_df.iterrows():
-        tx_hash = str(row.get("Hash de la transaction blockchain", "")).strip()
-        asset = str(row.get("Devise d'origine", "")).strip().upper()
-        project = str(row.get("Nom du projet", "")).strip()
+        tx_hash = str(row.get("Hash de la transaction blockchain", "")).replace("\xa0", " ").strip()
+        asset = str(row.get("Devise d'origine", "")).replace("\xa0", " ").strip().upper()
+        project = str(row.get("Nom du projet", "")).replace("\xa0", " ").strip()
 
         # 1. Verification surcharge manuelle par Hash
         if tx_hash and tx_hash in manual_overrides:
@@ -149,6 +149,7 @@ def qualify_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         motifs.append("Validation Standard")
         masques.append(True)
 
+    res_df["Devise d'origine"] = res_df["Devise d'origine"].astype(str).str.replace("\xa0", " ").str.strip().str.upper()
     res_df["Statut_Legitimite"] = statuts
     res_df["Motif_Legitimite"] = motifs
     res_df["Masque_Traitement"] = masques
@@ -249,7 +250,7 @@ def load_all_trait_legit(trait_dir: Path, year: int = None, account: str = None,
     full_df = pd.concat(dfs, ignore_index=True)
 
     if exclude_spam and "Masque_Traitement" in full_df.columns:
-        full_df = full_df[full_df["Masque_Traitement"] == True]
+        full_df = full_df[full_df["Masque_Traitement"].astype(str).str.lower().isin(["true", "1"])]
 
     return full_df
 
@@ -260,7 +261,13 @@ def calculate_token_balances(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=["Portefeuille", "Token", "Total_Entrees", "Total_Sorties", "Solde_Net", "Nombre_TX"])
 
+    # Conservation de Compte_Sanctuaire avant la mise en conformité du schéma
+    acc_series = df["Compte_Sanctuaire"] if "Compte_Sanctuaire" in df.columns else None
+
     res_df = enforce_sanctuary_schema(df)
+
+    if acc_series is not None:
+        res_df["Compte_Sanctuaire"] = acc_series.values
 
     # Détermination du portefeuille
     if "Compte_Sanctuaire" not in res_df.columns or res_df["Compte_Sanctuaire"].dropna().empty:
