@@ -86,16 +86,28 @@ if menu == "📂 1. Duplication & Synchronisation":
     col2.metric("Dossier de Travail Qualifié", str(TRAIT_DIR.name))
 
     st.divider()
-    if st.button("🚀 Lancer la Synchronisation & Duplication (Sanctuary -> Trait Legit)"):
-        with st.spinner("Duplication et qualification automatique en cours..."):
-            saved = sync_sanctuary_to_trait_legit(SANCTUARY_DIR, TRAIT_DIR)
+    st.subheader("⚡ Options de Synchronisation & Nettoyage")
+    cs1, cs2 = st.columns(2)
 
-        if not saved:
-            st.warning("Aucun fichier à dupliquer trouvé dans `sanctuary/`.")
-        else:
-            st.success(f"✅ {len(saved)} fichier(s) dupliqué(s) et qualifié(s) dans `trait_legit/` avec succès !")
-            for p in saved:
-                st.write(f"- `{p}`")
+    with cs1:
+        if st.button("🚀 Synchronisation Standard (Conserver surcharges)"):
+            with st.spinner("Duplication et qualification automatique..."):
+                saved = sync_sanctuary_to_trait_legit(SANCTUARY_DIR, TRAIT_DIR, force_requalify=False)
+            if not saved:
+                st.warning("Aucun fichier à dupliquer trouvé dans `sanctuary/`.")
+            else:
+                st.success(f"✅ {len(saved)} fichier(s) mis à jour dans `trait_legit/` !")
+
+    with cs2:
+        if st.button("🧹 Réinitialiser & Nettoyer les Anciens Statuts (Clean Reset)"):
+            with st.spinner("Purge des anciens statuts et re-qualification intégrale à neuf..."):
+                saved = sync_sanctuary_to_trait_legit(SANCTUARY_DIR, TRAIT_DIR, force_requalify=True)
+            if not saved:
+                st.warning("Aucun fichier à dupliquer trouvé dans `sanctuary/`.")
+            else:
+                st.success(f"✅ {len(saved)} fichier(s) réinitialisé(s) et re-qualifiés à neuf dans `trait_legit/` !")
+                for p in saved:
+                    st.write(f"- `{p}`")
 
     st.divider()
     st.subheader("📄 Aperçu du Dossier `trait_legit/`")
