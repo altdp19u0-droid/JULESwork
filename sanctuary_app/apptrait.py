@@ -99,11 +99,11 @@ if menu == "📂 1. Duplication & Synchronisation":
 
     st.divider()
     st.subheader("📄 Aperçu du Dossier `trait_legit/`")
-    df_preview = load_all_trait_legit(TRAIT_DIR, exclude_spam=False)
+    df_preview = load_all_trait_legit(TRAIT_DIR, exclude_spam=exclude_spam_global)
     if df_preview.empty:
-        st.info("Le dossier `trait_legit/` est vide. Veuillez lancer une synchronisation.")
+        st.info("Aucune transaction à afficher (soit le dossier est vide, soit toutes les lignes sont masquées par le Filtre Anti-Spam Global).")
     else:
-        st.write(f"**Total enregistrements dans `trait_legit/`** : {len(df_preview)} lignes")
+        st.write(f"**Enregistrements affichés** ({'Exclusion du Spam ACTIVED' if exclude_spam_global else 'Inclus Tout'}) : **{len(df_preview)} lignes**")
         st.dataframe(df_preview, use_container_width=True)
 
 
