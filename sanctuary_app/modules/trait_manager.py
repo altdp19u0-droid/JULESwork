@@ -307,11 +307,34 @@ def calculate_token_balances(df: pd.DataFrame) -> pd.DataFrame:
     res_df["Token"] = res_df["Devise d'origine"].fillna("Inconnue").str.upper().str.strip()
     res_df["Montant d'origine"] = pd.to_numeric(res_df["Montant d'origine"], errors="coerce").fillna(0.0)
 
-    # Classification Entrée vs Sortie
+    # Classification Entrée vs Sortie adaptée aux spécificités 8LENDS & Lending
     def classify_amount(row):
-        tx_type = str(row.get("Type de transaction", "")).lower()
+        tx_type = str(row.get("Type de transaction", "")).strip().lower()
         amt = float(row.get("Montant d'origine", 0.0))
+        acc = str(row.get("Compte_Sanctuaire", "")).lower()
+        proj = str(row.get("Nom du projet", "")).lower()
 
+        is_8lends = "8lends" in acc or "8lends" in proj
+
+        if is_8lends:
+            # Traitement spécifique 8LENDS :
+            # 1. Retrait : Sortie réelle de 8LENDS vers wallet non-custodial
+            if "retrait" in tx_type or "withdrawal" in tx_type:
+                return 0.0, abs(amt)
+            # 2. Dépôt / Investissement initial : Entrée sur le compte 8LENDS
+            elif "dépôt" in tx_type or "deposit" in tx_type or "investissement" in tx_type:
+                return abs(amt), 0.0
+            # 3. Remboursement de capital / Intérêts / Récompenses :
+            # Information interne de restitution/rendement (frais/intérêts déjà au solde disponible)
+            elif any(k in tx_type for k in ["remboursement", "restitution", "intérêt", "intérêts", "récompense", "parrainage"]):
+                return 0.0, 0.0
+            else:
+                if amt < 0:
+                    return 0.0, abs(amt)
+                else:
+                    return abs(amt), 0.0
+
+        # Règle générale
         outflow_types = ["retrait", "withdrawal", "fee", "out", "pay", "send", "transfer_out"]
         inflow_types = ["dépôt", "deposit", "in", "buy", "receive", "revenue", "staking", "claim"]
 
