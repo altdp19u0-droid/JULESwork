@@ -99,13 +99,16 @@ if menu == "📂 1. Duplication & Synchronisation":
                 st.success(f"✅ {len(saved)} fichier(s) mis à jour dans `trait_legit/` !")
 
     with cs2:
-        if st.button("🧹 Réinitialiser & Nettoyer les Anciens Statuts (Clean Reset)"):
-            with st.spinner("Purge des anciens statuts et re-qualification intégrale à neuf..."):
+        if st.button("🧹 Réinitialiser Tout (Effacer Surcharges & Re-qualifier)"):
+            with st.spinner("Effacement des surcharges manuelles et re-qualification intégrale..."):
+                config = load_legit_config(TRAIT_DIR)
+                config["manual_overrides"] = {}
+                save_legit_config(TRAIT_DIR, config)
                 saved = sync_sanctuary_to_trait_legit(SANCTUARY_DIR, TRAIT_DIR, force_requalify=True)
             if not saved:
                 st.warning("Aucun fichier à dupliquer trouvé dans `sanctuary/`.")
             else:
-                st.success(f"✅ {len(saved)} fichier(s) réinitialisé(s) et re-qualifiés à neuf dans `trait_legit/` !")
+                st.success(f"✅ Surcharges effacées et {len(saved)} fichier(s) re-qualifiés à neuf dans `trait_legit/` !")
                 for p in saved:
                     st.write(f"- `{p}`")
 
@@ -176,12 +179,26 @@ elif menu == "🛡️ 2. Centre de Qualification & Anti-Spam":
 
             st.divider()
             st.subheader("✍️ Surcharge Manuelle d'un Token ou d'une Transaction")
+
+            # Affichage des surcharges actives
+            active_overrides = config.get("manual_overrides", {})
+            if active_overrides:
+                st.warning(f"⚠️ Surcharges manuelles actives ({len(active_overrides)}) :")
+                for k, v in active_overrides.items():
+                    st.write(f"- `{k}` $\rightarrow$ **{'VALIDE' if v else 'SPAM / SUSPECT'}**")
+
+                if st.button("🗑️ Effacer TOUTES les Surcharges Manuelles"):
+                    config["manual_overrides"] = {}
+                    save_legit_config(TRAIT_DIR, config)
+                    sync_sanctuary_to_trait_legit(SANCTUARY_DIR, TRAIT_DIR, force_requalify=True)
+                    st.success("✅ Toutes les surcharges manuelles ont été effacées et le sanctuaire a été re-qualifié !")
+
             c1, c2, c3 = st.columns(3)
 
             override_key = c1.text_input("Symbole Token OU Hash Transaction 0x...", placeholder="ex: ARB ou 0x123...")
             override_action = c2.selectbox("Action Manuelle", ["Marquer comme VALIDE (Autoriser)", "Marquer comme SPAM (Bannir)"])
 
-            if c3.button("⚡ Appliquer la Surcharge"):
+            if c3.button("⚡ Appliquer / Mettre à jour la Surcharge"):
                 if not override_key:
                     st.error("Veuillez saisir un symbole de token ou un hash.")
                 else:
@@ -191,7 +208,7 @@ elif menu == "🛡️ 2. Centre de Qualification & Anti-Spam":
                     save_legit_config(TRAIT_DIR, config)
 
                     # Re-qualification instantanée
-                    sync_sanctuary_to_trait_legit(SANCTUARY_DIR, TRAIT_DIR)
+                    sync_sanctuary_to_trait_legit(SANCTUARY_DIR, TRAIT_DIR, force_requalify=True)
                     st.success(f"✅ Surcharge enregistrée pour '{target_key}' ! Le statut a été mis à jour dans `trait_legit/`.")
 
 
