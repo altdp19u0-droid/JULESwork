@@ -334,8 +334,9 @@ def calculate_token_balances(df: pd.DataFrame) -> pd.DataFrame:
                 else:
                     return abs(amt), 0.0
 
-        # Règle générale
-        outflow_types = ["retrait", "withdrawal", "fee", "out", "pay", "send", "transfer_out"]
+        # Règle générale (Comptes non-custodial / Portefeuilles Blockchain)
+        # "Investissement" depuis un portefeuille non-custodial est une Sortie vers la plateforme (8LENDS)
+        outflow_types = ["retrait", "withdrawal", "fee", "out", "pay", "send", "transfer_out", "investissement"]
         inflow_types = ["dépôt", "deposit", "in", "buy", "receive", "revenue", "staking", "claim"]
 
         if any(t in tx_type for t in outflow_types):
