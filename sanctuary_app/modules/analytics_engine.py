@@ -4,7 +4,7 @@ Niveau A : Totalisation par période pour chaque compte individuel.
 Niveau B : Totalisation par période sur la globalisation multi-comptes.
 """
 import pandas as pd
-from .schema import enforce_sanctuary_schema
+from .schema import enforce_sanctuary_schema, smart_parse_dates
 
 def filter_by_period(df: pd.DataFrame, period_type: str, year: int = None, quarter: str = None, month: int = None, start_date = None, end_date = None) -> pd.DataFrame:
     """
@@ -16,11 +16,8 @@ def filter_by_period(df: pd.DataFrame, period_type: str, year: int = None, quart
 
     res_df = df.copy()
 
-    # Conversion en UTC strict (utc=True) pour absorber les entrées tz-mixed et tz-naive
-    dt_series = pd.to_datetime(res_df["Date de la transaction"], dayfirst=True, format="mixed", utc=True, errors="coerce")
-
-    # Normalisation tz-naive (remotion du fuseau horaire) pour comparaison sécurisée avec start_date/end_date
-    res_df["Date_DT"] = dt_series.dt.tz_localize(None)
+    # Parsing intelligent sans inversion du jour et mois ISO
+    res_df["Date_DT"] = smart_parse_dates(res_df["Date de la transaction"])
     res_df = res_df.dropna(subset=["Date_DT"])
 
     if period_type == "Année" and year:

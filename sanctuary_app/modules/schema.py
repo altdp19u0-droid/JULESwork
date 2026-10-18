@@ -29,6 +29,28 @@ def create_empty_sanctuary_df() -> pd.DataFrame:
     """Crée un DataFrame vide respectant la structure exacte des 19 colonnes."""
     return pd.DataFrame(columns=REQUIRED_COLUMNS)
 
+def smart_parse_dates(series: pd.Series) -> pd.Series:
+    """
+    Parse intelligemment une série de dates sans inverser mois et jour.
+    - Dates ISO (ex: YYYY-MM-DD / 2026-07-12) : Parsées en YYYY-MM-DD (12 Juillet) sans dayfirst.
+    - Dates Françaises (ex: DD/MM/YYYY / 12/07/2026) : Parsées avec dayfirst=True (12 Juillet).
+    """
+    if series is None or series.empty:
+        return pd.Series(dtype="datetime64[ns]")
+
+    def parse_val(val):
+        if pd.isna(val) or not str(val).strip():
+            return pd.NaT
+        v = str(val).strip()
+        # ISO Format YYYY-MM-DD...
+        if v.startswith(("20", "19")) and len(v) >= 10 and (v[4] in ["-", "/"]):
+            return pd.to_datetime(v, utc=True, errors="coerce")
+        else:
+            return pd.to_datetime(v, dayfirst=True, utc=True, errors="coerce")
+
+    parsed_res = series.apply(parse_val)
+    return pd.to_datetime(parsed_res, utc=True, errors="coerce").dt.tz_localize(None)
+
 def enforce_sanctuary_schema(df: pd.DataFrame) -> pd.DataFrame:
     """
     S'assure que le DataFrame contient exactement les 19 colonnes requises dans l'ordre,
@@ -54,9 +76,8 @@ def enforce_sanctuary_schema(df: pd.DataFrame) -> pd.DataFrame:
     # Conservation exacte des 19 colonnes dans l'ordre
     res_df = res_df[REQUIRED_COLUMNS]
 
-    # Formattage et nettoyage des types (Dayfirst pour dates françaises, utc=True pour absorber les fuseaux mixtes)
-    dt_series = pd.to_datetime(res_df["Date de la transaction"], dayfirst=True, format="mixed", utc=True, errors="coerce")
-    res_df["Date de la transaction"] = dt_series.dt.tz_localize(None)
+    # Parsing intelligent des dates pour éviter l'inversion ISO YYYY-MM-DD en YYYY-DD-MM
+    res_df["Date de la transaction"] = smart_parse_dates(res_df["Date de la transaction"])
     res_df["Montant d'origine"] = pd.to_numeric(res_df["Montant d'origine"], errors="coerce").fillna(0.0)
     res_df["Montant du relevé"] = pd.to_numeric(res_df["Montant du relevé"], errors="coerce").fillna(0.0)
     res_df["Taux de change appliqué"] = pd.to_numeric(res_df["Taux de change appliqué"], errors="coerce").fillna(1.0)

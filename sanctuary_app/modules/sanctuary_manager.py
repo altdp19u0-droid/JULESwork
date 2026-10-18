@@ -4,7 +4,7 @@ Module de gestion du stockage local Windows CSV (sanctuary/{YEAR}/{compte}.csv).
 import os
 from pathlib import Path
 import pandas as pd
-from .schema import enforce_sanctuary_schema, REQUIRED_COLUMNS
+from .schema import enforce_sanctuary_schema, smart_parse_dates, REQUIRED_COLUMNS
 
 SANCTUARY_ROOT = Path("sanctuary")
 
@@ -36,8 +36,8 @@ def save_to_sanctuary(df: pd.DataFrame, year: int, account_label: str, auto_disp
     saved_paths = []
 
     if auto_dispatch_year:
-        # Ventilation dynamique selon l'année réelle de chaque transaction (dayfirst=True pour dates françaises)
-        df_clean["Year_Group"] = pd.to_datetime(df_clean["Date de la transaction"], dayfirst=True, format="mixed", errors="coerce").dt.year
+        # Ventilation dynamique selon l'année réelle de chaque transaction
+        df_clean["Year_Group"] = smart_parse_dates(df_clean["Date de la transaction"]).dt.year
         df_clean["Year_Group"] = df_clean["Year_Group"].fillna(year).astype(int)
 
         for actual_year, group_df in df_clean.groupby("Year_Group"):
@@ -66,14 +66,14 @@ def _save_single_year(df_clean: pd.DataFrame, year: int, account_label: str) -> 
 
     combined["Statut de la transaction"] = "Sanctuarisé"
 
-    # Nettoyage strict : ne conserver dans sanctuary/{year}/ QUE les transactions de cette année spécifique (dayfirst=True)
-    combined["_year_val"] = pd.to_datetime(combined["Date de la transaction"], dayfirst=True, format="mixed", errors="coerce").dt.year
+    # Nettoyage strict : ne conserver dans sanctuary/{year}/ QUE les transactions de cette année spécifique
+    combined["_year_val"] = smart_parse_dates(combined["Date de la transaction"]).dt.year
     combined = combined[combined["_year_val"] == int(year)].drop(columns=["_year_val"])
 
     # Clefs de dédoublonnage incluant le montant pour éviter la perte de transactions simultanées
     combined["Hash_Key"] = combined["Hash de la transaction blockchain"].fillna("")
     combined["Dev_Key"] = combined["Devise d'origine"].fillna("")
-    combined["Date_Key"] = pd.to_datetime(combined["Date de la transaction"], dayfirst=True, format="mixed", errors="coerce").dt.strftime('%Y-%m-%d %H:%M:%S')
+    combined["Date_Key"] = smart_parse_dates(combined["Date de la transaction"]).dt.strftime('%Y-%m-%d %H:%M:%S')
     combined["Amt_Key"] = combined["Montant d'origine"].fillna(0.0).round(8)
 
     deduped = combined.drop_duplicates(subset=["Hash_Key", "Dev_Key", "Date_Key", "Amt_Key"], keep="last")
