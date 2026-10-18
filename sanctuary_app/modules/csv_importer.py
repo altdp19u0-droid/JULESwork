@@ -72,22 +72,37 @@ def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = 
             record["Devise d'origine"] = curr_orig
 
             amt_statement = _clean_numeric_value(record["Montant du relevé"])
+            rate_applied = _clean_numeric_value(record["Taux de change appliqué"])
+            dt_val = record["Date de la transaction"]
 
-            # Calcul automatique des taux FX si le montant du relevé n'est pas fourni dans le CSV
-            if amt_statement == 0.0 and amt_orig != 0.0:
-                dt_val = record["Date de la transaction"]
-                val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(amt_orig, curr_orig, dt_val)
-                record["Montant du relevé"] = val_eur
-                if not record["Taux de change appliqué"]:
-                    record["Taux de change appliqué"] = rate
-                if not record["Date du taux de change appliqué"]:
-                    record["Date du taux de change appliqué"] = r_date
+            # 1. Si le taux de change n'est pas fourni, le déduire du rapport relevé / origine si disponible
+            if rate_applied == 0.0 and amt_statement != 0.0 and amt_orig != 0.0:
+                rate_applied = abs(amt_statement / amt_orig)
+                record["Taux de change appliqué"] = round(rate_applied, 6)
                 if not record["Source du taux de change"]:
-                    record["Source du taux de change"] = r_src
+                    record["Source du taux de change"] = "Calculé (Relevé/Origine)"
                 if not record["Paire FX"]:
-                    record["Paire FX"] = fx_pair
+                    record["Paire FX"] = f"{curr_orig}/EUR"
+                if not record["Date du taux de change appliqué"]:
+                    record["Date du taux de change appliqué"] = str(dt_val)[:10]
+
+            # 2. Si le montant du relevé ET le taux ne sont pas fournis, interroger l'API FX historique
+            elif (amt_statement == 0.0 or rate_applied == 0.0) and amt_orig != 0.0:
+                dt_obj = pd.to_datetime(dt_val, dayfirst=True, errors="coerce")
+                dt_obj = dt_obj.to_pydatetime() if pd.notna(dt_obj) else datetime.now()
+                val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(amt_orig, curr_orig, dt_obj)
+                if amt_statement == 0.0:
+                    amt_statement = val_eur
+                if rate_applied == 0.0:
+                    rate_applied = rate
+                record["Montant du relevé"] = amt_statement
+                record["Taux de change appliqué"] = round(rate_applied, 6)
+                record["Date du taux de change appliqué"] = r_date
+                record["Source du taux de change"] = r_src
+                record["Paire FX"] = fx_pair
             else:
                 record["Montant du relevé"] = amt_statement
+                record["Taux de change appliqué"] = round(rate_applied, 6) if rate_applied > 0 else 1.0
 
             mapped_records.append(record)
 
