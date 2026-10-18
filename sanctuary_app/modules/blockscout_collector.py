@@ -343,7 +343,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, a
 
     # Filtrage strict final garanti si target_year est spécifié
     if target_year_int and not df_enforced.empty:
-        df_enforced["_yr_check"] = pd.to_datetime(df_enforced["Date de la transaction"], errors="coerce").dt.year
+        df_enforced["_yr_check"] = smart_parse_dates(df_enforced["Date de la transaction"]).dt.year
         df_enforced = df_enforced[df_enforced["_yr_check"] == target_year_int].drop(columns=["_yr_check"])
 
     return df_enforced

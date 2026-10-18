@@ -26,7 +26,7 @@ from datetime import datetime, date
 
 # Imports de modules unifiés
 try:
-    from sanctuary_app.modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
+    from sanctuary_app.modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, smart_parse_dates
     from sanctuary_app.modules.sanctuary_manager import (
         save_to_sanctuary,
         load_sanctuary_account,
@@ -41,7 +41,7 @@ try:
     from sanctuary_app.modules.csv_importer import map_csv_to_sanctuary
     from sanctuary_app.modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
 except ImportError:
-    from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
+    from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, smart_parse_dates
     from modules.sanctuary_manager import (
         save_to_sanctuary,
         load_sanctuary_account,
@@ -104,7 +104,7 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
                 df_harvested = fetch_blockscout_data(address, network, target_year=target_yr_param, account_label=account_label)
 
             if filter_strict_target_year and not df_harvested.empty:
-                df_harvested["_temp_yr"] = pd.to_datetime(df_harvested["Date de la transaction"], errors="coerce").dt.year
+                df_harvested["_temp_yr"] = smart_parse_dates(df_harvested["Date de la transaction"]).dt.year
                 df_harvested = df_harvested[df_harvested["_temp_yr"] == int(target_year)].drop(columns=["_temp_yr"])
 
             if df_harvested.empty:
@@ -172,7 +172,7 @@ elif menu == "📥 Import CSV Externe":
                     st.error("Erreur lors du traitement du fichier CSV.")
                 else:
                     if filter_imp_year:
-                        df_mapped["_temp_yr"] = pd.to_datetime(df_mapped["Date de la transaction"], errors="coerce").dt.year
+                        df_mapped["_temp_yr"] = smart_parse_dates(df_mapped["Date de la transaction"]).dt.year
                         df_mapped = df_mapped[df_mapped["_temp_yr"] == int(imp_year)].drop(columns=["_temp_yr"])
 
                     if df_mapped.empty:
