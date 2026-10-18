@@ -2,6 +2,7 @@
 Module de gestion du schéma strict des 19 colonnes pour Sanctuary App.
 """
 import pandas as pd
+from datetime import datetime
 
 REQUIRED_COLUMNS = [
     "Date de la transaction",
@@ -31,12 +32,13 @@ def create_empty_sanctuary_df() -> pd.DataFrame:
 
 def smart_parse_dates(series: pd.Series) -> pd.Series:
     """
-    Parse intelligemment une série de dates sans inverser mois et jour.
-    - Dates ISO (ex: YYYY-MM-DD / 2026-07-12) : Parsées en YYYY-MM-DD (12 Juillet) sans dayfirst.
-    - Dates Françaises (ex: DD/MM/YYYY / 12/07/2026) : Parsées avec dayfirst=True (12 Juillet).
+    Parse intelligemment une série de dates et corrige automatiquement les inversions mois/jour
+    qui génèrent des dates futures (ex: 2026-12-07 au lieu de 2026-07-12).
     """
     if series is None or series.empty:
         return pd.Series(dtype="datetime64[ns]")
+
+    now = datetime.now()
 
     def parse_val(val):
         if pd.isna(val) or not str(val).strip():
@@ -44,9 +46,21 @@ def smart_parse_dates(series: pd.Series) -> pd.Series:
         v = str(val).strip()
         # ISO Format YYYY-MM-DD...
         if v.startswith(("20", "19")) and len(v) >= 10 and (v[4] in ["-", "/"]):
-            return pd.to_datetime(v, utc=True, errors="coerce")
+            dt = pd.to_datetime(v, utc=True, errors="coerce")
         else:
-            return pd.to_datetime(v, dayfirst=True, utc=True, errors="coerce")
+            dt = pd.to_datetime(v, dayfirst=True, utc=True, errors="coerce")
+
+        if pd.notna(dt):
+            # Correction automatique si la date se retrouve dans le futur à cause de l'inversion mois/jour (ex: 07 Décembre -> 12 Juillet)
+            dt_naive = dt.tz_localize(None) if dt.tzinfo else dt
+            if dt_naive > now and dt_naive.day <= 12:
+                try:
+                    fixed_dt = datetime(dt_naive.year, dt_naive.day, dt_naive.month, dt_naive.hour, dt_naive.minute, dt_naive.second, dt_naive.microsecond)
+                    if fixed_dt <= now:
+                        return pd.Timestamp(fixed_dt)
+                except Exception:
+                    pass
+        return dt
 
     parsed_res = series.apply(parse_val)
     return pd.to_datetime(parsed_res, utc=True, errors="coerce").dt.tz_localize(None)
