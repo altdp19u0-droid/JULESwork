@@ -160,9 +160,18 @@ elif menu == "📥 Import CSV Externe":
 
             st.divider()
             ic1, ic2, ic3 = st.columns(3)
-            default_net = ic1.selectbox("Réseau / Source", ["FIAT", "ETHEREUM", "BASE", "ARBITRUM", "BANQUE"], index=0)
+            net_options = [
+                "8LENDS", "KRAKEN", "BLEAP", "NEVERLESS", "BANQUE", "FIAT",
+                "ETHEREUM", "BASE", "ARBITRUM", "EXCHANGE", "LENDING", "AUTRE"
+            ]
+            default_net = ic1.selectbox("Réseau / Source", net_options, index=0)
+            if default_net == "AUTRE":
+                custom_net = st.text_input("Spécifier le nom du Réseau / Source", value="CUSTOM_SOURCE")
+                if custom_net.strip():
+                    default_net = custom_net.strip().upper()
+
             imp_year = ic2.selectbox("Année Fiscale Cible", options=[2026, 2025, 2024, 2023, 2022], index=1)
-            imp_account = ic3.text_input("Nom du Compte Cible", value="Compte_Import_CSV")
+            imp_account = ic3.text_input("Nom du Compte Cible", value=f"{default_net}_Import_CSV")
 
             filter_imp_year = st.checkbox(f"Ne sanctuariser que les transactions de l'Année Cible ({imp_year})", value=True)
 
