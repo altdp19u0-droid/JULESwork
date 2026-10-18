@@ -30,6 +30,17 @@ def create_empty_sanctuary_df() -> pd.DataFrame:
     """Crée un DataFrame vide respectant la structure exacte des 19 colonnes."""
     return pd.DataFrame(columns=REQUIRED_COLUMNS)
 
+def format_date_french(dt_val) -> str:
+    """Formate une date au format français unifié : DD-MM-YYYY HH:MM:SS."""
+    if pd.isna(dt_val) or dt_val is None:
+        return ""
+    if isinstance(dt_val, str):
+        return dt_val
+    try:
+        return dt_val.strftime("%d-%m-%Y %H:%M:%S")
+    except Exception:
+        return str(dt_val)
+
 def smart_parse_dates(series: pd.Series) -> pd.Series:
     """
     Parse intelligemment une série de dates et corrige automatiquement les inversions mois/jour

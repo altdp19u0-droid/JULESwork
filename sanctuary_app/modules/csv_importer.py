@@ -54,7 +54,7 @@ def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = 
 
             # Attributs par défaut
             if not record["Date de la transaction"]:
-                record["Date de la transaction"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                record["Date de la transaction"] = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
 
             if not record["Type de transaction"]:
                 record["Type de transaction"] = "Mouvement"

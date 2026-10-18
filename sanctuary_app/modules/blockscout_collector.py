@@ -132,7 +132,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, a
                         method = t.get("method") or "Token Transfer"
 
                         records.append({
-                            "Date de la transaction": dt.strftime("%Y-%m-%d %H:%M:%S"),
+                            "Date de la transaction": dt.strftime("%d-%m-%Y %H:%M:%S"),
                             "Type de transaction": tx_type,
                             "ID du projet": f"BLOCKSCOUT_{net_key}",
                             "Nom du projet": f"Token Transfer ({asset})",
@@ -233,7 +233,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, a
                                     val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(final_amt, sym, dt)
 
                                     records.append({
-                                        "Date de la transaction": dt.strftime("%Y-%m-%d %H:%M:%S"),
+                                        "Date de la transaction": dt.strftime("%d-%m-%Y %H:%M:%S"),
                                         "Type de transaction": tx_type,
                                         "ID du projet": f"BLOCKSCOUT_{net_key}",
                                         "Nom du projet": f"Token Transfer ({sym})",
@@ -268,7 +268,7 @@ def fetch_blockscout_data(address: str, network: str, target_year: int = None, a
                                 val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(final_amt, cfg["native"], dt)
 
                                 records.append({
-                                    "Date de la transaction": dt.strftime("%Y-%m-%d %H:%M:%S"),
+                                    "Date de la transaction": dt.strftime("%d-%m-%Y %H:%M:%S"),
                                     "Type de transaction": tx_type,
                                     "ID du projet": f"BLOCKSCOUT_{net_key}",
                                     "Nom du projet": f"Mouvement Natif {cfg['native']}",

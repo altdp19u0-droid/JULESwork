@@ -73,7 +73,7 @@ def _save_single_year(df_clean: pd.DataFrame, year: int, account_label: str) -> 
     # Clefs de dédoublonnage incluant le montant pour éviter la perte de transactions simultanées
     combined["Hash_Key"] = combined["Hash de la transaction blockchain"].fillna("")
     combined["Dev_Key"] = combined["Devise d'origine"].fillna("")
-    combined["Date_Key"] = smart_parse_dates(combined["Date de la transaction"]).dt.strftime('%Y-%m-%d %H:%M:%S')
+    combined["Date_Key"] = smart_parse_dates(combined["Date de la transaction"]).dt.strftime('%d-%m-%Y %H:%M:%S')
     combined["Amt_Key"] = combined["Montant d'origine"].fillna(0.0).round(8)
 
     deduped = combined.drop_duplicates(subset=["Hash_Key", "Dev_Key", "Date_Key", "Amt_Key"], keep="last")
