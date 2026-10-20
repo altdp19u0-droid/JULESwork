@@ -142,12 +142,47 @@ elif menu == "📥 Import CSV Externe":
             st.subheader("🔗 Assistant de Mapping des Colonnes")
             st.write("Associez chaque colonne requise à la colonne correspondante de votre fichier CSV :")
 
+            # Dictionnaire d'alias pour la pré-sélection intelligente des colonnes CSV
+            COLUMN_ALIASES = {
+                "Date de la transaction": ["date", "timestamp", "time", "date/time", "date utc", "created_at"],
+                "Type de transaction": ["type", "transaction type", "operation", "action", "kind"],
+                "ID du projet": ["id du projet", "project id", "project", "projet"],
+                "Nom du projet": ["nom du projet", "project name", "description", "details"],
+                "APR %": ["apr %", "apr", "yield", "rate"],
+                "Montant d'origine": ["montant d'origine", "amount sent", "amount", "montant", "sent amount", "quantity", "valeur"],
+                "Devise d'origine": ["devise d'origine", "asset sent", "currency sent", "asset", "currency", "symbol", "coin"],
+                "Montant du relevé": ["montant du relevé", "amount received", "received amount", "statement amount", "eur amount"],
+                "Devise du relevé": ["devise du relevé", "asset received", "currency received", "received asset"],
+                "Paire FX": ["paire fx", "fx pair", "pair"],
+                "Taux de change appliqué": ["taux de change appliqué", "exchange rate", "rate", "fx rate"],
+                "Date du taux de change appliqué": ["date du taux de change appliqué", "fx date", "rate date"],
+                "Source du taux de change": ["source du taux de change", "rate source", "fx source"],
+                "Statut de la transaction": ["statut de la transaction", "status", "statut", "state"],
+                "Réseau": ["réseau", "network", "chain", "blockchain"],
+                "Hash de la transaction blockchain": ["hash de la transaction blockchain", "blockchain transaction hash", "tx hash", "hash", "transaction id / hash", "transaction hash", "tx_hash", "txid"],
+                "Notes": ["notes", "description", "notes/details", "details", "memo", "comment", "remarque"],
+                "Nom et numéro [Banque fiat ou compte] d'origine": ["blockchain address", "from", "source address", "account from", "adresse origine"],
+                "Nom et numéro [Banque fiat ou compte] de destination": ["destination address", "to", "target address", "account to", "adresse destination"]
+            }
+
             col_mapping = {}
             m1, m2 = st.columns(2)
 
             for idx, req_col in enumerate(REQUIRED_COLUMNS):
                 col_target = m1 if idx % 2 == 0 else m2
-                default_match = req_col if req_col in csv_cols else None
+
+                # Recherche de correspondance directe ou par alias
+                default_match = None
+                if req_col in csv_cols:
+                    default_match = req_col
+                else:
+                    aliases = COLUMN_ALIASES.get(req_col, [])
+                    for c in csv_cols:
+                        c_clean = str(c).strip().lower()
+                        if c_clean in aliases or any(alias == c_clean for alias in aliases):
+                            default_match = c
+                            break
+
                 col_mapping[req_col] = col_target.selectbox(
                     f"Champ Sanctuary : **{req_col}**",
                     options=["-- Ignorer --"] + csv_cols,
@@ -190,9 +225,16 @@ elif menu == "📥 Import CSV Externe":
                         # Si filter_imp_year=True, on force l'enregistrement exact dans sanctuary/{imp_year}/{imp_account}.csv
                         auto_disp_csv = not filter_imp_year
                         saved_paths = save_to_sanctuary(df_mapped, int(imp_year), imp_account, auto_dispatch_year=auto_disp_csv)
-                        st.success(f"✅ {len(df_mapped)} lignes sanctuarisées avec succès !")
+                        st.success(f"✅ {len(df_mapped)} transactions sanctuarisées au total sur {len(saved_paths)} dossier(s) d'année !")
                         for p in saved_paths:
-                            st.write(f"- `{p}`")
+                            if p.exists():
+                                try:
+                                    cnt_df = pd.read_csv(p, encoding="utf-8-sig")
+                                    st.write(f"- `{p}` ({len(cnt_df)} transactions sanctuarisées)")
+                                except Exception:
+                                    st.write(f"- `{p}`")
+                            else:
+                                st.write(f"- `{p}`")
                         st.dataframe(df_mapped, use_container_width=True)
         except Exception as e:
             st.error(f"Erreur de lecture du fichier CSV : {e}")

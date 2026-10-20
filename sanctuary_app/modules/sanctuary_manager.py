@@ -70,14 +70,21 @@ def _save_single_year(df_clean: pd.DataFrame, year: int, account_label: str) -> 
     combined["_year_val"] = smart_parse_dates(combined["Date de la transaction"]).dt.year
     combined = combined[combined["_year_val"] == int(year)].drop(columns=["_year_val"])
 
-    # Clefs de dédoublonnage incluant le montant pour éviter la perte de transactions simultanées
-    combined["Hash_Key"] = combined["Hash de la transaction blockchain"].fillna("")
-    combined["Dev_Key"] = combined["Devise d'origine"].fillna("")
+    # Clefs de dédoublonnage robustes incluant Hash, Date, Type, Montants et Notes
+    combined["Hash_Key"] = combined["Hash de la transaction blockchain"].fillna("").astype(str)
+    combined["Dev_Key"] = combined["Devise d'origine"].fillna("").astype(str)
+    combined["Dev_Rel_Key"] = combined["Devise du relevé"].fillna("").astype(str)
     combined["Date_Key"] = smart_parse_dates(combined["Date de la transaction"]).dt.strftime('%d-%m-%Y %H:%M:%S')
-    combined["Amt_Key"] = combined["Montant d'origine"].fillna(0.0).round(8)
+    combined["Amt_Key"] = combined["Montant d'origine"].fillna(0.0).round(8).astype(str)
+    combined["Amt_Rel_Key"] = combined["Montant du relevé"].fillna(0.0).round(8).astype(str)
+    combined["Type_Key"] = combined["Type de transaction"].fillna("").astype(str)
+    combined["Notes_Key"] = combined["Notes"].fillna("").astype(str)
 
-    deduped = combined.drop_duplicates(subset=["Hash_Key", "Dev_Key", "Date_Key", "Amt_Key"], keep="last")
-    deduped = deduped.drop(columns=["Hash_Key", "Dev_Key", "Date_Key", "Amt_Key"])
+    deduped = combined.drop_duplicates(
+        subset=["Hash_Key", "Dev_Key", "Dev_Rel_Key", "Date_Key", "Amt_Key", "Amt_Rel_Key", "Type_Key", "Notes_Key"],
+        keep="last"
+    )
+    deduped = deduped.drop(columns=["Hash_Key", "Dev_Key", "Dev_Rel_Key", "Date_Key", "Amt_Key", "Amt_Rel_Key", "Type_Key", "Notes_Key"])
 
     # Tri chronologique décroissant
     deduped = deduped.sort_values("Date de la transaction", ascending=False)

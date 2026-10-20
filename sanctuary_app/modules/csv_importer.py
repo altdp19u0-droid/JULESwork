@@ -62,16 +62,34 @@ def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = 
             if not record["Réseau"]:
                 record["Réseau"] = default_network
 
-            # Conversion numérique sécurisée des montants
+            # Saisie de secours intelligente pour les CSV multi-colonnes (ex: Neverless Amount sent / Amount received)
             amt_orig = _clean_numeric_value(record["Montant d'origine"])
-            record["Montant d'origine"] = amt_orig
-
-            curr_orig = str(record["Devise d'origine"] or "EUR").upper().strip()
-            if not curr_orig:
-                curr_orig = "EUR"
-            record["Devise d'origine"] = curr_orig
+            curr_orig = str(record["Devise d'origine"] or "").upper().strip()
 
             amt_statement = _clean_numeric_value(record["Montant du relevé"])
+            curr_statement = str(record["Devise du relevé"] or "").upper().strip()
+
+            # Si Montant d'origine est nul (ex: Dépôt/Intérêts), vérifier si Montant du relevé est renseigné
+            if amt_orig == 0.0 and amt_statement != 0.0:
+                amt_orig = amt_statement
+                if not curr_orig and curr_statement:
+                    curr_orig = curr_statement
+
+            # Inversement, si Montant du relevé est nul (ex: Retrait), utiliser Montant d'origine
+            if amt_statement == 0.0 and amt_orig != 0.0:
+                amt_statement = amt_orig
+                if not curr_statement and curr_orig:
+                    curr_statement = curr_orig
+
+            if not curr_orig:
+                curr_orig = "EUR"
+            if not curr_statement:
+                curr_statement = curr_orig
+
+            record["Montant d'origine"] = amt_orig
+            record["Devise d'origine"] = curr_orig
+            record["Montant du relevé"] = amt_statement
+            record["Devise du relevé"] = curr_statement
             rate_applied = _clean_numeric_value(record["Taux de change appliqué"])
             dt_val = record["Date de la transaction"]
 
