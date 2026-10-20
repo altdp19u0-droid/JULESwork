@@ -6,7 +6,7 @@ import requests
 import pandas as pd
 from datetime import datetime, timezone
 import time
-from .schema import enforce_sanctuary_schema, create_empty_sanctuary_df
+from .schema import enforce_sanctuary_schema, create_empty_sanctuary_df, smart_parse_dates
 from .fx_collector import convert_to_eur
 from .sanctuary_manager import load_sanctuary_account
 
