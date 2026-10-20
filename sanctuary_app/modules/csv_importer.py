@@ -92,46 +92,42 @@ def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = 
             rate_applied = _clean_numeric_value(record["Taux de change appliqué"])
             dt_val = record["Date de la transaction"]
 
-            # Si l'une des devises est EUR ou EURC (parité 1:1 EUR), privilégier les montants natifs
+            # La colonne 'Devise du relevé' du schéma Sanctuary représente TOUJOURS l'évaluation en EUR
+            record["Devise du relevé"] = "EUR"
+
+            # 1. Si la devise d'origine est EUR ou EURC (parité 1:1 EUR), le montant du relevé en EUR = amt_orig
             if curr_orig in ["EUR", "EURC"] and amt_orig != 0.0:
                 val_eur = amt_orig
                 rate_applied = 1.0
-                record["Montant du relevé"] = val_eur
+                record["Montant du relevé"] = round(val_eur, 2)
                 record["Taux de change appliqué"] = rate_applied
                 record["Paire FX"] = f"{curr_orig}/EUR"
                 record["Source du taux de change"] = "Parité EUR"
+
+            # 2. Si l'actif reçu dans le trade/swap est EUR ou EURC, le montant du relevé en EUR = amt_statement
             elif curr_statement in ["EUR", "EURC"] and amt_statement != 0.0:
                 val_eur = amt_statement
-                rate_applied = 1.0
-                record["Montant du relevé"] = val_eur
+                rate_applied = round(amt_statement / amt_orig, 6) if amt_orig > 0 else 1.0
+                record["Montant du relevé"] = round(val_eur, 2)
                 record["Taux de change appliqué"] = rate_applied
-                record["Paire FX"] = f"{curr_statement}/EUR"
+                record["Paire FX"] = f"{curr_orig}/EUR"
                 record["Source du taux de change"] = "Parité EUR"
-            elif rate_applied == 0.0 and amt_statement != 0.0 and amt_orig != 0.0:
-                rate_applied = abs(amt_statement / amt_orig)
-                record["Taux de change appliqué"] = round(rate_applied, 6)
-                if not record["Source du taux de change"]:
-                    record["Source du taux de change"] = "Calculé (Relevé/Origine)"
-                if not record["Paire FX"]:
-                    record["Paire FX"] = f"{curr_orig}/{curr_statement}"
-                if not record["Date du taux de change appliqué"]:
-                    record["Date du taux de change appliqué"] = str(dt_val)[:10]
-            elif (amt_statement == 0.0 or rate_applied == 0.0) and amt_orig != 0.0:
+
+            # 3. Pour les trades crypto/crypto non-EUR (ex: EURC -> USDC ou BTC -> USDC), valoriser en EUR via convert_to_eur
+            else:
                 dt_obj = pd.to_datetime(dt_val, dayfirst=True, errors="coerce")
                 dt_obj = dt_obj.to_pydatetime() if pd.notna(dt_obj) else datetime.now()
                 val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(amt_orig, curr_orig, dt_obj)
-                if amt_statement == 0.0:
-                    amt_statement = val_eur
-                if rate_applied == 0.0:
-                    rate_applied = rate
-                record["Montant du relevé"] = amt_statement
-                record["Taux de change appliqué"] = round(rate_applied, 6)
+
+                # Si amt_orig était nul mais qu'on a un montant de relevé (ex: staking / bonus en crypto)
+                if val_eur == 0.0 and amt_statement != 0.0:
+                    val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(amt_statement, curr_statement, dt_obj)
+
+                record["Montant du relevé"] = round(val_eur, 2)
+                record["Taux de change appliqué"] = round(rate, 6) if rate > 0 else 1.0
                 record["Date du taux de change appliqué"] = r_date
                 record["Source du taux de change"] = r_src
                 record["Paire FX"] = fx_pair
-            else:
-                record["Montant du relevé"] = amt_statement
-                record["Taux de change appliqué"] = round(rate_applied, 6) if rate_applied > 0 else 1.0
 
             mapped_records.append(record)
 
