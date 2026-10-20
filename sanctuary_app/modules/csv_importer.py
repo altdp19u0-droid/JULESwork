@@ -71,13 +71,16 @@ def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = 
 
             tx_type = str(record["Type de transaction"] or "").strip()
 
-            # Pour les Dépôts / Intérêts à flux unique reçu
-            if amt_orig == 0.0 and amt_statement != 0.0 and not curr_orig:
-                curr_orig = curr_statement
+            # Saisie de secours intelligente pour flux uniques (Dépôts / Intérêts ou Retraits)
+            if amt_orig == 0.0 and amt_statement != 0.0:
+                amt_orig = amt_statement
+                if not curr_orig:
+                    curr_orig = curr_statement
 
-            # Pour les Retraits à flux unique envoyé
-            if amt_statement == 0.0 and amt_orig != 0.0 and not curr_statement:
-                curr_statement = curr_orig
+            if amt_statement == 0.0 and amt_orig != 0.0:
+                amt_statement = amt_orig
+                if not curr_statement:
+                    curr_statement = curr_orig
 
             if not curr_orig:
                 curr_orig = "EUR"
@@ -87,7 +90,7 @@ def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = 
             record["Montant d'origine"] = amt_orig
             record["Devise d'origine"] = curr_orig
             record["Montant du relevé"] = amt_statement
-            record["Devise du relevé"] = curr_statement
+            record["Devise du relevé"] = "EUR"
 
             rate_applied = _clean_numeric_value(record["Taux de change appliqué"])
             dt_val = record["Date de la transaction"]
@@ -115,7 +118,7 @@ def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = 
 
             # 3. Pour les trades crypto/crypto non-EUR (ex: EURC -> USDC ou BTC -> USDC), valoriser en EUR via convert_to_eur
             else:
-                dt_obj = pd.to_datetime(dt_val, dayfirst=True, errors="coerce")
+                dt_obj = pd.to_datetime(dt_val, errors="coerce")
                 dt_obj = dt_obj.to_pydatetime() if pd.notna(dt_obj) else datetime.now()
                 val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(amt_orig, curr_orig, dt_obj)
 

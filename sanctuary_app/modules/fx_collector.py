@@ -34,7 +34,7 @@ def get_ecb_eur_rate(target_currency: str, date_obj) -> float:
 
     try:
         url = f"https://api.frankfurter.app/{d_str}?from={curr}&to=EUR"
-        res = requests.get(url, timeout=2.5)
+        res = requests.get(url, timeout=1.0)
         if res.status_code == 200:
             val = float(res.json()["rates"]["EUR"])
             FX_CACHE[cache_key] = val
@@ -88,7 +88,7 @@ def get_crypto_usd_price_defillama(asset: str, date_obj) -> float:
 
     try:
         url = f"https://coins.llama.fi/prices/historical/{ts}/{cg_id}"
-        res = requests.get(url, timeout=2.5)
+        res = requests.get(url, timeout=1.0)
         if res.status_code == 200:
             data = res.json().get("coins", {})
             if cg_id in data:

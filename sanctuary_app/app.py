@@ -368,9 +368,11 @@ elif menu == "📊 Totalisation (2 Niveaux)":
 
                 tot_a = totalize_level_a(df_acc_filtered)
 
-                m1, m2 = st.columns(2)
-                m1.metric("Volume Total des Transactions", f"{tot_a['total_count']} TXs")
-                m2.metric("Totalisation Valorisée (EUR)", f"{tot_a['total_eur']:,.2f} €")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Capital Net Apporté (EUR)", f"{tot_a['net_capital_eur']:,.2f} €", help="Dépôts / Rendements (- Retraits)")
+                m2.metric("Dépôts & Rendements (EUR)", f"{tot_a['deposits_eur']:,.2f} €")
+                m3.metric("Retraits de Capital (EUR)", f"{tot_a['withdrawals_eur']:,.2f} €")
+                m4.metric("Volume Interne de Trades (EUR)", f"{tot_a['trades_eur']:,.2f} €", help="Volume d'échanges/swaps internes neutralisé sur le capital")
 
                 st.subheader("Ventilation par Devise d'Origine")
                 st.dataframe(tot_a["by_currency"], use_container_width=True)
@@ -384,9 +386,11 @@ elif menu == "📊 Totalisation (2 Niveaux)":
 
             tot_b = totalize_level_b(df_filtered_global)
 
-            g1, g2 = st.columns(2)
-            g1.metric("Volume Global Consolidé", f"{tot_b['total_count']} TXs")
-            g2.metric("Valeur Globale Totalisée (EUR)", f"{tot_b['total_eur']:,.2f} €")
+            g1, g2, g3, g4 = st.columns(4)
+            g1.metric("Capital Net Apporté Consolidé (EUR)", f"{tot_b['net_capital_eur']:,.2f} €")
+            g2.metric("Total Dépôts & Rendements (EUR)", f"{tot_b['deposits_eur']:,.2f} €")
+            g3.metric("Total Retraits (EUR)", f"{tot_b['withdrawals_eur']:,.2f} €")
+            g4.metric("Volume Consolidé des Trades (EUR)", f"{tot_b['trades_eur']:,.2f} €")
 
             b_col1, b_col2 = st.columns(2)
             with b_col1:

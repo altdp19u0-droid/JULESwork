@@ -45,14 +45,52 @@ def filter_by_period(df: pd.DataFrame, period_type: str, year: int = None, quart
 
     return res_df.drop(columns=["Date_DT"])
 
+def _compute_financial_breakdown(df: pd.DataFrame) -> dict:
+    """
+    Calcule la distinction stricte entre Apports Fiscaux / Dépôts, Retraits et Volume de Trades/Swaps internes.
+    """
+    deposits_eur = 0.0
+    withdrawals_eur = 0.0
+    trades_eur = 0.0
+
+    outflow_types = ["retrait", "withdrawal", "fee", "out", "pay", "send", "transfer_out"]
+    inflow_types = ["dépôt", "deposit", "in", "buy", "receive", "revenue", "staking", "claim"]
+
+    for idx, row in df.iterrows():
+        tx_type = str(row.get("Type de transaction", "")).strip().lower()
+        notes = str(row.get("Notes", "")).strip().lower()
+        amt_eur = abs(float(row.get("Montant du relevé", 0.0) or 0.0))
+
+        if "trade" in tx_type or "swap" in tx_type or "conversion" in notes:
+            trades_eur += amt_eur
+        elif any(t in tx_type for t in outflow_types):
+            withdrawals_eur += amt_eur
+        elif any(t in tx_type or t in notes for t in inflow_types) or "interest" in notes or "prime" in notes:
+            deposits_eur += amt_eur
+        else:
+            deposits_eur += amt_eur
+
+    net_capital_eur = deposits_eur - withdrawals_eur
+
+    return {
+        "deposits_eur": deposits_eur,
+        "withdrawals_eur": withdrawals_eur,
+        "net_capital_eur": net_capital_eur,
+        "trades_eur": trades_eur
+    }
+
 def totalize_level_a(account_df: pd.DataFrame) -> dict:
     """
-    Niveau A : Totalisation par période choisie pour un compte individuel.
+    Niveau A : Totalisation par période choisie pour un compte individuel avec distinction Capital Net / Trades.
     """
     if account_df is None or account_df.empty:
         return {
             "total_count": 0,
             "total_eur": 0.0,
+            "net_capital_eur": 0.0,
+            "deposits_eur": 0.0,
+            "withdrawals_eur": 0.0,
+            "trades_eur": 0.0,
             "by_currency": pd.DataFrame(),
             "by_type": pd.DataFrame()
         }
@@ -63,6 +101,8 @@ def totalize_level_a(account_df: pd.DataFrame) -> dict:
 
     total_count = len(df)
     total_eur = float(df["Montant du relevé"].sum())
+
+    fin = _compute_financial_breakdown(df)
 
     by_currency = df.groupby("Devise d'origine").agg(
         Total_Brut=("Montant d'origine", "sum"),
@@ -78,18 +118,26 @@ def totalize_level_a(account_df: pd.DataFrame) -> dict:
     return {
         "total_count": total_count,
         "total_eur": total_eur,
+        "net_capital_eur": fin["net_capital_eur"],
+        "deposits_eur": fin["deposits_eur"],
+        "withdrawals_eur": fin["withdrawals_eur"],
+        "trades_eur": fin["trades_eur"],
         "by_currency": by_currency,
         "by_type": by_type
     }
 
 def totalize_level_b(all_accounts_df: pd.DataFrame) -> dict:
     """
-    Niveau B : Totalisation par période choisie sur la globalisation de l'ensemble des comptes.
+    Niveau B : Totalisation par période choisie sur la globalisation multi-comptes.
     """
     if all_accounts_df is None or all_accounts_df.empty:
         return {
             "total_count": 0,
             "total_eur": 0.0,
+            "net_capital_eur": 0.0,
+            "deposits_eur": 0.0,
+            "withdrawals_eur": 0.0,
+            "trades_eur": 0.0,
             "by_account": pd.DataFrame(),
             "by_network": pd.DataFrame(),
             "by_project": pd.DataFrame(),
@@ -98,7 +146,6 @@ def totalize_level_b(all_accounts_df: pd.DataFrame) -> dict:
 
     df = all_accounts_df.copy()
 
-    # Résolution prioritaire du nom du compte pour la répartition par compte
     if "Compte_Sanctuaire" not in df.columns or df["Compte_Sanctuaire"].dropna().empty:
         df["Compte_Sanctuaire"] = df["Nom du projet"].fillna(df["ID du projet"]).fillna(df["Réseau"]).fillna("Compte_Inconnu")
     else:
@@ -106,6 +153,8 @@ def totalize_level_b(all_accounts_df: pd.DataFrame) -> dict:
 
     total_count = len(df)
     total_eur = float(df["Montant du relevé"].sum())
+
+    fin = _compute_financial_breakdown(df)
 
     df["Réseau"] = df["Réseau"].fillna("Inconnu")
     df["Nom du projet"] = df["Nom du projet"].fillna("Non spécifié")
@@ -134,6 +183,10 @@ def totalize_level_b(all_accounts_df: pd.DataFrame) -> dict:
     return {
         "total_count": total_count,
         "total_eur": total_eur,
+        "net_capital_eur": fin["net_capital_eur"],
+        "deposits_eur": fin["deposits_eur"],
+        "withdrawals_eur": fin["withdrawals_eur"],
+        "trades_eur": fin["trades_eur"],
         "by_account": by_account,
         "by_network": by_network,
         "by_project": by_project,
