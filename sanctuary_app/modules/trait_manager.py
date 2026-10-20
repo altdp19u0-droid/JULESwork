@@ -331,31 +331,34 @@ def calculate_token_balances(df: pd.DataFrame) -> pd.DataFrame:
             continue
 
         # 2. Traitement pour NEVERLESS et portefeuilles généraux
-        # CAS A : Trade / Swap double-actif (devise d'origine != devise du relevé)
-        is_dual_trade = (
-            (token_orig and token_stmt and token_orig != token_stmt) and
-            ("trade" in tx_type or "swap" in tx_type or "conversion" in notes or (amt_orig > 0 and amt_stmt > 0))
-        )
+        is_trade_or_swap = "trade" in tx_type or "swap" in tx_type or "conversion" in notes
 
-        if is_dual_trade:
-            # Sortie de l'actif vendu
-            if amt_orig > 0 and token_orig:
-                movements.append({"Portefeuille": acc, "Token": token_orig, "Entree": 0.0, "Sortie": amt_orig})
-            # Entrée de l'actif acheté
-            if amt_stmt > 0 and token_stmt:
-                movements.append({"Portefeuille": acc, "Token": token_stmt, "Entree": amt_stmt, "Sortie": 0.0})
+        # CAS A : Trade / Swap / Transfert interne de valeur
+        if is_trade_or_swap:
+            # Transfert de même actif (ex: USDC Prime -> USDC Stratégies) : neutre net sur l'actif
+            if token_orig and token_stmt and token_orig == token_stmt:
+                if amt_orig > 0 or amt_stmt > 0:
+                    amt_tr = amt_orig if amt_orig > 0 else amt_stmt
+                    movements.append({"Portefeuille": acc, "Token": token_orig, "Entree": amt_tr, "Sortie": amt_tr})
+            else:
+                # Échange d'actifs différents (ex: EUR -> EURC ou USDC -> BTC)
+                if amt_orig > 0 and token_orig:
+                    movements.append({"Portefeuille": acc, "Token": token_orig, "Entree": 0.0, "Sortie": amt_orig})
+                if amt_stmt > 0 and token_stmt:
+                    movements.append({"Portefeuille": acc, "Token": token_stmt, "Entree": amt_stmt, "Sortie": 0.0})
             continue
 
-        # CAS B : Flux unique (Dépôt, Retrait, Intérêts, Rendement)
+        # CAS B : Flux externe de capital (Dépôt, Retrait, Rendements / Intérêts)
+        is_interest = "interest" in notes or "prime" in notes or "strategies interest" in notes or "interest" in tx_type
         outflow_types = ["retrait", "withdrawal", "fee", "out", "pay", "send", "transfer_out", "investissement"]
-        inflow_types = ["dépôt", "deposit", "in", "buy", "receive", "revenue", "staking", "claim", "interest", "prime"]
+        inflow_types = ["dépôt", "deposit", "in", "buy", "receive", "revenue", "staking", "claim"]
 
         token = token_stmt if amt_stmt > 0 and token_stmt else (token_orig or "EUR")
         amt = amt_stmt if amt_stmt > 0 else amt_orig
 
         if any(t in tx_type for t in outflow_types):
             movements.append({"Portefeuille": acc, "Token": token_orig or token, "Entree": 0.0, "Sortie": amt_orig or amt})
-        elif any(t in tx_type or t in notes for t in inflow_types):
+        elif is_interest or any(t in tx_type or t in notes for t in inflow_types):
             movements.append({"Portefeuille": acc, "Token": token, "Entree": amt, "Sortie": 0.0})
         else:
             movements.append({"Portefeuille": acc, "Token": token, "Entree": amt, "Sortie": 0.0})
