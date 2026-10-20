@@ -286,77 +286,88 @@ def load_all_trait_legit(trait_dir: Path, year: int = None, account: str = None,
 def calculate_token_balances(df: pd.DataFrame) -> pd.DataFrame:
     """
     Calcule le solde net de chaque token par portefeuille/compte.
+    Prend en compte les opérations de Trade/Swap double-actif (ex: NEVERLESS EUR -> EURC)
+    ainsi que les spécificités 8LENDS sans interférence.
     """
     if df is None or df.empty:
         return pd.DataFrame(columns=["Portefeuille", "Token", "Total_Entrees", "Total_Sorties", "Solde_Net", "Nombre_TX"])
 
-    # Conservation de Compte_Sanctuaire avant la mise en conformité du schéma
     acc_series = df["Compte_Sanctuaire"] if "Compte_Sanctuaire" in df.columns else None
-
     res_df = enforce_sanctuary_schema(df)
 
     if acc_series is not None:
         res_df["Compte_Sanctuaire"] = acc_series.values
 
-    # Détermination du portefeuille
-    if "Compte_Sanctuaire" not in res_df.columns or res_df["Compte_Sanctuaire"].dropna().empty:
-        res_df["Portefeuille"] = res_df["Nom du projet"].fillna(res_df["Réseau"]).fillna("Portefeuille_Inconnu")
-    else:
-        res_df["Portefeuille"] = res_df["Compte_Sanctuaire"]
+    movements = []
 
-    res_df["Token"] = res_df["Devise d'origine"].fillna("Inconnue").str.upper().str.strip()
-    res_df["Montant d'origine"] = pd.to_numeric(res_df["Montant d'origine"], errors="coerce").fillna(0.0)
-
-    # Classification Entrée vs Sortie adaptée aux spécificités 8LENDS & Lending
-    def classify_amount(row):
-        tx_type = str(row.get("Type de transaction", "")).strip().lower()
-        amt = float(row.get("Montant d'origine", 0.0))
-        acc = str(row.get("Compte_Sanctuaire", "")).lower()
+    for idx, row in res_df.iterrows():
+        acc = str(row.get("Compte_Sanctuaire", "") or row.get("Nom du projet", "") or row.get("Réseau", "") or "Portefeuille_Inconnu").strip()
         proj = str(row.get("Nom du projet", "")).lower()
+        acc_lower = acc.lower()
 
-        is_8lends = "8lends" in acc or "8lends" in proj
+        tx_type = str(row.get("Type de transaction", "")).strip().lower()
+        notes = str(row.get("Notes", "")).strip().lower()
 
+        token_orig = str(row.get("Devise d'origine", "") or "").upper().strip()
+        token_stmt = str(row.get("Devise du relevé", "") or "").upper().strip()
+
+        amt_orig = abs(float(row.get("Montant d'origine", 0.0) or 0.0))
+        amt_stmt = abs(float(row.get("Montant du relevé", 0.0) or 0.0))
+
+        is_8lends = "8lends" in acc_lower or "8lends" in proj
+
+        # 1. Traitement préservé pour 8LENDS
         if is_8lends:
-            # Traitement spécifique 8LENDS :
-            # 1. Retrait : Sortie réelle de 8LENDS vers wallet non-custodial
+            token = token_orig or token_stmt or "EUR"
+            amt = amt_orig or amt_stmt
             if "retrait" in tx_type or "withdrawal" in tx_type:
-                return 0.0, abs(amt)
-            # 2. Dépôt / Investissement initial : Entrée sur le compte 8LENDS
+                movements.append({"Portefeuille": acc, "Token": token, "Entree": 0.0, "Sortie": amt})
             elif "dépôt" in tx_type or "deposit" in tx_type or "investissement" in tx_type:
-                return abs(amt), 0.0
-            # 3. Remboursement de capital / Intérêts / Récompenses :
-            # Information interne de restitution/rendement (frais/intérêts déjà au solde disponible)
+                movements.append({"Portefeuille": acc, "Token": token, "Entree": amt, "Sortie": 0.0})
             elif any(k in tx_type for k in ["remboursement", "restitution", "intérêt", "intérêts", "récompense", "parrainage"]):
-                return 0.0, 0.0
+                movements.append({"Portefeuille": acc, "Token": token, "Entree": 0.0, "Sortie": 0.0})
             else:
-                if amt < 0:
-                    return 0.0, abs(amt)
-                else:
-                    return abs(amt), 0.0
+                movements.append({"Portefeuille": acc, "Token": token, "Entree": amt, "Sortie": 0.0})
+            continue
 
-        # Règle générale (Comptes non-custodial / Portefeuilles Blockchain)
-        # "Investissement" depuis un portefeuille non-custodial est une Sortie vers la plateforme (8LENDS)
+        # 2. Traitement pour NEVERLESS et portefeuilles généraux
+        # CAS A : Trade / Swap double-actif (devise d'origine != devise du relevé)
+        is_dual_trade = (
+            (token_orig and token_stmt and token_orig != token_stmt) and
+            ("trade" in tx_type or "swap" in tx_type or "conversion" in notes or (amt_orig > 0 and amt_stmt > 0))
+        )
+
+        if is_dual_trade:
+            # Sortie de l'actif vendu
+            if amt_orig > 0 and token_orig:
+                movements.append({"Portefeuille": acc, "Token": token_orig, "Entree": 0.0, "Sortie": amt_orig})
+            # Entrée de l'actif acheté
+            if amt_stmt > 0 and token_stmt:
+                movements.append({"Portefeuille": acc, "Token": token_stmt, "Entree": amt_stmt, "Sortie": 0.0})
+            continue
+
+        # CAS B : Flux unique (Dépôt, Retrait, Intérêts, Rendement)
         outflow_types = ["retrait", "withdrawal", "fee", "out", "pay", "send", "transfer_out", "investissement"]
-        inflow_types = ["dépôt", "deposit", "in", "buy", "receive", "revenue", "staking", "claim"]
+        inflow_types = ["dépôt", "deposit", "in", "buy", "receive", "revenue", "staking", "claim", "interest", "prime"]
+
+        token = token_stmt if amt_stmt > 0 and token_stmt else (token_orig or "EUR")
+        amt = amt_stmt if amt_stmt > 0 else amt_orig
 
         if any(t in tx_type for t in outflow_types):
-            return 0.0, abs(amt)
-        elif any(t in tx_type for t in inflow_types):
-            return abs(amt), 0.0
+            movements.append({"Portefeuille": acc, "Token": token_orig or token, "Entree": 0.0, "Sortie": amt_orig or amt})
+        elif any(t in tx_type or t in notes for t in inflow_types):
+            movements.append({"Portefeuille": acc, "Token": token, "Entree": amt, "Sortie": 0.0})
         else:
-            if amt < 0:
-                return 0.0, abs(amt)
-            else:
-                return abs(amt), 0.0
+            movements.append({"Portefeuille": acc, "Token": token, "Entree": amt, "Sortie": 0.0})
 
-    inflows_outflows = res_df.apply(classify_amount, axis=1)
-    res_df["Entree"] = [x[0] for x in inflows_outflows]
-    res_df["Sortie"] = [x[1] for x in inflows_outflows]
+    if not movements:
+        return pd.DataFrame(columns=["Portefeuille", "Token", "Total_Entrees", "Total_Sorties", "Solde_Net", "Nombre_TX"])
 
-    summary = res_df.groupby(["Portefeuille", "Token"]).agg(
+    mov_df = pd.DataFrame(movements)
+    summary = mov_df.groupby(["Portefeuille", "Token"]).agg(
         Total_Entrees=("Entree", "sum"),
         Total_Sorties=("Sortie", "sum"),
-        Nombre_TX=("Date de la transaction", "count")
+        Nombre_TX=("Entree", "count")
     ).reset_index()
 
     summary["Solde_Net"] = summary["Total_Entrees"] - summary["Total_Sorties"]

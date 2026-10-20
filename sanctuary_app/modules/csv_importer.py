@@ -62,24 +62,22 @@ def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = 
             if not record["Réseau"]:
                 record["Réseau"] = default_network
 
-            # Saisie de secours intelligente pour les CSV multi-colonnes (ex: Neverless Amount sent / Amount received)
+            # Traitement multi-colonnes spécifique (ex: Neverless Amount sent vs Amount received / Trade / Swap)
             amt_orig = _clean_numeric_value(record["Montant d'origine"])
             curr_orig = str(record["Devise d'origine"] or "").upper().strip()
 
             amt_statement = _clean_numeric_value(record["Montant du relevé"])
             curr_statement = str(record["Devise du relevé"] or "").upper().strip()
 
-            # Si Montant d'origine est nul (ex: Dépôt/Intérêts), vérifier si Montant du relevé est renseigné
-            if amt_orig == 0.0 and amt_statement != 0.0:
-                amt_orig = amt_statement
-                if not curr_orig and curr_statement:
-                    curr_orig = curr_statement
+            tx_type = str(record["Type de transaction"] or "").strip()
 
-            # Inversement, si Montant du relevé est nul (ex: Retrait), utiliser Montant d'origine
-            if amt_statement == 0.0 and amt_orig != 0.0:
-                amt_statement = amt_orig
-                if not curr_statement and curr_orig:
-                    curr_statement = curr_orig
+            # Pour les Dépôts / Intérêts à flux unique reçu
+            if amt_orig == 0.0 and amt_statement != 0.0 and not curr_orig:
+                curr_orig = curr_statement
+
+            # Pour les Retraits à flux unique envoyé
+            if amt_statement == 0.0 and amt_orig != 0.0 and not curr_statement:
+                curr_statement = curr_orig
 
             if not curr_orig:
                 curr_orig = "EUR"
@@ -90,21 +88,34 @@ def map_csv_to_sanctuary(file_obj, column_mapping: dict, default_network: str = 
             record["Devise d'origine"] = curr_orig
             record["Montant du relevé"] = amt_statement
             record["Devise du relevé"] = curr_statement
+
             rate_applied = _clean_numeric_value(record["Taux de change appliqué"])
             dt_val = record["Date de la transaction"]
 
-            # 1. Si le taux de change n'est pas fourni, le déduire du rapport relevé / origine si disponible
-            if rate_applied == 0.0 and amt_statement != 0.0 and amt_orig != 0.0:
+            # Si l'une des devises est EUR ou EURC (parité 1:1 EUR), privilégier les montants natifs
+            if curr_orig in ["EUR", "EURC"] and amt_orig != 0.0:
+                val_eur = amt_orig
+                rate_applied = 1.0
+                record["Montant du relevé"] = val_eur
+                record["Taux de change appliqué"] = rate_applied
+                record["Paire FX"] = f"{curr_orig}/EUR"
+                record["Source du taux de change"] = "Parité EUR"
+            elif curr_statement in ["EUR", "EURC"] and amt_statement != 0.0:
+                val_eur = amt_statement
+                rate_applied = 1.0
+                record["Montant du relevé"] = val_eur
+                record["Taux de change appliqué"] = rate_applied
+                record["Paire FX"] = f"{curr_statement}/EUR"
+                record["Source du taux de change"] = "Parité EUR"
+            elif rate_applied == 0.0 and amt_statement != 0.0 and amt_orig != 0.0:
                 rate_applied = abs(amt_statement / amt_orig)
                 record["Taux de change appliqué"] = round(rate_applied, 6)
                 if not record["Source du taux de change"]:
                     record["Source du taux de change"] = "Calculé (Relevé/Origine)"
                 if not record["Paire FX"]:
-                    record["Paire FX"] = f"{curr_orig}/EUR"
+                    record["Paire FX"] = f"{curr_orig}/{curr_statement}"
                 if not record["Date du taux de change appliqué"]:
                     record["Date du taux de change appliqué"] = str(dt_val)[:10]
-
-            # 2. Si le montant du relevé ET le taux ne sont pas fournis, interroger l'API FX historique
             elif (amt_statement == 0.0 or rate_applied == 0.0) and amt_orig != 0.0:
                 dt_obj = pd.to_datetime(dt_val, dayfirst=True, errors="coerce")
                 dt_obj = dt_obj.to_pydatetime() if pd.notna(dt_obj) else datetime.now()
