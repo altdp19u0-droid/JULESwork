@@ -397,37 +397,57 @@ def load_persistent_prices(trait_dir: Path, year: int) -> pd.DataFrame:
 
 def save_persistent_price(trait_dir: Path, year: int, token: str, price_eur: float, source_prix: str = "Surcharge Manuelle", eval_date: date = None):
     """Saisit ou met à jour le prix unitaire d'un jeton pour une DATE D'ÉVALUATION donnée dans la table CSV sanctuarisée de l'année."""
+    batch_save_persistent_prices(
+        trait_dir=trait_dir,
+        year=year,
+        eval_date=eval_date,
+        price_records=[{"Token": token, "Prix_Unitaire_EUR": price_eur, "Source_Prix": source_prix}]
+    )
+
+def batch_save_persistent_prices(trait_dir: Path, year: int, eval_date: date, price_records: list):
+    """
+    Sanctuarise EN BLOC l'intégralité des prix unitaires de TOUS les jetons pour une Date_Evaluation donnée.
+    Chaque prix est enregistré dans prices_valuation_{YEAR}.csv avec horodatage de consultation.
+    """
+    if not trait_dir or not price_records:
+        return
+
     path = get_price_csv_path(trait_dir, year)
     existing_df = load_persistent_prices(trait_dir, year)
 
-    tok_clean = str(token).upper().strip()
     now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
     eval_str = eval_date.strftime("%d-%m-%Y") if eval_date else datetime.now().strftime("%d-%m-%Y")
 
-    new_row = {
-        "Date_Consultation": now_str,
-        "Token": tok_clean,
-        "Prix_Unitaire_EUR": float(price_eur),
-        "Source_Prix": source_prix,
-        "Date_Evaluation": eval_str
-    }
+    new_rows = []
+    for rec in price_records:
+        tok_clean = str(rec["Token"]).upper().strip()
+        p_val = float(rec["Prix_Unitaire_EUR"])
+        src_lbl = rec.get("Source_Prix", "Calculé")
+        new_rows.append({
+            "Date_Consultation": now_str,
+            "Token": tok_clean,
+            "Prix_Unitaire_EUR": p_val,
+            "Source_Prix": src_lbl,
+            "Date_Evaluation": eval_str
+        })
 
-    new_row_df = pd.DataFrame([new_row])
+    new_df = pd.DataFrame(new_rows)
 
     if not existing_df.empty:
-        # Filtrer si la clé exacte (Date_Evaluation, Token) existe déjà pour la remplacer
-        mask = (existing_df["Token"] == tok_clean) & (existing_df["Date_Evaluation"] == eval_str)
+        # Remplacement atomique de l'ensemble des jetons ré-évalués à cette Date_Evaluation exacte
+        tokens_to_update = set(new_df["Token"].unique())
+        mask = (existing_df["Date_Evaluation"] == eval_str) & (existing_df["Token"].isin(tokens_to_update))
         existing_df = existing_df[~mask]
-        combined = pd.concat([existing_df, new_row_df], ignore_index=True)
+        combined = pd.concat([existing_df, new_df], ignore_index=True)
     else:
-        combined = new_row_df
+        combined = new_df
 
     combined.to_csv(path, index=False, encoding="utf-8-sig")
 
 def evaluate_balances_at_date(balance_df: pd.DataFrame, eval_date: date, trait_dir: Path = None) -> pd.DataFrame:
     """
     Valorise les soldes nets en Euros au cours exact de la date d'évaluation eval_date,
-    en traçant et sanctuarisant chaque prix par (Date_Evaluation, Token) dans prices_valuation_{YEAR}.csv.
+    en traçant et sanctuarisant L'ENSEMBLE des prix de TOUS les jetons par (Date_Evaluation, Token) dans prices_valuation_{YEAR}.csv.
     """
     if balance_df is None or balance_df.empty:
         return pd.DataFrame(columns=["Portefeuille", "Token", "Solde_Net", "Prix_Unitaire_EUR", "Valeur_Totale_EUR", "Source_Prix"])
@@ -450,6 +470,7 @@ def evaluate_balances_at_date(balance_df: pd.DataFrame, eval_date: date, trait_d
     unit_prices = []
     total_values = []
     sources = []
+    records_to_sanctuary = []
 
     for idx, row in res_df.iterrows():
         token = str(row["Token"]).upper().strip()
@@ -459,7 +480,7 @@ def evaluate_balances_at_date(balance_df: pd.DataFrame, eval_date: date, trait_d
         source_lbl = "Calculé"
 
         # 1. Vérification si un prix a DÉJÀ été sanctuarisé spécifiquement pour CETTE Date_Evaluation
-        if token in persistent_prices and persistent_prices[token] > 0:
+        if token in persistent_prices and persistent_prices[token] >= 0:
             price_eur = persistent_prices[token]
             source_lbl = "Sanctuarisé (Date T_eval)"
         elif token in ["EUR", "EURC"]:
@@ -478,14 +499,19 @@ def evaluate_balances_at_date(balance_df: pd.DataFrame, eval_date: date, trait_d
                 price_eur = 0.0
                 source_lbl = "Non Renseigné (À saisir)"
 
-        # Enregistrement automatique dans le CSV sanctuarisé des prix sous la Date_Evaluation exacte
-        if trait_dir and price_eur > 0 and token not in persistent_prices:
-            save_persistent_price(trait_dir, yr, token, price_eur, source_lbl, eval_date)
-            persistent_prices[token] = price_eur
+        records_to_sanctuary.append({
+            "Token": token,
+            "Prix_Unitaire_EUR": price_eur,
+            "Source_Prix": source_lbl
+        })
 
         unit_prices.append(round(price_eur, 8))
         total_values.append(round(solde * price_eur, 2))
         sources.append(source_lbl)
+
+    # Sanctuarisation automatique EN BLOC de TOUS les jetons du portefeuille pour cette Date_Evaluation
+    if trait_dir and records_to_sanctuary:
+        batch_save_persistent_prices(trait_dir, yr, eval_date, records_to_sanctuary)
 
     res_df["Prix_Unitaire_EUR"] = unit_prices
     res_df["Valeur_Totale_EUR"] = total_values
