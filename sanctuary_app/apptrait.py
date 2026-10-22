@@ -282,16 +282,62 @@ elif menu == "💶 4. Valorisation du Patrimoine à Date Choisie":
         df_until_date = filter_by_period(df_full, period_type="Personnalisée", start_date=date(2015, 1, 1), end_date=eval_date)
         df_balances = calculate_token_balances(df_until_date)
 
-        if st.button("🚀 Calculer la Valorisation en Euros au " + eval_date.strftime("%d/%m/%Y")):
-            with st.spinner("Récupération des cours BCE et DefiLlama pour la date sélectionnée..."):
-                df_val = evaluate_balances_at_date(df_balances, eval_date)
+        with st.spinner("Récupération des cours BCE, DefiLlama et registres sanctuarisés..."):
+            df_val = evaluate_balances_at_date(df_balances, eval_date, trait_dir=TRAIT_DIR)
 
-            total_patrimoine_eur = df_val["Valeur_Totale_EUR"].sum()
+        total_patrimoine_eur = df_val["Valeur_Totale_EUR"].sum()
 
-            m1, m2 = st.columns(2)
-            m1.metric(f"Date de Consultation (T_eval)", eval_date.strftime("%d/%m/%Y"))
-            m2.metric("Valeur Totale du Patrimoine Qualifié (EUR)", f"{total_patrimoine_eur:,.2f} €")
+        m1, m2 = st.columns(2)
+        m1.metric(f"Date de Consultation (T_eval)", eval_date.strftime("%d/%m/%Y"))
+        m2.metric("Valeur Totale du Patrimoine Qualifié (EUR)", f"{total_patrimoine_eur:,.2f} €")
+
+        st.divider()
+        st.subheader(f"📋 Détail de Valorisation par Portefeuille et Token (au {eval_date.strftime('%d/%m/%Y')})")
+        st.dataframe(df_val, use_container_width=True)
+
+        all_tokens_in_portfolio = sorted(df_val["Token"].unique().tolist()) if not df_val.empty else []
+
+        if all_tokens_in_portfolio:
+            missing_tokens = df_val[df_val["Prix_Unitaire_EUR"] == 0.0]["Token"].unique().tolist()
 
             st.divider()
-            st.subheader(f"📋 Détail de Valorisation par Portefeuille et Token (au {eval_date.strftime('%d/%m/%Y')})")
-            st.dataframe(df_val, use_container_width=True)
+            st.subheader("✍️ Saisie & Sanctuarisation Manuelle des Prix Unitaires (EUR)")
+            st.info("Saisissez ou modifiez manuellement le prix unitaire d'un jeton en Euros. La valeur sera sanctuarisée dans `trait_legit/{ANNÉE}/prices_valuation_{ANNÉE}.csv`.")
+
+            c_p1, c_p2, c_p3 = st.columns(3)
+
+            sel_token_price = c_p1.selectbox(
+                "Sélectionner le Jeton",
+                all_tokens_in_portfolio,
+                index=all_tokens_in_portfolio.index(missing_tokens[0]) if missing_tokens else 0
+            )
+
+            current_val_df = df_val[df_val["Token"] == sel_token_price]
+            default_p = float(current_val_df["Prix_Unitaire_EUR"].iloc[0]) if not current_val_df.empty else 0.0
+
+            input_price_eur = c_p2.number_input(
+                f"Prix Unitaire EUR pour **{sel_token_price}**",
+                min_value=0.0,
+                value=default_p,
+                format="%.8f"
+            )
+
+            if c_p3.button(f"💾 Sanctuariser le Prix de {sel_token_price}"):
+                from sanctuary_app.modules.trait_manager import save_persistent_price
+                save_persistent_price(
+                    trait_dir=TRAIT_DIR,
+                    year=eval_date.year,
+                    token=sel_token_price,
+                    price_eur=input_price_eur,
+                    source_prix="Surcharge Manuelle Utilisateur",
+                    eval_date=eval_date
+                )
+                st.success(f"✅ Prix unitaire de {input_price_eur:.6f} € pour {sel_token_price} sanctuarisé dans `trait_legit/{eval_date.year}/prices_valuation_{eval_date.year}.csv` !")
+                st.rerun()
+
+        # Affichage de la table sanctuarisée des prix
+        from sanctuary_app.modules.trait_manager import load_persistent_prices
+        p_df_view = load_persistent_prices(TRAIT_DIR, eval_date.year)
+        if not p_df_view.empty:
+            with st.expander(f"📁 Registre Sanctuarisé des Prix pour {eval_date.year} (`prices_valuation_{eval_date.year}.csv`)"):
+                st.dataframe(p_df_view, use_container_width=True)

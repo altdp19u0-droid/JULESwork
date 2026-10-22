@@ -376,42 +376,110 @@ def calculate_token_balances(df: pd.DataFrame) -> pd.DataFrame:
     summary["Solde_Net"] = summary["Total_Entrees"] - summary["Total_Sorties"]
     return summary.sort_values(["Portefeuille", "Solde_Net"], ascending=[True, False])
 
-def evaluate_balances_at_date(balance_df: pd.DataFrame, eval_date: date) -> pd.DataFrame:
+def get_price_csv_path(trait_dir: Path, year: int) -> Path:
+    """Retourne le chemin d'accès au fichier CSV de sanctuarisation des prix d'une année."""
+    folder = trait_dir / str(year)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f"prices_valuation_{year}.csv"
+
+def load_persistent_prices(trait_dir: Path, year: int) -> pd.DataFrame:
+    """Charge le fichier CSV des prix sanctuarisés d'une année."""
+    path = get_price_csv_path(trait_dir, year)
+    if not path.exists():
+        return pd.DataFrame(columns=["Date_Consultation", "Token", "Prix_Unitaire_EUR", "Source_Prix", "Date_Evaluation"])
+    try:
+        df = pd.read_csv(path, encoding="utf-8-sig")
+        df["Token"] = df["Token"].astype(str).str.upper().str.strip()
+        df["Prix_Unitaire_EUR"] = pd.to_numeric(df["Prix_Unitaire_EUR"], errors="coerce").fillna(0.0)
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["Date_Consultation", "Token", "Prix_Unitaire_EUR", "Source_Prix", "Date_Evaluation"])
+
+def save_persistent_price(trait_dir: Path, year: int, token: str, price_eur: float, source_prix: str = "Surcharge Manuelle", eval_date: date = None):
+    """Saisit ou met à jour le prix unitaire d'un jeton dans la table CSV de sanctuarisation de l'année."""
+    path = get_price_csv_path(trait_dir, year)
+    existing_df = load_persistent_prices(trait_dir, year)
+
+    tok_clean = str(token).upper().strip()
+    now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    eval_str = eval_date.strftime("%d-%m-%Y") if eval_date else datetime.now().strftime("%d-%m-%Y")
+
+    new_row = {
+        "Date_Consultation": now_str,
+        "Token": tok_clean,
+        "Prix_Unitaire_EUR": float(price_eur),
+        "Source_Prix": source_prix,
+        "Date_Evaluation": eval_str
+    }
+
+    if not existing_df.empty and tok_clean in existing_df["Token"].values:
+        existing_df = existing_df[existing_df["Token"] != tok_clean]
+
+    combined = pd.concat([existing_df, pd.DataFrame([new_row])], ignore_index=True)
+    combined.to_csv(path, index=False, encoding="utf-8-sig")
+
+def evaluate_balances_at_date(balance_df: pd.DataFrame, eval_date: date, trait_dir: Path = None) -> pd.DataFrame:
     """
-    Valorise les soldes nets en Euros au cours exact de la date d'évaluation eval_date.
+    Valorise les soldes nets en Euros au cours exact de la date d'évaluation eval_date,
+    en intégrant la recherche en ligne et les surcharges manuelles sanctuarisées dans prices_valuation_{YEAR}.csv.
     """
     if balance_df is None or balance_df.empty:
-        return pd.DataFrame(columns=["Portefeuille", "Token", "Solde_Net", "Prix_Unitaire_EUR", "Valeur_Totale_EUR"])
+        return pd.DataFrame(columns=["Portefeuille", "Token", "Solde_Net", "Prix_Unitaire_EUR", "Valeur_Totale_EUR", "Source_Prix"])
 
     res_df = balance_df.copy()
-    date_str = eval_date.strftime("%Y-%m-%d")
+    yr = eval_date.year
 
-    # Taux BCE USD/EUR du jour
+    # Chargement du registre sanctuarisé des prix de l'année si trait_dir est fourni
+    persistent_prices = {}
+    if trait_dir:
+        p_df = load_persistent_prices(trait_dir, yr)
+        if not p_df.empty:
+            persistent_prices = p_df.set_index("Token")["Prix_Unitaire_EUR"].to_dict()
+
     ecb_rate_usd_eur = get_ecb_eur_rate("USD", eval_date)
 
     unit_prices = []
     total_values = []
+    sources = []
 
     for idx, row in res_df.iterrows():
         token = str(row["Token"]).upper().strip()
         solde = float(row["Solde_Net"])
 
-        if token in ["EUR", "EURA", "EURS"]:
+        price_eur = 0.0
+        source_lbl = "Calculé"
+
+        # 1. Vérification surcharge manuelle persistent dans prices_valuation_{year}.csv
+        if token in persistent_prices and persistent_prices[token] > 0:
+            price_eur = persistent_prices[token]
+            source_lbl = "Surcharge Manuelle / Sanctuarisé"
+        elif token in ["EUR", "EURC"]:
             price_eur = 1.0
+            source_lbl = "Parité EUR 1:1"
         else:
-            # Prix Crypto USD
+            # 2. Recherche en ligne (DefiLlama / CoinGecko + BCE)
             price_usd = get_crypto_usd_price_defillama(token, eval_date)
             if price_usd and ecb_rate_usd_eur:
                 price_eur = price_usd * ecb_rate_usd_eur
+                source_lbl = "API DefiLlama / BCE"
             elif price_usd:
-                price_eur = price_usd * 0.92  # Fallback approximatif
+                price_eur = price_usd * 0.92
+                source_lbl = "API DefiLlama"
             else:
                 price_eur = 0.0
+                source_lbl = "Non Renseigné (À saisir)"
 
-        unit_prices.append(price_eur)
-        total_values.append(solde * price_eur)
+        # Enregistrement automatique dans le CSV sanctuarisé des prix
+        if trait_dir and price_eur > 0 and token not in persistent_prices:
+            save_persistent_price(trait_dir, yr, token, price_eur, source_lbl, eval_date)
+            persistent_prices[token] = price_eur
+
+        unit_prices.append(round(price_eur, 8))
+        total_values.append(round(solde * price_eur, 2))
+        sources.append(source_lbl)
 
     res_df["Prix_Unitaire_EUR"] = unit_prices
     res_df["Valeur_Totale_EUR"] = total_values
+    res_df["Source_Prix"] = sources
 
     return res_df

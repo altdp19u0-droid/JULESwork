@@ -66,13 +66,23 @@ def get_crypto_usd_price_defillama(asset: str, date_obj) -> float:
         "WETH": "coingecko:ethereum",
         "BTC": "coingecko:bitcoin",
         "WBTC": "coingecko:wrapped-bitcoin",
+        "BCH": "coingecko:bitcoin-cash",
         "BNB": "coingecko:binancecoin",
         "POL": "coingecko:polygon-ecosystem-token",
         "MATIC": "coingecko:matic-network",
         "ARB": "coingecko:arbitrum",
         "OP": "coingecko:optimism",
         "SOL": "coingecko:solana",
-        "AAVE": "coingecko:aave"
+        "AAVE": "coingecko:aave",
+        "TWT": "coingecko:trust-wallet-token",
+        "MERL": "coingecko:merlin-chain",
+        "SUN": "coingecko:sun-token",
+        "THE": "coingecko:thena",
+        "ORDER": "coingecko:orderly-network",
+        "ME": "coingecko:magic-eden",
+        "ZBCN": "coingecko:zebec-network",
+        "AVNT": "coingecko:avantis",
+        "BOOPA": "coingecko:boopa"
     }
 
     cg_id = symbol_map.get(asset_clean, f"coingecko:{asset_clean.lower()}")
@@ -93,6 +103,20 @@ def get_crypto_usd_price_defillama(asset: str, date_obj) -> float:
             data = res.json().get("coins", {})
             if cg_id in data:
                 price = float(data[cg_id]["price"])
+                FX_CACHE[cache_key] = price
+                return price
+    except Exception:
+        pass
+
+    # Secondary CoinGecko Simple Price API lookup
+    try:
+        raw_id = cg_id.replace("coingecko:", "")
+        cg_url = f"https://api.coingecko.com/api/v3/simple/price?ids={raw_id}&vs_currencies=usd"
+        res_cg = requests.get(cg_url, timeout=1.0)
+        if res_cg.status_code == 200:
+            cg_data = res_cg.json()
+            if raw_id in cg_data and "usd" in cg_data[raw_id]:
+                price = float(cg_data[raw_id]["usd"])
                 FX_CACHE[cache_key] = price
                 return price
     except Exception:
