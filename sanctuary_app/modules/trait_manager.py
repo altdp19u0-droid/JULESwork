@@ -348,20 +348,39 @@ def calculate_token_balances(df: pd.DataFrame) -> pd.DataFrame:
                     movements.append({"Portefeuille": acc, "Token": token_stmt, "Entree": amt_stmt, "Sortie": 0.0})
             continue
 
-        # CAS B : Flux externe de capital (Dépôt, Retrait, Rendements / Intérêts)
+        # CAS B : Flux externe ou mouvements de coffre/relevé (Dépôt, Retrait, Earn, Top Up, Off-Ramp)
+        raw_amt_orig = float(row.get("Montant d'origine", 0.0) or 0.0)
+        raw_amt_stmt = float(row.get("Montant du relevé", 0.0) or 0.0)
+        raw_amt = raw_amt_orig if raw_amt_orig != 0.0 else raw_amt_stmt
+
+        is_earn_vault = "earn" in tx_type or "earn" in notes
         is_interest = "interest" in notes or "prime" in notes or "strategies interest" in notes or "interest" in tx_type
-        outflow_types = ["retrait", "withdrawal", "fee", "out", "pay", "send", "transfer_out", "investissement"]
-        inflow_types = ["dépôt", "deposit", "in", "buy", "receive", "revenue", "staking", "claim"]
+        outflow_types = ["retrait", "withdrawal", "fee", "out", "pay", "send", "transfer_out", "off-ramp", "sell"]
+        inflow_types = ["dépôt", "deposit", "in", "buy", "receive", "revenue", "staking", "claim", "top up"]
 
-        token = token_stmt if amt_stmt > 0 and token_stmt else (token_orig or "EUR")
-        amt = amt_stmt if amt_stmt > 0 else amt_orig
+        token = token_orig if token_orig and token_orig != "EUR" else (token_stmt or "EUR")
+        if token in ["USD", "USDC", "USDT"]:
+            token = "USDC" if token in ["USD", "USDC"] else token
 
-        if any(t in tx_type for t in outflow_types):
-            movements.append({"Portefeuille": acc, "Token": token_orig or token, "Entree": 0.0, "Sortie": amt_orig or amt})
+        # Si l'opération Earn est un transfert interne vers/depuis le coffre Earn de la même plateforme
+        if is_earn_vault and not is_interest:
+            if raw_amt < 0:
+                # Dépôt sur le coffre Earn : Sortie du Wallet principal -> Entrée sur le coffre Earn (Neutre globalement sur la plateforme)
+                movements.append({"Portefeuille": acc, "Token": token, "Entree": abs(raw_amt), "Sortie": abs(raw_amt)})
+            else:
+                # Retrait du coffre Earn vers Wallet principal : Neutre globalement sur la plateforme
+                movements.append({"Portefeuille": acc, "Token": token, "Entree": abs(raw_amt), "Sortie": abs(raw_amt)})
+            continue
+
+        # Prise en compte prioritaire du signe négatif si fourni dans le CSV
+        if raw_amt < 0:
+            movements.append({"Portefeuille": acc, "Token": token, "Entree": 0.0, "Sortie": abs(raw_amt)})
+        elif any(t in tx_type for t in outflow_types):
+            movements.append({"Portefeuille": acc, "Token": token, "Entree": 0.0, "Sortie": abs(raw_amt)})
         elif is_interest or any(t in tx_type or t in notes for t in inflow_types):
-            movements.append({"Portefeuille": acc, "Token": token, "Entree": amt, "Sortie": 0.0})
+            movements.append({"Portefeuille": acc, "Token": token, "Entree": abs(raw_amt), "Sortie": 0.0})
         else:
-            movements.append({"Portefeuille": acc, "Token": token, "Entree": amt, "Sortie": 0.0})
+            movements.append({"Portefeuille": acc, "Token": token, "Entree": abs(raw_amt), "Sortie": 0.0})
 
     if not movements:
         return pd.DataFrame(columns=["Portefeuille", "Token", "Total_Entrees", "Total_Sorties", "Solde_Net", "Nombre_TX"])
