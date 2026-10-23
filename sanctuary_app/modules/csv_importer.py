@@ -3,8 +3,16 @@ Module d'importation et mapping dynamique de CSV arbitraires vers le schéma San
 """
 import pandas as pd
 from datetime import datetime
-from .schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, create_empty_sanctuary_df
-from .fx_collector import convert_to_eur
+try:
+    from .schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, create_empty_sanctuary_df
+    from .fx_collector import convert_to_eur
+except (ImportError, ValueError):
+    try:
+        from sanctuary_app.modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, create_empty_sanctuary_df
+        from sanctuary_app.modules.fx_collector import convert_to_eur
+    except (ImportError, ValueError):
+        from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, create_empty_sanctuary_df
+        from modules.fx_collector import convert_to_eur
 
 def _clean_numeric_value(val) -> float:
     """Nettoie et convertit une valeur en float (gère la virgule française et les espaces)."""
@@ -28,12 +36,28 @@ for _p in [str(_ROOT_DIR), str(_APP_DIR), str(_CURRENT_DIR)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from .importers import (
-    import_bleap_csv,
-    import_neverless_csv,
-    import_8lends_csv,
-    import_generic_csv
-)
+try:
+    from .importers import (
+        import_bleap_csv,
+        import_neverless_csv,
+        import_8lends_csv,
+        import_generic_csv
+    )
+except (ImportError, ValueError):
+    try:
+        from sanctuary_app.modules.importers import (
+            import_bleap_csv,
+            import_neverless_csv,
+            import_8lends_csv,
+            import_generic_csv
+        )
+    except (ImportError, ValueError):
+        from modules.importers import (
+            import_bleap_csv,
+            import_neverless_csv,
+            import_8lends_csv,
+            import_generic_csv
+        )
 
 import json
 from pathlib import Path

@@ -6,9 +6,19 @@ import requests
 import pandas as pd
 from datetime import datetime, timezone
 import time
-from .schema import enforce_sanctuary_schema, create_empty_sanctuary_df, smart_parse_dates
-from .fx_collector import convert_to_eur
-from .sanctuary_manager import load_sanctuary_account
+try:
+    from .schema import enforce_sanctuary_schema, create_empty_sanctuary_df, smart_parse_dates
+    from .fx_collector import convert_to_eur
+    from .sanctuary_manager import load_sanctuary_account
+except (ImportError, ValueError):
+    try:
+        from sanctuary_app.modules.schema import enforce_sanctuary_schema, create_empty_sanctuary_df, smart_parse_dates
+        from sanctuary_app.modules.fx_collector import convert_to_eur
+        from sanctuary_app.modules.sanctuary_manager import load_sanctuary_account
+    except (ImportError, ValueError):
+        from modules.schema import enforce_sanctuary_schema, create_empty_sanctuary_df, smart_parse_dates
+        from modules.fx_collector import convert_to_eur
+        from modules.sanctuary_manager import load_sanctuary_account
 
 BLOCKSCOUT_NETWORKS = {
     "ETHEREUM": {

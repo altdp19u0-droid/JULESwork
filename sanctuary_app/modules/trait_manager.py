@@ -10,8 +10,16 @@ from pathlib import Path
 import pandas as pd
 from datetime import datetime, date
 
-from .schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
-from .fx_collector import get_ecb_eur_rate, get_crypto_usd_price_defillama
+try:
+    from .schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
+    from .fx_collector import get_ecb_eur_rate, get_crypto_usd_price_defillama
+except (ImportError, ValueError):
+    try:
+        from sanctuary_app.modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
+        from sanctuary_app.modules.fx_collector import get_ecb_eur_rate, get_crypto_usd_price_defillama
+    except (ImportError, ValueError):
+        from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema
+        from modules.fx_collector import get_ecb_eur_rate, get_crypto_usd_price_defillama
 
 TRAIT_COLUMNS = [
     "Statut_Legitimite",

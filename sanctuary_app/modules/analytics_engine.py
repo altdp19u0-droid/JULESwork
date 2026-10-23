@@ -4,7 +4,13 @@ Niveau A : Totalisation par période pour chaque compte individuel.
 Niveau B : Totalisation par période sur la globalisation multi-comptes.
 """
 import pandas as pd
-from .schema import enforce_sanctuary_schema, smart_parse_dates
+try:
+    from .schema import enforce_sanctuary_schema, smart_parse_dates
+except (ImportError, ValueError):
+    try:
+        from sanctuary_app.modules.schema import enforce_sanctuary_schema, smart_parse_dates
+    except (ImportError, ValueError):
+        from modules.schema import enforce_sanctuary_schema, smart_parse_dates
 
 def filter_by_period(df: pd.DataFrame, period_type: str, year: int = None, quarter: str = None, month: int = None, start_date = None, end_date = None) -> pd.DataFrame:
     """

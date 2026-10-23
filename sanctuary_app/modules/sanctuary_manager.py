@@ -4,7 +4,14 @@ Module de gestion du stockage local Windows CSV (sanctuary/{YEAR}/{compte}.csv).
 import os
 from pathlib import Path
 import pandas as pd
-from .schema import enforce_sanctuary_schema, smart_parse_dates, REQUIRED_COLUMNS
+
+try:
+    from .schema import enforce_sanctuary_schema, smart_parse_dates, REQUIRED_COLUMNS
+except (ImportError, ValueError):
+    try:
+        from sanctuary_app.modules.schema import enforce_sanctuary_schema, smart_parse_dates, REQUIRED_COLUMNS
+    except (ImportError, ValueError):
+        from modules.schema import enforce_sanctuary_schema, smart_parse_dates, REQUIRED_COLUMNS
 
 SANCTUARY_ROOT = Path("sanctuary")
 
