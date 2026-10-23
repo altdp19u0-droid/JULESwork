@@ -4,7 +4,14 @@ Traite nativement les journaux d'investissements, dépôts, remboursements et re
 """
 import pandas as pd
 from datetime import datetime
-from ..schema import enforce_sanctuary_schema, create_empty_sanctuary_df
+
+try:
+    from ..schema import enforce_sanctuary_schema, create_empty_sanctuary_df
+except ImportError:
+    try:
+        from sanctuary_app.modules.schema import enforce_sanctuary_schema, create_empty_sanctuary_df
+    except ImportError:
+        from modules.schema import enforce_sanctuary_schema, create_empty_sanctuary_df
 
 def _clean_numeric(val) -> float:
     if pd.isna(val) or val is None or str(val).strip() == "":
