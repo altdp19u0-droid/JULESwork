@@ -1,28 +1,23 @@
 @echo off
-title Sanctuary App - Nettoyage des Caches
+title Vider les Caches Python (SanctuaryApp)
 cd /d "%~dp0"
 
 echo ============================================================
-echo   Nettoyage des Caches Python & Streamlit (Sanctuary App)
+echo   Suppression de TOUS les dossiers de cache __pycache__
 echo ============================================================
 echo.
 
-echo [1/3] Suppression des fichiers bytecode Python (.pyc, .pyo)...
-del /s /q *.pyc *.pyo 2>nul
-
-echo [2/3] Suppression des dossiers de cache Python (__pycache__)...
-for /d /r %%i in (__pycache__) do (
-    if exist "%%i" rmdir /s /q "%%i" 2>nul
+for /d /r . %%d in (__pycache__) do (
+    if exist "%%d" (
+        echo Suppression de : %%d
+        rd /s /q "%%d"
+    )
 )
 
-echo [3/3] Invalidation du cache local Streamlit...
-if exist "%USERPROFILE%\.streamlit\cache" (
-    rmdir /s /q "%USERPROFILE%\.streamlit\cache" 2>nul
-)
+del /s /q *.pyc >nul 2>&1
 
 echo.
 echo ============================================================
-echo   ✅ Nettoyage des caches termine avec succes !
+echo   [OK] Tous les caches Python ont ete supprimes.
 echo ============================================================
-echo.
 pause
