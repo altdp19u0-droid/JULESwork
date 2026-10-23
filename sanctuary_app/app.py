@@ -152,6 +152,11 @@ elif menu == "📥 Import CSV Externe":
                 default_index = net_options.index(detected_source)
                 st.success(f"✨ **Plateforme reconnue automatiquement par signature de colonnes : `{detected_source}` !**")
 
+            # --- ÉTAPE DE CONFIRMATION ET NOMMAGE DU FICHIER / COMPTE ---
+            st.divider()
+            st.subheader("✏️ Confirmation & Nommage du Compte / Fichier Sanctuarisé")
+            st.caption("Confirmez ou personnalisez le nom du fichier CSV qui sera créé dans l'arborescence `sanctuary/{ANNÉE}/`.")
+
             ic1, ic2, ic3 = st.columns(3)
             default_net = ic1.selectbox("Réseau / Source de la plateforme", net_options, index=default_index)
             if default_net == "AUTRE":
@@ -159,9 +164,21 @@ elif menu == "📥 Import CSV Externe":
                 if custom_net.strip():
                     default_net = custom_net.strip().upper()
 
-            imp_year = ic2.selectbox("Année Fiscale Cible", options=[2026, 2025, 2024, 2023, 2022], index=1)
-            imp_account = ic3.text_input("Nom du Compte Cible", value=f"{default_net}_Import_CSV")
+            imp_year = ic2.selectbox("Année Fiscale Cible de Référence", options=[2026, 2025, 2024, 2023, 2022], index=1)
 
+            # Suggestion dynamique du nom du fichier sanctuarisé basée sur la plateforme et le nom du fichier d'origine
+            clean_stem = Path(uploaded_file.name).stem.replace(" ", "_")
+            suggested_acc_name = f"{default_net}_{clean_stem}"
+
+            imp_account = ic3.text_input(
+                "Nom personnalisé du Compte / Fichier CSV Cible",
+                value=suggested_acc_name,
+                help="Ce nom définira le fichier sanctuarisé `sanctuary/{ANNÉE}/{Nom_Du_Compte}.csv`"
+            )
+
+            st.info(f"📁 **Aperçu du chemin de sanctuarisation :** `sanctuary/{imp_year}/{imp_account}.csv`")
+
+            st.divider()
             st.subheader(f"🔗 Assistant de Mapping & Importateur Dédié : **{default_net}**")
             st.write("Associez si besoin les colonnes requises à la colonne correspondante de votre fichier CSV :")
 
