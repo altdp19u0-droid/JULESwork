@@ -17,10 +17,14 @@ except ImportError:
         from modules.schema import enforce_sanctuary_schema, create_empty_sanctuary_df
         from modules.fx_collector import convert_to_eur
 
+import re
+
 def _clean_numeric(val) -> float:
-    if pd.isna(val) or val is None or str(val).strip() == "":
+    if pd.isna(val) or val is None:
         return 0.0
-    s = str(val).strip().replace(" ", "").replace(",", ".")
+    s = str(val).strip().replace(" ", "").replace("\xa0", "").replace(",", ".").lstrip("+")
+    if not s or s == "-":
+        return 0.0
     try:
         return float(s)
     except Exception:
@@ -48,7 +52,7 @@ def import_bleap_csv(file_obj, column_mapping: dict = None) -> pd.DataFrame:
 
         records = []
 
-        for _, row in raw_df.iterrows():
+        for idx_line, row in raw_df.iterrows():
             # Utilisation du mapping fourni ou détection directe des colonnes BLEAP natives
             date_col = column_mapping.get("Date de la transaction", "Created At") if column_mapping else "Created At"
             type_col = column_mapping.get("Type de transaction", "Type") if column_mapping else "Type"
@@ -59,7 +63,8 @@ def import_bleap_csv(file_obj, column_mapping: dict = None) -> pd.DataFrame:
 
             dt_val = str(row.get(date_col, "")).strip() if date_col in raw_df.columns and pd.notna(row.get(date_col)) else datetime.now().strftime("%d-%m-%Y %H:%M:%S")
             tx_type = str(row.get(type_col, "Mouvement")).strip() if type_col in raw_df.columns and pd.notna(row.get(type_col)) else "Mouvement"
-            raw_amt = _clean_numeric(row.get(amt_col, 0.0)) if amt_col in raw_df.columns else 0.0
+            raw_amt_val = row.get(amt_col, 0.0) if amt_col in raw_df.columns else 0.0
+            raw_amt = _clean_numeric(raw_amt_val)
             curr_raw = str(row.get(curr_col, "EUR")).strip().upper() if curr_col in raw_df.columns and pd.notna(row.get(curr_col)) else "EUR"
             notes_val = str(row.get(notes_col, "")).strip() if notes_col in raw_df.columns and pd.notna(row.get(notes_col)) else ""
             status_val = str(row.get(status_col, "COMPLETED")).strip() if status_col in raw_df.columns and pd.notna(row.get(status_col)) else "COMPLETED"
