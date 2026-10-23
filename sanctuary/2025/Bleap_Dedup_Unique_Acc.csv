@@ -1,0 +1,50 @@
+﻿Date de la transaction,Type de transaction,ID du projet,Nom du projet,APR %,Montant d'origine,Devise d'origine,Montant du relevé,Devise du relevé,Paire FX,Taux de change appliqué,Date du taux de change appliqué,Source du taux de change,Statut de la transaction,Réseau,Hash de la transaction blockchain,Notes,Nom et numéro [Banque fiat ou compte] d'origine,Nom et numéro [Banque fiat ou compte] de destination
+2025-12-29 12:58:15,Earn Deposit,BLEAP_EARN,Bleap Earn Vault,0.0,-4472.0,USDC,-3800.8,EUR,USDC/EUR,0.84991,2025-12-29,DefiLlama / BCE,Sanctuarisé,BLEAP,,Earn Deposit,Bleap Wallet,Bleap Earn Vault
+2025-12-29 12:57:21,Earn Withdrawal,BLEAP_EARN,Bleap Earn Vault,0.0,4471.0,USD,3799.95,EUR,USD/EUR,0.84991,2025-12-29,BCE (ECB),Sanctuarisé,BLEAP,,Earn Withdrawal,Bleap Earn Vault,Bleap Wallet
+2025-12-29 10:41:18,Withdrawal,BLEAP_WALLET,Bleap Wallet,0.0,-6000.0,USDC,-5099.46,EUR,USDC/EUR,0.84991,2025-12-29,DefiLlama / BCE,Sanctuarisé,BLEAP,,Wallet Withdrawal,Bleap Wallet,Compte Externe
+2025-12-29 10:39:21,Earn Withdrawal,BLEAP_EARN,Bleap Earn Vault,0.0,6000.0,USD,5099.46,EUR,USD/EUR,0.84991,2025-12-29,BCE (ECB),Sanctuarisé,BLEAP,,Earn Withdrawal,Bleap Earn Vault,Bleap Wallet
+2025-12-29 05:24:49,Deposit,BLEAP_WALLET,Bleap Wallet,0.0,1.0,USDC,0.85,EUR,USDC/EUR,0.84991,2025-12-29,DefiLlama / BCE,Sanctuarisé,BLEAP,,Wallet Deposit,Compte Externe,Bleap Wallet
+2025-11-28 06:12:11,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,301.09,USDC,260.32,EUR,USDC/EUR,0.8646,2025-11-28,DefiLlama / BCE,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
+2025-11-27 13:09:27,Withdrawal,BLEAP_WALLET,Bleap Wallet,0.0,-120.0,USDC,-103.57,EUR,USDC/EUR,0.86311,2025-11-27,DefiLlama / BCE,Sanctuarisé,BLEAP,,Wallet Withdrawal,Bleap Wallet,Compte Externe
+2025-11-27 13:04:07,Earn Withdrawal,BLEAP_EARN,Bleap Earn Vault,0.0,120.0,USD,103.57,EUR,USD/EUR,0.86311,2025-11-27,BCE (ECB),Sanctuarisé,BLEAP,,Earn Withdrawal,Bleap Earn Vault,Bleap Wallet
+2025-11-12 11:37:03,Earn Deposit,BLEAP_EARN,Bleap Earn Vault,0.0,-1731.11,USDC,-1495.44,EUR,USDC/EUR,0.86386,2025-11-12,DefiLlama / BCE,Sanctuarisé,BLEAP,,Earn Deposit,Bleap Wallet,Bleap Earn Vault
+2025-11-12 11:35:38,Exchange,BLEAP_WALLET,Bleap Wallet,0.0,1730.32,USDC,1494.75,EUR,USDC/EUR,0.86386,2025-11-12,DefiLlama / BCE,Sanctuarisé,BLEAP,,Exchange EUR -> USD,Bleap Wallet,Bleap Wallet
+2025-11-12 11:32:16,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,1500.0,EURA,1500.0,EUR,EURA/EUR,1.0,2025-11-12,Parité EUR 1:1,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
+2025-11-05 20:48:08,Earn Deposit,BLEAP_EARN,Bleap Earn Vault,0.0,-1143.0,USDC,-994.6,EUR,USDC/EUR,0.87017,2025-11-05,DefiLlama / BCE,Sanctuarisé,BLEAP,,Earn Deposit,Bleap Wallet,Bleap Earn Vault
+2025-11-05 20:46:45,Exchange,BLEAP_WALLET,Bleap Wallet,0.0,1142.76,USDC,994.4,EUR,USDC/EUR,0.87017,2025-11-05,DefiLlama / BCE,Sanctuarisé,BLEAP,,Exchange EUR -> USD,Bleap Wallet,Bleap Wallet
+2025-11-05 20:43:53,Earn Withdrawal,BLEAP_EARN,Bleap Earn Vault,0.0,998.0,EUR,998.0,EUR,EUR/EUR,1.0,2025-11-05,Parité EUR 1:1,Sanctuarisé,BLEAP,,Earn Withdrawal,Bleap Earn Vault,Bleap Wallet
+2025-11-05 17:32:04,Earn Withdrawal,BLEAP_EARN,Bleap Earn Vault,0.0,1.0,EUR,1.0,EUR,EUR/EUR,1.0,2025-11-05,Parité EUR 1:1,Sanctuarisé,BLEAP,,Earn Withdrawal,Bleap Earn Vault,Bleap Wallet
+2025-11-04 18:48:12,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,606.84,USDC,528.1,EUR,USDC/EUR,0.87025,2025-11-04,DefiLlama / BCE,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
+2025-11-04 18:42:09,Earn Deposit,BLEAP_EARN,Bleap Earn Vault,0.0,-1000.0,EURA,-1000.0,EUR,EURA/EUR,1.0,2025-11-04,Parité EUR 1:1,Sanctuarisé,BLEAP,,Earn Deposit,Bleap Wallet,Bleap Earn Vault
+2025-11-04 18:27:38,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,1000.0,EURA,1000.0,EUR,EURA/EUR,1.0,2025-11-04,Parité EUR 1:1,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
+2025-11-03 20:22:22,Off-Ramp,BLEAP_WALLET,Bleap Wallet,0.0,-1.15,USDC,-1.0,EUR,USDC/EUR,0.86851,2025-11-03,DefiLlama / BCE,Sanctuarisé,BLEAP,,Bank Transfer (Sell),Bleap Wallet,Banque Fiat (Off-Ramp)
+2025-09-15 12:06:44,Withdrawal,BLEAP_WALLET,Bleap Wallet,0.0,-0.0004421,ETH,-1.7,EUR,ETH/EUR,3847.831539,2025-09-15,DefiLlama / BCE,Sanctuarisé,BLEAP,,Wallet Withdrawal,Bleap Wallet,Compte Externe
+2025-09-15 12:04:42,Trade,BLEAP_WALLET,Bleap Wallet,0.0,0.00044225,ETH,1.7,EUR,ETH/EUR,3848.910925,2025-09-15,DefiLlama / BCE,Sanctuarisé,BLEAP,,Trade USD -> ETH,Bleap Wallet,Bleap Wallet
+2025-09-15 11:57:18,Withdrawal,BLEAP_WALLET,Bleap Wallet,0.0,-1.0,USDC,-0.85,EUR,USDC/EUR,0.84991,2025-09-15,DefiLlama / BCE,Sanctuarisé,BLEAP,,Wallet Withdrawal,Bleap Wallet,Compte Externe
+2025-09-15 11:37:54,Earn Withdrawal,BLEAP_EARN,Bleap Earn Vault,0.0,1.0,USD,0.85,EUR,USD/EUR,0.84991,2025-09-15,BCE (ECB),Sanctuarisé,BLEAP,,Earn Withdrawal,Bleap Earn Vault,Bleap Wallet
+2025-09-15 11:26:51,Deposit,BLEAP_WALLET,Bleap Wallet,0.0,0.99,USDC,0.84,EUR,USDC/EUR,0.84991,2025-09-15,DefiLlama / BCE,Sanctuarisé,BLEAP,,Wallet Deposit,Compte Externe,Bleap Wallet
+2025-09-11 23:23:21,Bridge,BLEAP_WALLET,Bleap Wallet,0.0,1.05,USDC,0.9,EUR,USDC/EUR,0.8558,2025-09-11,DefiLlama / BCE,Sanctuarisé,BLEAP,,Bridge Transfer,Bleap Wallet,Bleap Wallet
+2025-09-11 15:47:33,Bridge,BLEAP_WALLET,Bleap Wallet,0.0,0.0,USDC,0.0,EUR,EUR/EUR,1.0,2025-09-11,N/A,Sanctuarisé,BLEAP,,Bridge Transfer,Bleap Wallet,Bleap Wallet
+2025-09-11 15:24:25,Bridge,BLEAP_WALLET,Bleap Wallet,0.0,0.0,USDC,0.0,EUR,EUR/EUR,1.0,2025-09-11,N/A,Sanctuarisé,BLEAP,,Bridge Transfer,Bleap Wallet,Bleap Wallet
+2025-09-11 15:23:15,Bridge,BLEAP_WALLET,Bleap Wallet,0.0,0.0,USDC,0.0,EUR,EUR/EUR,1.0,2025-09-11,N/A,Sanctuarisé,BLEAP,,Bridge Transfer,Bleap Wallet,Bleap Wallet
+2025-09-11 15:09:55,Bridge,BLEAP_WALLET,Bleap Wallet,0.0,0.0,USDC,0.0,EUR,EUR/EUR,1.0,2025-09-11,N/A,Sanctuarisé,BLEAP,,Bridge Transfer,Bleap Wallet,Bleap Wallet
+2025-09-11 14:55:37,Bridge,BLEAP_WALLET,Bleap Wallet,0.0,0.0,USDC,0.0,EUR,EUR/EUR,1.0,2025-09-11,N/A,Sanctuarisé,BLEAP,,Bridge Transfer,Bleap Wallet,Bleap Wallet
+2025-09-10 04:04:47,Bridge,BLEAP_WALLET,Bleap Wallet,0.0,0.0,USDC,0.0,EUR,EUR/EUR,1.0,2025-09-10,N/A,Sanctuarisé,BLEAP,,Bridge Transfer,Bleap Wallet,Bleap Wallet
+2025-09-05 16:08:57,Earn Withdrawal,BLEAP_EARN,Bleap Earn Vault,0.0,1.0,USD,0.85,EUR,USD/EUR,0.85492,2025-09-05,BCE (ECB),Sanctuarisé,BLEAP,,Earn Withdrawal,Bleap Earn Vault,Bleap Wallet
+2025-09-05 14:20:05,Earn Deposit,BLEAP_EARN,Bleap Earn Vault,0.0,-7002.0,USDC,-5986.15,EUR,USDC/EUR,0.85492,2025-09-05,DefiLlama / BCE,Sanctuarisé,BLEAP,,Earn Deposit,Bleap Wallet,Bleap Earn Vault
+2025-09-05 14:17:44,Exchange,BLEAP_WALLET,Bleap Wallet,0.0,7002.99,USDC,5987.0,EUR,USDC/EUR,0.85492,2025-09-05,DefiLlama / BCE,Sanctuarisé,BLEAP,,Exchange EUR -> USD,Bleap Wallet,Bleap Wallet
+2025-09-05 14:16:39,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,6000.0,EURA,6000.0,EUR,EURA/EUR,1.0,2025-09-05,Parité EUR 1:1,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
+2025-09-05 12:00:36,Earn Deposit,BLEAP_EARN,Bleap Earn Vault,0.0,-490.47,USDC,-419.31,EUR,USDC/EUR,0.85492,2025-09-05,DefiLlama / BCE,Sanctuarisé,BLEAP,,Earn Deposit,Bleap Wallet,Bleap Earn Vault
+2025-09-05 11:58:47,Exchange,BLEAP_WALLET,Bleap Wallet,0.0,489.99,USDC,418.9,EUR,USDC/EUR,0.85492,2025-09-05,DefiLlama / BCE,Sanctuarisé,BLEAP,,Exchange EUR -> USD,Bleap Wallet,Bleap Wallet
+2025-09-05 11:35:19,Earn Deposit,BLEAP_EARN,Bleap Earn Vault,0.0,-100.0,USDC,-85.49,EUR,USDC/EUR,0.85492,2025-09-05,DefiLlama / BCE,Sanctuarisé,BLEAP,,Earn Deposit,Bleap Wallet,Bleap Earn Vault
+2025-09-05 11:34:05,Exchange,BLEAP_WALLET,Bleap Wallet,0.0,99.99,USDC,85.48,EUR,USDC/EUR,0.85492,2025-09-05,DefiLlama / BCE,Sanctuarisé,BLEAP,,Exchange EUR -> USD,Bleap Wallet,Bleap Wallet
+2025-09-05 11:33:12,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,510.0,EURA,510.0,EUR,EURA/EUR,1.0,2025-09-05,Parité EUR 1:1,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
+2025-09-03 18:54:43,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,578.54,USDC,496.47,EUR,USDC/EUR,0.85815,2025-09-03,DefiLlama / BCE,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
+2025-09-03 18:47:48,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,3.49,USDC,2.99,EUR,USDC/EUR,0.85815,2025-09-03,DefiLlama / BCE,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
+2025-09-02 21:32:32,Off-Ramp,BLEAP_WALLET,Bleap Wallet,0.0,-4.0,EUR,-4.0,EUR,EUR/EUR,1.0,2025-09-02,Parité EUR 1:1,Sanctuarisé,BLEAP,,Bank Transfer (Sell),Bleap Wallet,Banque Fiat (Off-Ramp)
+2025-09-02 20:55:14,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,3.47,USDC,2.98,EUR,USDC/EUR,0.85866,2025-09-02,DefiLlama / BCE,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
+2025-09-02 17:44:57,Exchange,BLEAP_WALLET,Bleap Wallet,0.0,1.71,EURA,1.71,EUR,EURA/EUR,1.0,2025-09-02,Parité EUR 1:1,Sanctuarisé,BLEAP,,Exchange USD -> EUR,Bleap Wallet,Bleap Wallet
+2025-09-02 17:08:06,Withdrawal,BLEAP_WALLET,Bleap Wallet,0.0,-1.0,USDC,-0.86,EUR,USDC/EUR,0.85866,2025-09-02,DefiLlama / BCE,Sanctuarisé,BLEAP,,Wallet Withdrawal,Bleap Wallet,Compte Externe
+2025-09-02 16:53:56,Exchange,BLEAP_WALLET,Bleap Wallet,0.0,3.49,USDC,3.0,EUR,USDC/EUR,0.85866,2025-09-02,DefiLlama / BCE,Sanctuarisé,BLEAP,,Exchange EUR -> USD,Bleap Wallet,Bleap Wallet
+2025-09-02 16:52:50,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,5.0,EURA,5.0,EUR,EURA/EUR,1.0,2025-09-02,Parité EUR 1:1,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
+2025-09-02 15:49:43,Top Up,BLEAP_WALLET,Bleap Wallet,0.0,1.0,EURA,1.0,EUR,EURA/EUR,1.0,2025-09-02,Parité EUR 1:1,Sanctuarisé,BLEAP,,Bank Transfer (Buy),Banque Fiat (Top Up),Bleap Wallet
