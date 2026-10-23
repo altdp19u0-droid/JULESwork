@@ -9,12 +9,13 @@ from pathlib import Path
 # Desactivation des bytecodes .pyc
 sys.dont_write_bytecode = True
 
-# Résolution des chemins de packages
+# Résolution unifiée des chemins de packages
 APP_DIR = Path(__file__).resolve().parent
 ROOT_DIR = APP_DIR.parent
+MOD_DIR = APP_DIR / "modules"
 
-# Ajout dynamique de ROOT_DIR et APP_DIR à sys.path sans collision
-for path_obj in [ROOT_DIR, APP_DIR]:
+# Insertion ordonnée dans sys.path (ROOT_DIR, APP_DIR, MOD_DIR)
+for path_obj in [MOD_DIR, APP_DIR, ROOT_DIR]:
     p_str = str(path_obj)
     if p_str in sys.path:
         sys.path.remove(p_str)
@@ -24,49 +25,27 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 
-# Imports de modules unifiés
-try:
-    from sanctuary_app.modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, smart_parse_dates
-    from sanctuary_app.modules.sanctuary_manager import (
-        save_to_sanctuary,
-        load_sanctuary_account,
-        load_all_sanctuary_for_year,
-        load_all_sanctuary_all_years,
-        load_account_all_years,
-        list_sanctuary_years,
-        list_accounts_for_year,
-        list_all_accounts_all_years
-    )
-    from sanctuary_app.modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
-    from sanctuary_app.modules.csv_importer import (
-        map_csv_to_sanctuary,
-        detect_csv_source,
-        save_custom_csv_signature,
-        get_effective_column_mapping,
-        save_platform_column_mapping
-    )
-    from sanctuary_app.modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
-except ImportError:
-    from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, smart_parse_dates
-    from modules.sanctuary_manager import (
-        save_to_sanctuary,
-        load_sanctuary_account,
-        load_all_sanctuary_for_year,
-        load_all_sanctuary_all_years,
-        load_account_all_years,
-        list_sanctuary_years,
-        list_accounts_for_year,
-        list_all_accounts_all_years
-    )
-    from modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
-    from modules.csv_importer import (
-        map_csv_to_sanctuary,
-        detect_csv_source,
-        save_custom_csv_signature,
-        get_effective_column_mapping,
-        save_platform_column_mapping
-    )
-    from modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
+# Imports de modules applicatifs
+from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, smart_parse_dates
+from modules.sanctuary_manager import (
+    save_to_sanctuary,
+    load_sanctuary_account,
+    load_all_sanctuary_for_year,
+    load_all_sanctuary_all_years,
+    load_account_all_years,
+    list_sanctuary_years,
+    list_accounts_for_year,
+    list_all_accounts_all_years
+)
+from modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
+from modules.csv_importer import (
+    map_csv_to_sanctuary,
+    detect_csv_source,
+    save_custom_csv_signature,
+    get_effective_column_mapping,
+    save_platform_column_mapping
+)
+from modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
 
 # Streamlit Page Config
 st.set_page_config(page_title="Sanctuary App", layout="wide", page_icon="🛡️")
