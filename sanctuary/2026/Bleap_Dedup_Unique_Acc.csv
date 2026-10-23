@@ -1,0 +1,4 @@
+﻿Date de la transaction,Type de transaction,ID du projet,Nom du projet,APR %,Montant d'origine,Devise d'origine,Montant du relevé,Devise du relevé,Paire FX,Taux de change appliqué,Date du taux de change appliqué,Source du taux de change,Statut de la transaction,Réseau,Hash de la transaction blockchain,Notes,Nom et numéro [Banque fiat ou compte] d'origine,Nom et numéro [Banque fiat ou compte] de destination
+2026-04-10 00:10:43,Exchange,BLEAP_WALLET,Bleap Wallet,0.0,0.21,EURE,0.21,EUR,EURE/EUR,1.0,2026-04-10,Parité EUR 1:1,Sanctuarisé,BLEAP,,Exchange EUR -> EUR,Bleap Wallet,Bleap Wallet
+2026-04-10 00:09:55,Earn Withdrawal,BLEAP_EARN,Bleap Earn Vault,0.0,0.21,EUR,0.21,EUR,EUR/EUR,1.0,2026-04-10,Parité EUR 1:1,Sanctuarisé,BLEAP,,Earn Withdrawal,Bleap Earn Vault,Bleap Wallet
+2026-03-03 23:06:34,Exchange,BLEAP_WALLET,Bleap Wallet,0.0,1.0,EUR,1.0,EUR,EUR/EUR,1.0,2026-03-03,Parité EUR 1:1,Sanctuarisé,BLEAP,,Exchange EUR -> EUR,Bleap Wallet,Bleap Wallet

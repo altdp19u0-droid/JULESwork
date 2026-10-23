@@ -70,12 +70,21 @@ def _save_single_year(df_clean: pd.DataFrame, year: int, account_label: str) -> 
     combined["_year_val"] = smart_parse_dates(combined["Date de la transaction"]).dt.year
     combined = combined[combined["_year_val"] == int(year)].drop(columns=["_year_val"])
 
+    # Remplacement des anciennes lignes à zéro par la nouvelle version renseignée si même (Date, Type, Devise, Notes)
+    combined["_dt_parsed"] = smart_parse_dates(combined["Date de la transaction"])
+    combined["_amt_orig_clean"] = pd.to_numeric(combined["Montant d'origine"], errors="coerce").fillna(0.0)
+
+    # Si présence de lignes identiques avec montant=0 et montant!=0, conserver en priorité la ligne avec montant!=0
+    combined["_has_nonzero"] = combined.groupby(["_dt_parsed", "Type de transaction", "Devise d'origine", "Notes"])["_amt_orig_clean"].transform(lambda x: (x.abs() > 0).any())
+    mask_to_drop = combined["_has_nonzero"] & (combined["_amt_orig_clean"].abs() == 0.0)
+    combined = combined[~mask_to_drop].drop(columns=["_amt_orig_clean", "_has_nonzero"])
+
     # Clefs de dédoublonnage robustes incluant l'ensemble des 19 colonnes de données métier
     dedup_cols = [c for c in REQUIRED_COLUMNS if c not in ["Statut de la transaction"]]
     deduped = combined.drop_duplicates(subset=dedup_cols, keep="last")
 
-    # Tri chronologique décroissant
-    deduped = deduped.sort_values("Date de la transaction", ascending=False)
+    # Tri chronologique décroissant sécurisé sur type datetime
+    deduped = deduped.sort_values("_dt_parsed", ascending=False).drop(columns=["_dt_parsed"])
 
     # Ré-application stricte du schéma des 19 colonnes
     deduped = enforce_sanctuary_schema(deduped)

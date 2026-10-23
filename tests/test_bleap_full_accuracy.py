@@ -81,7 +81,7 @@ class TestBleapFullAccuracy(unittest.TestCase):
         file_obj = io.StringIO(RAW_USER_CSV.strip())
         df_imported = import_bleap_csv(file_obj)
 
-        paths = save_to_sanctuary(df_imported, 2025, "Bleap_Test_Acc", auto_dispatch_year=True)
+        paths = save_to_sanctuary(df_imported, 2025, "Bleap_Dedup_Unique_Acc", auto_dispatch_year=True)
         self.assertTrue(len(paths) >= 1)
 
         total_saved_rows = 0
