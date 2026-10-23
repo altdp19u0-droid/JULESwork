@@ -124,7 +124,21 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
 # --- MENU 2 : IMPORT CSV EXTERNE ---
 elif menu == "📥 Import CSV Externe":
     st.header("📥 Importation et Mapping de Fichier CSV Externe")
-    st.info("Importez un fichier CSV (Banque, Exchange, Wallet) et associez ses colonnes au schéma standard des 19 colonnes.")
+    st.info("Importez un fichier CSV avec un importateur dédié par source (BLEAP, NEVERLESS, 8LENDS, GENERIC) vers le schéma 19 colonnes.")
+
+    ic1, ic2, ic3 = st.columns(3)
+    net_options = [
+        "BLEAP", "NEVERLESS", "8LENDS", "KRAKEN", "BANQUE", "FIAT",
+        "ETHEREUM", "BASE", "ARBITRUM", "EXCHANGE", "LENDING", "AUTRE"
+    ]
+    default_net = ic1.selectbox("Réseau / Source de la plateforme", net_options, index=0)
+    if default_net == "AUTRE":
+        custom_net = st.text_input("Spécifier le nom du Réseau / Source", value="CUSTOM_SOURCE")
+        if custom_net.strip():
+            default_net = custom_net.strip().upper()
+
+    imp_year = ic2.selectbox("Année Fiscale Cible", options=[2026, 2025, 2024, 2023, 2022], index=1)
+    imp_account = ic3.text_input("Nom du Compte Cible", value=f"{default_net}_Import_CSV")
 
     uploaded_file = st.file_uploader("Choisissez un fichier CSV", type=["csv"])
 
@@ -139,8 +153,8 @@ elif menu == "📥 Import CSV Externe":
             uploaded_file.seek(0)
             csv_cols = list(sample_df.columns)
 
-            st.subheader("🔗 Assistant de Mapping des Colonnes")
-            st.write("Associez chaque colonne requise à la colonne correspondante de votre fichier CSV :")
+            st.subheader(f"🔗 Assistant de Mapping & Importateur Dédié : **{default_net}**")
+            st.write("Associez si besoin les colonnes requises à la colonne correspondante de votre fichier CSV :")
 
             # Dictionnaire d'alias pour la pré-sélection intelligente des colonnes CSV
             COLUMN_ALIASES = {
@@ -194,20 +208,6 @@ elif menu == "📥 Import CSV Externe":
             active_mapping = {k: v for k, v in col_mapping.items() if v != "-- Ignorer --"}
 
             st.divider()
-            ic1, ic2, ic3 = st.columns(3)
-            net_options = [
-                "8LENDS", "KRAKEN", "BLEAP", "NEVERLESS", "BANQUE", "FIAT",
-                "ETHEREUM", "BASE", "ARBITRUM", "EXCHANGE", "LENDING", "AUTRE"
-            ]
-            default_net = ic1.selectbox("Réseau / Source", net_options, index=0)
-            if default_net == "AUTRE":
-                custom_net = st.text_input("Spécifier le nom du Réseau / Source", value="CUSTOM_SOURCE")
-                if custom_net.strip():
-                    default_net = custom_net.strip().upper()
-
-            imp_year = ic2.selectbox("Année Fiscale Cible", options=[2026, 2025, 2024, 2023, 2022], index=1)
-            imp_account = ic3.text_input("Nom du Compte Cible", value=f"{default_net}_Import_CSV")
-
             filter_imp_year = st.checkbox(f"Ne sanctuariser que les transactions de l'Année Cible ({imp_year})", value=True)
 
             if st.button("💾 Valider et Sanctuariser l'Importation"):
