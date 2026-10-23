@@ -70,9 +70,22 @@ def _save_single_year(df_clean: pd.DataFrame, year: int, account_label: str) -> 
     combined["_year_val"] = smart_parse_dates(combined["Date de la transaction"]).dt.year
     combined = combined[combined["_year_val"] == int(year)].drop(columns=["_year_val"])
 
+    import re
+    def _clean_str_amt(v):
+        if pd.isna(v) or v is None:
+            return 0.0
+        s = re.sub(r"[\s\xa0\u202f\u200b]+", "", str(v)).replace(",", ".")
+        if s.startswith("+"):
+            s = s[1:]
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
+
     # Remplacement des anciennes lignes à zéro par la nouvelle version renseignée si même (Date, Type, Devise, Notes)
     combined["_dt_parsed"] = smart_parse_dates(combined["Date de la transaction"])
-    combined["_amt_orig_clean"] = pd.to_numeric(combined["Montant d'origine"], errors="coerce").fillna(0.0)
+    combined["_amt_orig_clean"] = combined["Montant d'origine"].apply(_clean_str_amt)
+    combined["Montant d'origine"] = combined["_amt_orig_clean"]
 
     # Si présence de lignes identiques avec montant=0 et montant!=0, conserver en priorité la ligne avec montant!=0
     combined["_has_nonzero"] = combined.groupby(["_dt_parsed", "Type de transaction", "Devise d'origine", "Notes"])["_amt_orig_clean"].transform(lambda x: (x.abs() > 0).any())

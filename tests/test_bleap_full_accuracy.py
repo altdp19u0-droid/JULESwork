@@ -78,6 +78,13 @@ class TestBleapFullAccuracy(unittest.TestCase):
         self.assertEqual(topup_6000["Montant d'origine"].values[0], 6000.0)
 
     def test_bleap_sanctuary_deduplication_preserves_all_rows(self):
+        import os
+        from pathlib import Path
+        for y in [2025, 2026]:
+            p = Path(f"sanctuary/{y}/Bleap_Dedup_Unique_Acc.csv")
+            if p.exists():
+                os.remove(p)
+
         file_obj = io.StringIO(RAW_USER_CSV.strip())
         df_imported = import_bleap_csv(file_obj)
 

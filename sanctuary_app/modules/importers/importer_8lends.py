@@ -13,10 +13,17 @@ except ImportError:
     except ImportError:
         from modules.schema import enforce_sanctuary_schema, create_empty_sanctuary_df
 
+import re
+
 def _clean_numeric(val) -> float:
-    if pd.isna(val) or val is None or str(val).strip() == "":
+    if pd.isna(val) or val is None:
         return 0.0
-    s = str(val).strip().replace(" ", "").replace(",", ".")
+    s = str(val).strip()
+    s = re.sub(r"[\s\xa0\u202f\u200b]+", "", s).replace(",", ".")
+    if s.startswith("+"):
+        s = s[1:]
+    if not s or s == "-":
+        return 0.0
     try:
         return float(s)
     except Exception:
