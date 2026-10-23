@@ -74,11 +74,44 @@ def import_bleap_csv(file_obj, column_mapping: dict = None) -> pd.DataFrame:
                 rate_applied = round(rate, 6)
                 src_rate = r_src
 
+            tx_type_lower = tx_type.lower()
+            notes_lower = notes_val.lower()
+
+            is_earn = "earn" in tx_type_lower or "earn" in notes_lower
+
+            if is_earn:
+                proj_id = "BLEAP_EARN"
+                proj_name = "Bleap Earn Vault"
+                if "deposit" in tx_type_lower or raw_amt < 0:
+                    src_acc = "Bleap Wallet"
+                    dst_acc = "Bleap Earn Vault"
+                else:
+                    src_acc = "Bleap Earn Vault"
+                    dst_acc = "Bleap Wallet"
+            else:
+                proj_id = "BLEAP_WALLET"
+                proj_name = "Bleap Wallet"
+                if "top up" in tx_type_lower or "topup" in tx_type_lower:
+                    src_acc = "Banque Fiat (Top Up)"
+                    dst_acc = "Bleap Wallet"
+                elif "off-ramp" in tx_type_lower or "offramp" in tx_type_lower:
+                    src_acc = "Bleap Wallet"
+                    dst_acc = "Banque Fiat (Off-Ramp)"
+                elif "deposit" in tx_type_lower or "in" in tx_type_lower:
+                    src_acc = "Compte Externe"
+                    dst_acc = "Bleap Wallet"
+                elif "withdrawal" in tx_type_lower or "out" in tx_type_lower:
+                    src_acc = "Bleap Wallet"
+                    dst_acc = "Compte Externe"
+                else:
+                    src_acc = "Bleap Wallet"
+                    dst_acc = "Bleap Wallet"
+
             record = {
                 "Date de la transaction": dt_val,
                 "Type de transaction": tx_type,
-                "ID du projet": "BLEAP_VAULT",
-                "Nom du projet": "Bleap App",
+                "ID du projet": proj_id,
+                "Nom du projet": proj_name,
                 "APR %": 0.0,
                 "Montant d'origine": raw_amt, # Conservation du signe original pour la traçabilité
                 "Devise d'origine": curr_raw,
@@ -92,8 +125,8 @@ def import_bleap_csv(file_obj, column_mapping: dict = None) -> pd.DataFrame:
                 "Réseau": "BLEAP",
                 "Hash de la transaction blockchain": "",
                 "Notes": notes_val,
-                "Nom et numéro [Banque fiat ou compte] d'origine": "Bleap Wallet",
-                "Nom et numéro [Banque fiat ou compte] de destination": "Bleap Earn / Destination"
+                "Nom et numéro [Banque fiat ou compte] d'origine": src_acc,
+                "Nom et numéro [Banque fiat ou compte] de destination": dst_acc
             }
             records.append(record)
 

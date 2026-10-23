@@ -362,13 +362,28 @@ def calculate_token_balances(df: pd.DataFrame) -> pd.DataFrame:
         if token in ["USD", "USDC", "USDT"]:
             token = "USDC" if token in ["USD", "USDC"] else token
 
-        # Si l'opération Earn est un transfert interne vers/depuis le coffre Earn de la même plateforme
+        # Traitement spécifique Bleap : Séparation explicite Bleap Wallet vs Bleap Earn Vault
+        is_bleap = "bleap" in acc_lower or "bleap" in proj
+        if is_bleap and is_earn_vault and not is_interest:
+            wallet_acc = "Bleap Wallet"
+            earn_acc = "Bleap Earn Vault"
+            amt_val = abs(raw_amt) if (amt_orig == 0 and amt_stmt == 0) else (amt_orig if amt_orig > 0 else amt_stmt)
+
+            if "deposit" in tx_type or raw_amt < 0:
+                # Earn Deposit : Sortie de Bleap Wallet -> Entrée sur Bleap Earn Vault
+                movements.append({"Portefeuille": wallet_acc, "Token": token, "Entree": 0.0, "Sortie": amt_val})
+                movements.append({"Portefeuille": earn_acc, "Token": token, "Entree": amt_val, "Sortie": 0.0})
+            else:
+                # Earn Withdrawal : Sortie de Bleap Earn Vault -> Entrée sur Bleap Wallet
+                movements.append({"Portefeuille": earn_acc, "Token": token, "Entree": 0.0, "Sortie": amt_val})
+                movements.append({"Portefeuille": wallet_acc, "Token": token, "Entree": amt_val, "Sortie": 0.0})
+            continue
+
+        # Si l'opération Earn est un transfert interne hors-Bleap
         if is_earn_vault and not is_interest:
             if raw_amt < 0:
-                # Dépôt sur le coffre Earn : Sortie du Wallet principal -> Entrée sur le coffre Earn (Neutre globalement sur la plateforme)
                 movements.append({"Portefeuille": acc, "Token": token, "Entree": abs(raw_amt), "Sortie": abs(raw_amt)})
             else:
-                # Retrait du coffre Earn vers Wallet principal : Neutre globalement sur la plateforme
                 movements.append({"Portefeuille": acc, "Token": token, "Entree": abs(raw_amt), "Sortie": abs(raw_amt)})
             continue
 
