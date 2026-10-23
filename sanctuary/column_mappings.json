@@ -1,0 +1,9 @@
+{
+  "MY_EXCHANGE_GRID": {
+    "Date de la transaction": "created_timestamp",
+    "Type de transaction": "operation",
+    "Montant d'origine": "net_amount",
+    "Devise d'origine": "token_name",
+    "Notes": "note_txt"
+  }
+}

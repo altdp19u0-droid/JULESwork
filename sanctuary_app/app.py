@@ -38,7 +38,13 @@ try:
         list_all_accounts_all_years
     )
     from sanctuary_app.modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
-    from sanctuary_app.modules.csv_importer import map_csv_to_sanctuary, detect_csv_source, save_custom_csv_signature
+    from sanctuary_app.modules.csv_importer import (
+        map_csv_to_sanctuary,
+        detect_csv_source,
+        save_custom_csv_signature,
+        get_effective_column_mapping,
+        save_platform_column_mapping
+    )
     from sanctuary_app.modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
 except ImportError:
     from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, smart_parse_dates
@@ -53,7 +59,13 @@ except ImportError:
         list_all_accounts_all_years
     )
     from modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
-    from modules.csv_importer import map_csv_to_sanctuary, detect_csv_source, save_custom_csv_signature
+    from modules.csv_importer import (
+        map_csv_to_sanctuary,
+        detect_csv_source,
+        save_custom_csv_signature,
+        get_effective_column_mapping,
+        save_platform_column_mapping
+    )
     from modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
 
 # Streamlit Page Config
@@ -205,29 +217,37 @@ elif menu == "📥 Import CSV Externe":
                 "Nom et numéro [Banque fiat ou compte] de destination": ["destination address", "to", "target address", "account to", "adresse destination"]
             }
 
+            # Chargement de la grille de mapping mémorisée / par défaut pour cette plateforme
+            learned_mapping = get_effective_column_mapping(default_net, csv_cols)
+            if learned_mapping:
+                st.info(f"💡 **Grille de récolte Mémorisée pour `{default_net}`** appliquée automatiquement ({len(learned_mapping)} champs associés) !")
+
             col_mapping = {}
             m1, m2 = st.columns(2)
 
             for idx, req_col in enumerate(REQUIRED_COLUMNS):
                 col_target = m1 if idx % 2 == 0 else m2
 
-                # Recherche de correspondance directe ou par alias
-                default_match = None
-                if req_col in csv_cols:
-                    default_match = req_col
-                else:
-                    aliases = COLUMN_ALIASES.get(req_col, [])
-                    for c in csv_cols:
-                        c_clean = str(c).strip().lower()
-                        if c_clean in aliases or any(alias == c_clean for alias in aliases):
-                            default_match = c
-                            break
+                # 1. Vérification si un mapping mémorisé existe pour ce champ
+                default_match = learned_mapping.get(req_col)
+
+                # 2. Sinon, recherche par alias
+                if not default_match:
+                    if req_col in csv_cols:
+                        default_match = req_col
+                    else:
+                        aliases = COLUMN_ALIASES.get(req_col, [])
+                        for c in csv_cols:
+                            c_clean = str(c).strip().lower()
+                            if c_clean in aliases or any(alias == c_clean for alias in aliases):
+                                default_match = c
+                                break
 
                 col_mapping[req_col] = col_target.selectbox(
                     f"Champ Sanctuary : **{req_col}**",
                     options=["-- Ignorer --"] + csv_cols,
-                    index=csv_cols.index(default_match) + 1 if default_match in csv_cols else 0,
-                    key=f"map_{req_col}"
+                    index=csv_cols.index(default_match) + 1 if default_match and default_match in csv_cols else 0,
+                    key=f"map_{default_net}_{req_col}"
                 )
 
             # Nettoyage des ignorés
@@ -236,9 +256,11 @@ elif menu == "📥 Import CSV Externe":
             st.divider()
             filter_imp_year = st.checkbox(f"Ne sanctuariser que les transactions de l'Année Cible ({imp_year})", value=True)
 
-            # Mémorisation automatique de l'empreinte pour la prochaine fois
+            # Mémorisation automatique de l'empreinte et de la grille de récolte pour la prochaine fois
             if default_net and csv_cols:
                 save_custom_csv_signature(default_net, csv_cols)
+                if active_mapping:
+                    save_platform_column_mapping(default_net, active_mapping)
 
             if st.button("💾 Valider et Sanctuariser l'Importation"):
                 df_mapped = map_csv_to_sanctuary(uploaded_file, active_mapping, default_network=default_net)
