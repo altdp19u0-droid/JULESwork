@@ -38,7 +38,7 @@ try:
         list_all_accounts_all_years
     )
     from sanctuary_app.modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
-    from sanctuary_app.modules.csv_importer import map_csv_to_sanctuary
+    from sanctuary_app.modules.csv_importer import map_csv_to_sanctuary, detect_csv_source, save_custom_csv_signature
     from sanctuary_app.modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
 except ImportError:
     from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, smart_parse_dates
@@ -53,7 +53,7 @@ except ImportError:
         list_all_accounts_all_years
     )
     from modules.blockscout_collector import fetch_blockscout_data, BLOCKSCOUT_NETWORKS
-    from modules.csv_importer import map_csv_to_sanctuary
+    from modules.csv_importer import map_csv_to_sanctuary, detect_csv_source, save_custom_csv_signature
     from modules.analytics_engine import filter_by_period, totalize_level_a, totalize_level_b
 
 # Streamlit Page Config
@@ -124,21 +124,7 @@ if menu == "🚜 Ingestion Blockchain (Blockscout)":
 # --- MENU 2 : IMPORT CSV EXTERNE ---
 elif menu == "📥 Import CSV Externe":
     st.header("📥 Importation et Mapping de Fichier CSV Externe")
-    st.info("Importez un fichier CSV avec un importateur dédié par source (BLEAP, NEVERLESS, 8LENDS, GENERIC) vers le schéma 19 colonnes.")
-
-    ic1, ic2, ic3 = st.columns(3)
-    net_options = [
-        "BLEAP", "NEVERLESS", "8LENDS", "KRAKEN", "BANQUE", "FIAT",
-        "ETHEREUM", "BASE", "ARBITRUM", "EXCHANGE", "LENDING", "AUTRE"
-    ]
-    default_net = ic1.selectbox("Réseau / Source de la plateforme", net_options, index=0)
-    if default_net == "AUTRE":
-        custom_net = st.text_input("Spécifier le nom du Réseau / Source", value="CUSTOM_SOURCE")
-        if custom_net.strip():
-            default_net = custom_net.strip().upper()
-
-    imp_year = ic2.selectbox("Année Fiscale Cible", options=[2026, 2025, 2024, 2023, 2022], index=1)
-    imp_account = ic3.text_input("Nom du Compte Cible", value=f"{default_net}_Import_CSV")
+    st.info("Importez un fichier CSV (Reconnaissance automatique de la plateforme BLEAP, NEVERLESS, 8LENDS, etc. par signature d'en-tête).")
 
     uploaded_file = st.file_uploader("Choisissez un fichier CSV", type=["csv"])
 
@@ -152,6 +138,29 @@ elif menu == "📥 Import CSV Externe":
 
             uploaded_file.seek(0)
             csv_cols = list(sample_df.columns)
+
+            # Reconnaissance automatique de la source du CSV par signature
+            detected_source = detect_csv_source(csv_cols, filename=uploaded_file.name)
+
+            net_options = [
+                "BLEAP", "NEVERLESS", "8LENDS", "KRAKEN", "BANQUE", "FIAT",
+                "ETHEREUM", "BASE", "ARBITRUM", "EXCHANGE", "LENDING", "AUTRE"
+            ]
+
+            default_index = 0
+            if detected_source and detected_source in net_options:
+                default_index = net_options.index(detected_source)
+                st.success(f"✨ **Plateforme reconnue automatiquement par signature de colonnes : `{detected_source}` !**")
+
+            ic1, ic2, ic3 = st.columns(3)
+            default_net = ic1.selectbox("Réseau / Source de la plateforme", net_options, index=default_index)
+            if default_net == "AUTRE":
+                custom_net = st.text_input("Spécifier le nom du Réseau / Source", value="CUSTOM_SOURCE")
+                if custom_net.strip():
+                    default_net = custom_net.strip().upper()
+
+            imp_year = ic2.selectbox("Année Fiscale Cible", options=[2026, 2025, 2024, 2023, 2022], index=1)
+            imp_account = ic3.text_input("Nom du Compte Cible", value=f"{default_net}_Import_CSV")
 
             st.subheader(f"🔗 Assistant de Mapping & Importateur Dédié : **{default_net}**")
             st.write("Associez si besoin les colonnes requises à la colonne correspondante de votre fichier CSV :")
@@ -209,6 +218,10 @@ elif menu == "📥 Import CSV Externe":
 
             st.divider()
             filter_imp_year = st.checkbox(f"Ne sanctuariser que les transactions de l'Année Cible ({imp_year})", value=True)
+
+            # Mémorisation automatique de l'empreinte pour la prochaine fois
+            if default_net and csv_cols:
+                save_custom_csv_signature(default_net, csv_cols)
 
             if st.button("💾 Valider et Sanctuariser l'Importation"):
                 df_mapped = map_csv_to_sanctuary(uploaded_file, active_mapping, default_network=default_net)

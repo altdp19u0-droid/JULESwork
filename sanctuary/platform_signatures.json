@@ -1,0 +1,11 @@
+{
+  "MY_EXCHANGE": [
+    [
+      "fee_eur",
+      "operation_type",
+      "token_symbol",
+      "tx_date",
+      "volume_crypto"
+    ]
+  ]
+}

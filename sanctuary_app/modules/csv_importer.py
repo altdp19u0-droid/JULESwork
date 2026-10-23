@@ -31,6 +31,77 @@ except ImportError:
         import_generic_csv
     )
 
+import json
+from pathlib import Path
+
+REGISTRY_PATH = Path("sanctuary/platform_signatures.json")
+
+KNOWN_SIGNATURES = {
+    "BLEAP": [["created at", "currency", "fees"], ["created at", "amount", "currency", "status"]],
+    "NEVERLESS": [["amount received", "asset received"], ["amount sent", "asset sent"], ["usd price of asset received"]],
+    "8LENDS": [["8lends"], ["prêt", "emprunteur"], ["investissements 8lends"]]
+}
+
+def load_signature_registry() -> dict:
+    """Charge le registre persistant des empreintes de colonnes par plateforme."""
+    if REGISTRY_PATH.exists():
+        try:
+            with open(REGISTRY_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_custom_csv_signature(platform_name: str, csv_columns: list):
+    """Enregistre l'empreinte des colonnes d'une plateforme pour la reconnaître automatiquement aux imports suivants."""
+    if not platform_name or not csv_columns:
+        return
+    p_name = platform_name.strip().upper()
+    cols_clean = sorted([str(c).strip().lower() for c in csv_columns if str(c).strip()])
+
+    REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    registry = load_signature_registry()
+
+    if p_name not in registry:
+        registry[p_name] = []
+
+    if cols_clean not in registry[p_name]:
+        registry[p_name].append(cols_clean)
+
+    with open(REGISTRY_PATH, "w", encoding="utf-8") as f:
+        json.dump(registry, f, ensure_ascii=False, indent=2)
+
+def detect_csv_source(csv_columns: list, filename: str = "") -> str:
+    """
+    Détecte automatiquement la plateforme d'origine (BLEAP, NEVERLESS, 8LENDS, etc.)
+    en analysant les en-têtes du CSV et le registre d'apprentissage persistant.
+    """
+    if not csv_columns:
+        return None
+
+    cols_lower = set(str(c).strip().lower() for c in csv_columns)
+    fname_lower = filename.lower() if filename else ""
+
+    # 1. Vérification par le nom de fichier
+    for p_name in ["BLEAP", "NEVERLESS", "8LENDS", "KRAKEN"]:
+        if p_name.lower() in fname_lower:
+            return p_name
+
+    # 2. Vérification par le registre appris persistant
+    custom_registry = load_signature_registry()
+    for p_name, sig_list in custom_registry.items():
+        for sig in sig_list:
+            if all(s in cols_lower for s in sig):
+                return p_name
+
+    # 3. Empreintes natives intégrées
+    for p_name, sig_list in KNOWN_SIGNATURES.items():
+        for sig in sig_list:
+            if all(s in cols_lower for s in sig):
+                return p_name
+
+    return None
+
 def map_csv_to_sanctuary(file_obj, column_mapping: dict = None, default_network: str = "FIAT") -> pd.DataFrame:
     """
     Routeur central d'importation CSV.
