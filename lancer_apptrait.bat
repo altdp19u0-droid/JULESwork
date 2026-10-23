@@ -17,6 +17,9 @@ IF NOT EXIST "venv\Scripts\activate.bat" (
 
 call venv\Scripts\activate.bat
 
+echo Configuration des chemins PYTHONPATH...
+set PYTHONPATH=%~dp0;%~dp0sanctuary_app;%PYTHONPATH%
+
 echo Lancement de AppTrait via Streamlit...
 streamlit run sanctuary_app\apptrait.py
 

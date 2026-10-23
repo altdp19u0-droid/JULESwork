@@ -3,21 +3,12 @@ Importateur CSV dédié à la plateforme BLEAP.
 Traite nativement les exports BLEAP (Type, Created At, Amount, Currency, Description, Status)
 et produit un DataFrame conforme au schéma des 19 colonnes Sanctuary.
 """
+import re
 import pandas as pd
 from datetime import datetime
 
-try:
-    from ..schema import enforce_sanctuary_schema, create_empty_sanctuary_df
-    from ..fx_collector import convert_to_eur
-except ImportError:
-    try:
-        from sanctuary_app.modules.schema import enforce_sanctuary_schema, create_empty_sanctuary_df
-        from sanctuary_app.modules.fx_collector import convert_to_eur
-    except ImportError:
-        from modules.schema import enforce_sanctuary_schema, create_empty_sanctuary_df
-        from modules.fx_collector import convert_to_eur
-
-import re
+from ..schema import enforce_sanctuary_schema, create_empty_sanctuary_df
+from ..fx_collector import convert_to_eur
 
 def _clean_numeric(val) -> float:
     if pd.isna(val) or val is None:

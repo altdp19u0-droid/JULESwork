@@ -2,21 +2,12 @@
 Importateur CSV générique / multi-sources.
 Traite arbitrairement tout fichier CSV (Kraken, Banque, Exchange, Wallet) en utilisant l'assistant de mapping.
 """
+import re
 import pandas as pd
 from datetime import datetime
 
-try:
-    from ..schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, create_empty_sanctuary_df
-    from ..fx_collector import convert_to_eur
-except ImportError:
-    try:
-        from sanctuary_app.modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, create_empty_sanctuary_df
-        from sanctuary_app.modules.fx_collector import convert_to_eur
-    except ImportError:
-        from modules.schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, create_empty_sanctuary_df
-        from modules.fx_collector import convert_to_eur
-
-import re
+from ..schema import REQUIRED_COLUMNS, enforce_sanctuary_schema, create_empty_sanctuary_df
+from ..fx_collector import convert_to_eur
 
 def _clean_numeric(val) -> float:
     if pd.isna(val) or val is None:

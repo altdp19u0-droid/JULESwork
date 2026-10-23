@@ -2,18 +2,11 @@
 Importateur CSV dédié aux rapports de prêt / Yield 8LENDS.
 Traite nativement les journaux d'investissements, dépôts, remboursements et retraits 8LENDS.
 """
+import re
 import pandas as pd
 from datetime import datetime
 
-try:
-    from ..schema import enforce_sanctuary_schema, create_empty_sanctuary_df
-except ImportError:
-    try:
-        from sanctuary_app.modules.schema import enforce_sanctuary_schema, create_empty_sanctuary_df
-    except ImportError:
-        from modules.schema import enforce_sanctuary_schema, create_empty_sanctuary_df
-
-import re
+from ..schema import enforce_sanctuary_schema, create_empty_sanctuary_df
 
 def _clean_numeric(val) -> float:
     if pd.isna(val) or val is None:
