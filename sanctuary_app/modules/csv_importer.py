@@ -16,20 +16,24 @@ def _clean_numeric_value(val) -> float:
     except Exception:
         return 0.0
 
-try:
-    from .importers import (
-        import_bleap_csv,
-        import_neverless_csv,
-        import_8lends_csv,
-        import_generic_csv
-    )
-except ImportError:
-    from modules.importers import (
-        import_bleap_csv,
-        import_neverless_csv,
-        import_8lends_csv,
-        import_generic_csv
-    )
+import sys
+from pathlib import Path
+
+# Ensure ROOT_DIR and APP_DIR are in sys.path
+_CURRENT_DIR = Path(__file__).resolve().parent
+_APP_DIR = _CURRENT_DIR.parent
+_ROOT_DIR = _APP_DIR.parent
+
+for _p in [str(_ROOT_DIR), str(_APP_DIR), str(_CURRENT_DIR)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from .importers import (
+    import_bleap_csv,
+    import_neverless_csv,
+    import_8lends_csv,
+    import_generic_csv
+)
 
 import json
 from pathlib import Path

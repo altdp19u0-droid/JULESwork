@@ -79,7 +79,7 @@ def import_bleap_csv(file_obj, column_mapping: dict = None) -> pd.DataFrame:
             eur_pegged = ["EUR", "EURC", "EURA", "EURE"]
 
             if curr_raw in eur_pegged:
-                amt_statement = amt_orig
+                amt_statement = raw_amt
                 rate_applied = 1.0
                 src_rate = "Parité EUR 1:1"
                 fx_pair = f"{curr_raw}/EUR"
@@ -87,7 +87,7 @@ def import_bleap_csv(file_obj, column_mapping: dict = None) -> pd.DataFrame:
                 dt_obj = pd.to_datetime(dt_val, errors="coerce")
                 dt_obj = dt_obj.to_pydatetime() if pd.notna(dt_obj) else datetime.now()
                 val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(amt_orig, curr_raw, dt_obj)
-                amt_statement = round(val_eur, 2)
+                amt_statement = round(val_eur, 2) if raw_amt >= 0 else -round(val_eur, 2)
                 rate_applied = round(rate, 6)
                 src_rate = r_src
 

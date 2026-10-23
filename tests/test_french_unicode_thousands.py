@@ -49,6 +49,11 @@ class TestFrenchUnicodeThousands(unittest.TestCase):
 
         ex_7002 = df_imported[df_imported["Date de la transaction"] == "2025-09-05 14:17:44"]
         self.assertEqual(ex_7002["Montant d'origine"].values[0], 7002.99)
+        self.assertTrue(ex_7002["Montant du relevé"].values[0] > 0)
+
+        dep_4472 = df_imported[df_imported["Date de la transaction"] == "2025-12-29 12:58:15"]
+        self.assertEqual(dep_4472["Montant d'origine"].values[0], -4472.0)
+        self.assertTrue(dep_4472["Montant du relevé"].values[0] < 0)
 
 if __name__ == "__main__":
     unittest.main()

@@ -112,11 +112,11 @@ def import_generic_csv(file_obj, column_mapping: dict, default_network: str = "F
             else:
                 dt_obj = pd.to_datetime(dt_val, errors="coerce")
                 dt_obj = dt_obj.to_pydatetime() if pd.notna(dt_obj) else datetime.now()
-                val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(amt_orig, curr_orig, dt_obj)
+                val_eur, rate, r_date, r_src, fx_pair = convert_to_eur(abs(amt_orig), curr_orig, dt_obj)
                 rate_applied = round(rate, 6)
                 src_rate = r_src
 
-            record["Montant du relevé"] = round(val_eur, 2)
+            record["Montant du relevé"] = round(val_eur, 2) if amt_orig >= 0 else -round(val_eur, 2)
             record["Taux de change appliqué"] = rate_applied
             record["Date du taux de change appliqué"] = str(dt_val)[:10]
             record["Source du taux de change"] = src_rate
