@@ -31,6 +31,12 @@ class TestFrenchUnicodeThousands(unittest.TestCase):
         self.assertEqual(_clean_numeric("+1\u202f500.00"), 1500.0)
         self.assertEqual(_clean_numeric("7\u202f002.99"), 7002.99)
 
+    def test_clean_numeric_excel_apostrophe_prefix(self):
+        self.assertEqual(_clean_numeric("'+1.00"), 1.0)
+        self.assertEqual(_clean_numeric("'-7\u202f002.00"), -7002.0)
+        self.assertEqual(_clean_numeric("'+6\u202f000.00"), 6000.0)
+        self.assertEqual(_clean_numeric("'-120.00"), -120.0)
+
     def test_import_bleap_french_unicode_csv(self):
         file_obj = io.StringIO(TEST_FRENCH_UNICODE_CSV)
         df_imported = import_bleap_csv(file_obj)

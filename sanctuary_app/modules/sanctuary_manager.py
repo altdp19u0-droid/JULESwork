@@ -74,7 +74,7 @@ def _save_single_year(df_clean: pd.DataFrame, year: int, account_label: str) -> 
     def _clean_str_amt(v):
         if pd.isna(v) or v is None:
             return 0.0
-        s = re.sub(r"[\s\xa0\u202f\u200b]+", "", str(v)).replace(",", ".")
+        s = re.sub(r"[\s\xa0\u202f\u200b\'\"]+", "", str(v)).replace(",", ".")
         if s.startswith("+"):
             s = s[1:]
         try:
